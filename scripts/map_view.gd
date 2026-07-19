@@ -7,6 +7,7 @@ const GameConfig = preload("res://scripts/game_config.gd")
 
 var frame_rect := Rect2()
 var zoom_level := GameConfig.MAP_ZOOM_DEFAULT
+var interaction_enabled := true
 
 var _board: GridBoard
 var _fit_scale := 1.0
@@ -26,6 +27,8 @@ var _touch_started_msec := 0
 func setup(board: GridBoard, value: Rect2) -> void:
 	_board = board
 	frame_rect = value
+	interaction_enabled = true
+	_reset_input_state()
 	var bounds := _board.get_board_bounds()
 	_fit_scale = minf(frame_rect.size.x / bounds.size.x, frame_rect.size.y / bounds.size.y)
 	zoom_level = GameConfig.MAP_ZOOM_DEFAULT
@@ -61,7 +64,17 @@ func screen_to_cell(screen_position: Vector2) -> Vector2i:
 	return _board.world_to_cell(to_local(screen_position))
 
 
+func set_interaction_enabled(value: bool) -> void:
+	interaction_enabled = value
+	if not interaction_enabled:
+		_reset_input_state()
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if not interaction_enabled:
+		return
+	if event is InputEventMouse and event.device == InputEvent.DEVICE_ID_EMULATION:
+		return
 	if event is InputEventMouseButton:
 		_handle_mouse_button(event)
 	elif event is InputEventMouseMotion:
@@ -194,7 +207,16 @@ func _clamp_position() -> void:
 	position.y = _clamp_axis(position.y, scaled_min.y, scaled_max.y, frame_rect.position.y, frame_rect.end.y)
 
 
+func _reset_input_state() -> void:
+	_mouse_down = false
+	_mouse_dragging = false
+	_touches.clear()
+	_single_touch_index = -1
+	_single_touch_dragging = false
+	_touch_sequence_suppressed = false
+
+
 func _clamp_axis(value: float, content_min: float, content_max: float, frame_min: float, frame_max: float) -> float:
 	if content_max - content_min <= frame_max - frame_min:
-		return (frame_min + frame_max - content_min - content_max) * 0.5
+		return clampf(value, frame_min - content_min, frame_max - content_max)
 	return clampf(value, frame_max - content_max, frame_min - content_min)

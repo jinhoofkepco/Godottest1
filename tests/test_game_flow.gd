@@ -15,6 +15,8 @@ func run(tree: SceneTree) -> Array[String]:
 	await _test_production_and_feedback(tree, main_scene)
 	await _test_ranged_presentation(tree, main_scene)
 	await _test_map_view_transform_and_input(tree, main_scene)
+	await _test_emulated_mouse_stream_filter(tree, main_scene)
+	await _test_finished_map_interaction_gate(tree, main_scene)
 	await _test_hud_spawner_selection(tree, main_scene)
 	await _test_batched_lunge(tree, main_scene)
 	await _test_zero_screen_shake(tree, main_scene)
@@ -164,7 +166,9 @@ func _test_map_view_transform_and_input(tree: SceneTree, main_scene: PackedScene
 	var frame_rect: Rect2 = map_view.frame_rect
 	var focus_cell := Vector2i(11, 22)
 	var focus_screen: Vector2 = map_view.to_global(main.grid.cell_to_world(focus_cell))
+	var focus_local: Vector2 = map_view.to_local(focus_screen)
 	map_view.set_zoom_at(2.0, focus_screen)
+	_expect(map_view.to_global(focus_local).distance_to(focus_screen) <= 0.25, "zoom preserves the exact transformed focus point within a quarter pixel")
 	_expect(map_view.screen_to_cell(focus_screen) == focus_cell, "zooming around a tile keeps exact transformed picking under the focus")
 	map_view.set_zoom_at(99.0, focus_screen)
 	_expect(is_equal_approx(float(map_view.zoom_level), 2.5), "zoom clamps to 2.5x maximum")
@@ -277,6 +281,98 @@ func _test_map_view_transform_and_input(tree: SceneTree, main_scene: PackedScene
 	mouse_release.position = tap_screen
 	map_view._unhandled_input(mouse_release)
 	_expect(tapped_cells == [touch_tap_cell, tap_cell], "stationary mouse click emits the exact tapped tile")
+	main.queue_free()
+	await tree.process_frame
+
+
+func _test_emulated_mouse_stream_filter(tree: SceneTree, main_scene: PackedScene) -> void:
+	_expect(bool(ProjectSettings.get_setting("input_devices/pointing/emulate_mouse_from_touch", true)), "touch-to-mouse emulation remains enabled for HUD buttons")
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	var map_view = main.map_view
+	var frame_rect: Rect2 = map_view.frame_rect
+	var tapped_cells: Array[Vector2i] = []
+	map_view.tile_tapped.connect(func(cell: Vector2i) -> void: tapped_cells.append(cell))
+
+	var tap_cell := Vector2i(5, 36)
+	var tap_screen: Vector2 = map_view.to_global(main.grid.cell_to_world(tap_cell))
+	_send_touch_tap(map_view, tap_screen)
+	_send_mouse_tap(map_view, tap_screen, InputEvent.DEVICE_ID_EMULATION)
+	_expect(tapped_cells == [tap_cell], "native touch plus its emulated mouse stream emits exactly one tile tap")
+
+	map_view.setup(main.grid, frame_rect)
+	tapped_cells.clear()
+	var drag_start := frame_rect.get_center()
+	var drag_end := drag_start + Vector2(30, 0)
+	_send_touch_drag(map_view, drag_start, drag_end)
+	var touch_pan_position: Vector2 = map_view.position
+	_send_mouse_drag(map_view, drag_start, drag_end, InputEvent.DEVICE_ID_EMULATION)
+	_expect(map_view.position.is_equal_approx(touch_pan_position), "emulated mouse drag never applies a second pan after native touch drag")
+	_expect(tapped_cells.is_empty(), "native and emulated drag streams do not leak a tap")
+
+	map_view.setup(main.grid, frame_rect)
+	tapped_cells.clear()
+	var first_touch := Vector2(210, 470)
+	var second_touch := Vector2(310, 470)
+	var touch_a := InputEventScreenTouch.new()
+	touch_a.index = 0
+	touch_a.pressed = true
+	touch_a.position = first_touch
+	map_view._unhandled_input(touch_a)
+	var touch_b := InputEventScreenTouch.new()
+	touch_b.index = 1
+	touch_b.pressed = true
+	touch_b.position = second_touch
+	map_view._unhandled_input(touch_b)
+	var pinch_drag := InputEventScreenDrag.new()
+	pinch_drag.index = 1
+	pinch_drag.position = second_touch + Vector2(40, 0)
+	pinch_drag.relative = Vector2(40, 0)
+	map_view._unhandled_input(pinch_drag)
+	touch_b.pressed = false
+	touch_b.position = pinch_drag.position
+	map_view._unhandled_input(touch_b)
+	touch_a.pressed = false
+	map_view._unhandled_input(touch_a)
+	_send_mouse_tap(map_view, (first_touch + second_touch) * 0.5, InputEvent.DEVICE_ID_EMULATION)
+	_expect(tapped_cells.is_empty(), "pinch plus its emulated mouse stream emits zero tile taps")
+	main.queue_free()
+	await tree.process_frame
+
+
+func _test_finished_map_interaction_gate(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	var map_view = main.map_view
+	var map_properties := _property_names(map_view)
+	_expect(map_view.has_method("set_interaction_enabled") and map_properties.has("interaction_enabled"), "MapView exposes a narrow interaction-enabled contract")
+	if not map_view.has_method("set_interaction_enabled") or not map_properties.has("interaction_enabled"):
+		main.queue_free()
+		await tree.process_frame
+		return
+	_expect(bool(map_view.interaction_enabled), "MapView interaction starts enabled")
+	var frame_rect: Rect2 = map_view.frame_rect
+	var tapped_cells: Array[Vector2i] = []
+	map_view.tile_tapped.connect(func(cell: Vector2i) -> void: tapped_cells.append(cell))
+	main._finish_match("VICTORY")
+	_expect(not bool(map_view.interaction_enabled), "finishing a match disables map interaction before the result overlay")
+	var terminal_position: Vector2 = map_view.position
+	var terminal_zoom: float = map_view.zoom_level
+	var focus := frame_rect.get_center()
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel.pressed = true
+	wheel.position = focus
+	map_view._unhandled_input(wheel)
+	_send_mouse_drag(map_view, focus, focus + Vector2(30, 0))
+	_send_touch_tap(map_view, focus)
+	_expect(is_equal_approx(float(map_view.zoom_level), terminal_zoom), "wheel input cannot zoom after the match finishes")
+	_expect(map_view.position.is_equal_approx(terminal_position), "mouse drag cannot pan after the match finishes")
+	_expect(tapped_cells.is_empty(), "touch tap cannot emit placement after the match finishes")
+	map_view.setup(main.grid, frame_rect)
+	_expect(bool(map_view.interaction_enabled), "setup resets MapView interaction for a fresh match")
 	main.queue_free()
 	await tree.process_frame
 
@@ -404,3 +500,58 @@ func _property_names(value: Object) -> Array[String]:
 	for property in value.get_property_list():
 		names.append(String(property.name))
 	return names
+
+
+func _send_mouse_tap(map_view, at: Vector2, device_id: int = 0) -> void:
+	var event := InputEventMouseButton.new()
+	event.device = device_id
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = true
+	event.position = at
+	map_view._unhandled_input(event)
+	event.pressed = false
+	map_view._unhandled_input(event)
+
+
+func _send_mouse_drag(map_view, start: Vector2, finish: Vector2, device_id: int = 0) -> void:
+	var press := InputEventMouseButton.new()
+	press.device = device_id
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = start
+	map_view._unhandled_input(press)
+	var drag := InputEventMouseMotion.new()
+	drag.device = device_id
+	drag.button_mask = MOUSE_BUTTON_MASK_LEFT
+	drag.position = finish
+	drag.relative = finish - start
+	map_view._unhandled_input(drag)
+	press.pressed = false
+	press.position = finish
+	map_view._unhandled_input(press)
+
+
+func _send_touch_tap(map_view, at: Vector2) -> void:
+	var event := InputEventScreenTouch.new()
+	event.index = 0
+	event.pressed = true
+	event.position = at
+	map_view._unhandled_input(event)
+	event.pressed = false
+	map_view._unhandled_input(event)
+
+
+func _send_touch_drag(map_view, start: Vector2, finish: Vector2) -> void:
+	var touch := InputEventScreenTouch.new()
+	touch.index = 0
+	touch.pressed = true
+	touch.position = start
+	map_view._unhandled_input(touch)
+	var drag := InputEventScreenDrag.new()
+	drag.index = 0
+	drag.position = finish
+	drag.relative = finish - start
+	map_view._unhandled_input(drag)
+	touch.pressed = false
+	touch.position = finish
+	map_view._unhandled_input(touch)

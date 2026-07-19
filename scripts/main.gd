@@ -167,6 +167,7 @@ func _building_hp(building_id: int) -> float:
 
 func _finish_match(value: String) -> void:
 	game_result = value
+	map_view.set_interaction_enabled(false)
 	hud.show_result(value)
 
 
