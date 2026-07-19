@@ -50,7 +50,7 @@ godot --display-driver macos --rendering-method gl_compatibility --audio-driver 
 file build/smoke_*.png
 ```
 
-마지막 명령은 장애물이 보이는 전체 오프닝, 파랑 우세, 파랑 열세, 근접/원거리 전선 혼전의 540×960 PNG 네 장을 `build/smoke_opening.png`, `build/smoke_advantage.png`, `build/smoke_disadvantage.png`, `build/smoke_cluster.png`에 만듭니다. 우세·열세·혼전 장면은 비기본 줌/팬도 함께 검증합니다.
+마지막 명령은 장애물이 보이는 전체 오프닝, 파랑 우세, 파랑 열세, 근접/원거리 전선 혼전, 전진 병력이 옆 열로 이동한 뒤에도 기존 보급선을 유지하는 영속 측면 점유의 540×960 PNG 다섯 장을 `build/smoke_opening.png`, `build/smoke_advantage.png`, `build/smoke_disadvantage.png`, `build/smoke_cluster.png`, `build/smoke_persistent_flank.png`에 만듭니다. 우세·열세·혼전·영속 측면 장면은 비기본 줌/팬도 함께 검증합니다.
 
 ## Android debug APK 받기
 

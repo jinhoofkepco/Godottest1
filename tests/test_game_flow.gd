@@ -5,11 +5,36 @@ const GameConfig = preload("res://scripts/game_config.gd")
 var failures: Array[String] = []
 
 
+class CountingGridSimulation:
+	extends RefCounted
+
+	var buildings: Array[Dictionary] = []
+	var ownership_reads := 0
+	var ownership := PackedByteArray()
+	var blocked_cell := Vector2i(3, 35)
+
+
+	func _init() -> void:
+		ownership.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+		ownership.fill(2)
+		buildings.append({"cell": Vector2i(4, 35), "destroyed": false})
+
+
+	func get_ownership() -> PackedByteArray:
+		ownership_reads += 1
+		return ownership.duplicate()
+
+
+	func is_blocked(cell: Vector2i) -> bool:
+		return cell == blocked_cell
+
+
 func run(tree: SceneTree) -> Array[String]:
 	var main_scene := load("res://scenes/main.tscn")
 	_expect(main_scene != null, "main scene exists")
 	if main_scene == null:
 		return failures
+	await _test_grid_draw_ownership_snapshot(tree)
 	await _test_scene_contract(tree, main_scene)
 	await _test_dynamic_building(tree, main_scene)
 	await _test_production_and_feedback(tree, main_scene)
@@ -22,6 +47,26 @@ func run(tree: SceneTree) -> Array[String]:
 	await _test_zero_screen_shake(tree, main_scene)
 	await _test_terminal_routes(tree, main_scene)
 	return failures
+
+
+func _test_grid_draw_ownership_snapshot(tree: SceneTree) -> void:
+	var grid = load("res://scenes/grid.tscn").instantiate()
+	var counting_simulation := CountingGridSimulation.new()
+	tree.root.add_child(grid)
+	await tree.process_frame
+	grid.set_simulation(counting_simulation)
+	await tree.process_frame
+	counting_simulation.ownership_reads = 0
+	grid.queue_redraw()
+	await tree.process_frame
+	_expect(counting_simulation.ownership_reads == 1, "one GridBoard redraw snapshots ownership exactly once (got %d)" % counting_simulation.ownership_reads)
+	counting_simulation.ownership_reads = 0
+	_expect(not grid.can_build(counting_simulation.blocked_cell), "public build check still rejects blockers")
+	_expect(counting_simulation.ownership_reads == 0, "public blocked check does not need an ownership snapshot")
+	_expect(not grid.can_build(Vector2i(4, 35)), "public build check still rejects existing buildings")
+	_expect(counting_simulation.ownership_reads == 1, "public valid-cell build check snapshots ownership once")
+	grid.queue_free()
+	await tree.process_frame
 
 
 func _test_scene_contract(tree: SceneTree, main_scene: PackedScene) -> void:

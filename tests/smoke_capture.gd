@@ -6,6 +6,7 @@ const OUTPUTS := [
 	"res://build/smoke_advantage.png",
 	"res://build/smoke_disadvantage.png",
 	"res://build/smoke_cluster.png",
+	"res://build/smoke_persistent_flank.png",
 ]
 
 
@@ -26,7 +27,9 @@ func _run() -> void:
 		var main = load("res://scenes/main.tscn").instantiate()
 		root.add_child(main)
 		await process_frame
-		_stage_scenario(main, scenario)
+		if not _stage_scenario(main, scenario):
+			_fail("scenario %d did not preserve its required state" % scenario)
+			return
 		main.step_simulation(0.0001)
 		await process_frame
 		await process_frame
@@ -41,11 +44,11 @@ func _run() -> void:
 			return
 		main.queue_free()
 		await process_frame
-	print("SMOKE CAPTURE PASS: opening / blue advantage / blue disadvantage / frontline cluster (540x960)")
+	print("SMOKE CAPTURE PASS: opening / blue advantage / blue disadvantage / frontline cluster / persistent flank (540x960)")
 	quit(0)
 
 
-func _stage_scenario(main: Node, scenario: int) -> void:
+func _stage_scenario(main: Node, scenario: int) -> bool:
 	var simulation = main.simulation
 	if scenario == 0:
 		var ally_spawner := Vector2i(6, GameConfig.GRID_ROWS - 8)
@@ -75,8 +78,11 @@ func _stage_scenario(main: Node, scenario: int) -> void:
 		simulation.recalculate_territory()
 		main.fx.show_hq_hit(Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 1), simulation.TEAM_ALLY)
 		_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 8), 1.85)
-	else:
+	elif scenario == 3:
 		_stage_frontline_cluster(main)
+	else:
+		return _stage_persistent_flank(main)
+	return true
 
 
 func _stage_frontline_cluster(main: Node) -> void:
@@ -93,6 +99,35 @@ func _stage_frontline_cluster(main: Node) -> void:
 	main.fx.show_hit(Vector2(float(GameConfig.GRID_COLUMNS) * 0.5, float(GameConfig.GRID_ROWS) * 0.5))
 	main.fx.show_ranged_shot(Vector2(8.5, 24.5), Vector2(8.5, 20.5), simulation.TEAM_ALLY)
 	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), 2.15)
+
+
+func _stage_persistent_flank(main: Node) -> bool:
+	var simulation = main.simulation
+	var held_cell := Vector2i(5, 10)
+	var moved_cell := Vector2i(10, 10)
+	var claimant_id: int = simulation.spawn_unit(
+		simulation.TEAM_ALLY,
+		Vector2(held_cell) + Vector2(0.5, 0.5),
+		simulation.UNIT_RANGED
+	)
+	var claimant_index: int = simulation.unit_ids.find(claimant_id)
+	if claimant_index < 0:
+		return false
+	simulation.unit_positions[claimant_index] = Vector2(held_cell) + Vector2(0.5, 0.5)
+	simulation.recalculate_territory()
+	var held_index: int = held_cell.y * GameConfig.GRID_COLUMNS + held_cell.x
+	if simulation.get_ownership()[held_index] != simulation.TEAM_ALLY:
+		return false
+	simulation.unit_positions[claimant_index] = Vector2(moved_cell) + Vector2(0.5, 0.5)
+	simulation.recalculate_territory()
+	var ownership: PackedByteArray = simulation.get_ownership()
+	var moved_index: int = moved_cell.y * GameConfig.GRID_COLUMNS + moved_cell.x
+	if ownership[held_index] != simulation.TEAM_ALLY or ownership[moved_index] != simulation.TEAM_ALLY:
+		return false
+	main.fx.show_territory_change(held_cell, simulation.TEAM_ALLY)
+	main.hud.show_message("PERSISTENT FLANK HELD", GameConfig.COLOR_TEAL)
+	_focus_map(main, Vector2i(7, 15), 1.8)
+	return true
 
 
 func _spawn_if_clear(simulation, team: int, cell: Vector2i, unit_kind: int) -> void:

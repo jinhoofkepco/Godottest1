@@ -18,9 +18,16 @@ func set_simulation(value) -> void:
 func can_build(cell: Vector2i, team: int = 2) -> bool:
 	if not _cell_is_valid(cell) or simulation == null:
 		return false
-	if simulation.is_blocked(cell):
+	var cell_blocked: bool = simulation.is_blocked(cell)
+	if cell_blocked:
 		return false
 	var current_ownership: PackedByteArray = simulation.get_ownership()
+	return _can_build_with_ownership(cell, team, current_ownership, cell_blocked)
+
+
+func _can_build_with_ownership(cell: Vector2i, team: int, current_ownership: PackedByteArray, cell_blocked: bool) -> bool:
+	if not _cell_is_valid(cell) or simulation == null or cell_blocked:
+		return false
 	if current_ownership[cell.y * GameConfig.GRID_COLUMNS + cell.x] != team:
 		return false
 	for building in simulation.buildings:
@@ -78,13 +85,17 @@ func get_core_anchor() -> Vector2:
 
 
 func _draw() -> void:
+	var current_ownership := PackedByteArray()
+	if simulation != null:
+		current_ownership = simulation.get_ownership()
 	for depth in GameConfig.GRID_COLUMNS + GameConfig.GRID_ROWS - 1:
 		var first_row := maxi(0, depth - GameConfig.GRID_COLUMNS + 1)
 		var last_row := mini(GameConfig.GRID_ROWS - 1, depth)
 		for row in range(first_row, last_row + 1):
 			var column := depth - row
 			var cell := Vector2i(column, row)
-			var color := _cell_color(cell)
+			var color := _cell_color(cell, current_ownership)
+			var cell_blocked: bool = simulation != null and simulation.is_blocked(cell)
 			var diamond := PackedVector2Array([
 				grid_to_screen(Vector2(column, row)),
 				grid_to_screen(Vector2(column + 1, row)),
@@ -94,9 +105,9 @@ func _draw() -> void:
 			draw_colored_polygon(diamond, color)
 			diamond.append(diamond[0])
 			draw_polyline(diamond, GameConfig.COLOR_GRID_LINE, 1.4, true)
-			if simulation != null and simulation.is_blocked(cell):
+			if cell_blocked:
 				_draw_blocker(diamond)
-			if can_build(cell):
+			if _can_build_with_ownership(cell, 2, current_ownership, cell_blocked):
 				draw_circle(cell_to_world(cell), 1.8, Color(GameConfig.COLOR_TEAL, 0.38))
 
 
@@ -113,10 +124,9 @@ func _draw_blocker(base_diamond: PackedVector2Array) -> void:
 	draw_polyline(top, GameConfig.COLOR_OBSTACLE_EDGE, 1.6, true)
 
 
-func _cell_color(cell: Vector2i) -> Color:
+func _cell_color(cell: Vector2i, current_ownership: PackedByteArray) -> Color:
 	var owner := 1 if cell.y < GameConfig.GRID_ROWS / 2 else 2
-	if simulation != null:
-		var current_ownership: PackedByteArray = simulation.get_ownership()
+	if not current_ownership.is_empty():
 		owner = current_ownership[cell.y * GameConfig.GRID_COLUMNS + cell.x]
 	var alternate := (cell.x + cell.y) % 2 == 0
 	if owner == 2:
