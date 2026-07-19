@@ -1,164 +1,217 @@
 class_name DefenseHud
 extends Control
 
-signal next_wave_pressed
 signal restart_pressed
 
 const GameConfig = preload("res://scripts/game_config.gd")
 
+const BLUE := Color("39a8ff")
+const BLUE_DARK := Color("153f68")
+const RED := Color("ff5468")
+const RED_DARK := Color("682333")
+const BAR_WIDTH := 484.0
+
 var gold_label: Label
-var core_label: Label
-var wave_label: Label
-var next_button: Button
+var ally_hq_label: Label
+var enemy_hq_label: Label
+var timer_label: Label
+var ally_percent_label: Label
+var enemy_percent_label: Label
+var ally_occupancy_fill: ColorRect
+var enemy_occupancy_fill: ColorRect
+var message_label: Label
+var instruction_label: Label
 var result_overlay: ColorRect
 var result_label: Label
 var restart_button: Button
-var banner_label: Label
-var banner_wave := 0
-var banner_time_left := 0.0
-var banner_feedback_count := 0
 
-@export var banner_duration := 0.82
+var message_time_left := 0.0
+
+@export var message_duration := 1.1
 
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_build_top_bar()
-	_build_wave_banner()
+	_build_status_panel()
+	_build_message()
+	_build_instruction()
 	_build_result_overlay()
+	update_stats(GameConfig.START_GOLD, GameConfig.HQ_MAX_HP, GameConfig.HQ_MAX_HP, GameConfig.MATCH_DURATION, 0.5)
 
 
-func update_stats(gold: int, core_hp: int, wave: int) -> void:
-	gold_label.text = "GOLD  %03d" % gold
-	core_label.text = "CORE  %02d" % core_hp
-	wave_label.text = "WAVE  %d/%d" % [wave, GameConfig.TOTAL_WAVES]
-
-
-func set_wave_button(enabled: bool, wave: int) -> void:
-	next_button.disabled = not enabled
-	next_button.text = "START WAVE %d" % clampi(wave + 1, 1, GameConfig.TOTAL_WAVES)
+func update_stats(
+	ally_gold: int,
+	ally_hq_hp: float,
+	enemy_hq_hp: float,
+	time_remaining: float,
+	ally_occupancy: float
+) -> void:
+	var blue_share := clampf(ally_occupancy, 0.0, 1.0)
+	var red_share := 1.0 - blue_share
+	gold_label.text = "GOLD  %03d" % max(0, ally_gold)
+	ally_hq_label.text = "BLUE HQ  %04d" % ceili(maxf(0.0, ally_hq_hp))
+	enemy_hq_label.text = "RED HQ  %04d" % ceili(maxf(0.0, enemy_hq_hp))
+	timer_label.text = _format_time(time_remaining)
+	ally_percent_label.text = "BLUE %d%%" % roundi(blue_share * 100.0)
+	enemy_percent_label.text = "%d%% RED" % roundi(red_share * 100.0)
+	ally_occupancy_fill.size.x = BAR_WIDTH * blue_share
+	enemy_occupancy_fill.position.x = BAR_WIDTH * blue_share
+	enemy_occupancy_fill.size.x = BAR_WIDTH * red_share
 
 
 func show_result(result: String) -> void:
-	result_label.text = result
-	result_label.modulate = GameConfig.COLOR_TEAL if result == "VICTORY" else GameConfig.COLOR_ORANGE
+	var victory := result.to_upper() == "VICTORY"
+	result_label.text = "BLUE VICTORY" if victory else "BLUE DEFEAT"
+	result_label.add_theme_color_override("font_color", BLUE if victory else RED)
 	result_overlay.visible = true
 
 
-func show_wave_banner(wave: int) -> void:
-	banner_wave = wave
-	banner_time_left = banner_duration
-	banner_feedback_count += 1
-	banner_label.text = "WAVE %d" % wave
-	banner_label.visible = true
-	banner_label.modulate = Color.WHITE
+func show_message(text: String, color := Color.WHITE) -> void:
+	message_label.text = text
+	message_label.add_theme_color_override("font_color", color)
+	message_label.modulate = Color.WHITE
+	message_label.visible = true
+	message_time_left = message_duration
 
 
 func _process(delta: float) -> void:
-	if banner_time_left <= 0.0 or not is_instance_valid(banner_label):
+	if message_time_left <= 0.0:
 		return
-	banner_time_left = maxf(0.0, banner_time_left - delta)
-	var progress := 1.0 - banner_time_left / banner_duration
-	banner_label.position.y = lerpf(168.0, 194.0, minf(1.0, progress * 2.2))
-	var fade := minf(1.0, banner_time_left / 0.22)
-	banner_label.modulate = Color(GameConfig.COLOR_TEXT, fade)
-	if banner_time_left <= 0.0:
-		banner_label.visible = false
+	message_time_left = maxf(0.0, message_time_left - delta)
+	message_label.modulate.a = minf(1.0, message_time_left / 0.22)
+	if message_time_left <= 0.0:
+		message_label.visible = false
 
 
-func _build_top_bar() -> void:
+func _build_status_panel() -> void:
 	var panel := ColorRect.new()
 	panel.position = Vector2(14, 12)
-	panel.size = Vector2(512, 84)
-	panel.color = GameConfig.COLOR_PANEL
+	panel.size = Vector2(512, 126)
+	panel.color = Color(GameConfig.COLOR_PANEL, 0.96)
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(panel)
 
-	var title := Label.new()
-	title.position = Vector2(14, 7)
-	title.size = Vector2(300, 25)
-	title.text = "WAR GRID // SECTOR 09"
-	title.add_theme_font_size_override("font_size", 17)
-	title.add_theme_color_override("font_color", GameConfig.COLOR_TEAL)
+	var title := _make_label(Vector2(14, 7), Vector2(300, 24), 16, GameConfig.COLOR_TEAL)
+	title.text = "FRONTLINE // LIVE SECTOR"
 	panel.add_child(title)
 
-	gold_label = _stat_label(Vector2(14, 39), 128)
-	core_label = _stat_label(Vector2(146, 39), 120)
-	wave_label = _stat_label(Vector2(270, 39), 115)
-	panel.add_child(gold_label)
-	panel.add_child(core_label)
-	panel.add_child(wave_label)
+	timer_label = _make_label(Vector2(388, 7), Vector2(110, 24), 18, GameConfig.COLOR_TEXT)
+	timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	panel.add_child(timer_label)
 
-	next_button = Button.new()
-	next_button.position = Vector2(388, 13)
-	next_button.size = Vector2(112, 58)
-	next_button.text = "START WAVE 1"
-	next_button.add_theme_font_size_override("font_size", 13)
-	_style_button(next_button, GameConfig.COLOR_TEAL)
-	next_button.pressed.connect(func() -> void: next_wave_pressed.emit())
-	panel.add_child(next_button)
+	gold_label = _make_label(Vector2(14, 35), Vector2(135, 24), 16, GameConfig.COLOR_TEXT)
+	ally_hq_label = _make_label(Vector2(151, 35), Vector2(165, 24), 15, BLUE)
+	enemy_hq_label = _make_label(Vector2(318, 35), Vector2(180, 24), 15, RED)
+	panel.add_child(gold_label)
+	panel.add_child(ally_hq_label)
+	panel.add_child(enemy_hq_label)
+
+	ally_percent_label = _make_label(Vector2(14, 62), Vector2(150, 20), 13, BLUE)
+	enemy_percent_label = _make_label(Vector2(348, 62), Vector2(150, 20), 13, RED)
+	enemy_percent_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	panel.add_child(ally_percent_label)
+	panel.add_child(enemy_percent_label)
+
+	var bar_back := ColorRect.new()
+	bar_back.position = Vector2(14, 88)
+	bar_back.size = Vector2(BAR_WIDTH, 22)
+	bar_back.color = GameConfig.COLOR_NEUTRAL
+	bar_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(bar_back)
+
+	ally_occupancy_fill = ColorRect.new()
+	ally_occupancy_fill.size = Vector2(BAR_WIDTH * 0.5, 22)
+	ally_occupancy_fill.color = BLUE_DARK
+	ally_occupancy_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_back.add_child(ally_occupancy_fill)
+
+	enemy_occupancy_fill = ColorRect.new()
+	enemy_occupancy_fill.position = Vector2(BAR_WIDTH * 0.5, 0)
+	enemy_occupancy_fill.size = Vector2(BAR_WIDTH * 0.5, 22)
+	enemy_occupancy_fill.color = RED_DARK
+	enemy_occupancy_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_back.add_child(enemy_occupancy_fill)
+
+	var midpoint := ColorRect.new()
+	midpoint.position = Vector2(BAR_WIDTH * 0.5 - 1.0, 0)
+	midpoint.size = Vector2(2, 22)
+	midpoint.color = Color(GameConfig.COLOR_TEXT, 0.75)
+	midpoint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_back.add_child(midpoint)
+
+
+func _build_message() -> void:
+	message_label = _make_label(Vector2(50, 155), Vector2(440, 52), 25, GameConfig.COLOR_TEXT)
+	message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	message_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	message_label.visible = false
+	message_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(message_label)
+
+
+func _build_instruction() -> void:
+	var plate := ColorRect.new()
+	plate.position = Vector2(30, 891)
+	plate.size = Vector2(480, 48)
+	plate.color = Color(GameConfig.COLOR_PANEL, 0.94)
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(plate)
+
+	instruction_label = _make_label(Vector2.ZERO, plate.size, 17, BLUE)
+	instruction_label.text = "TAP BLUE TERRITORY // SPAWNER 60"
+	instruction_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	instruction_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	plate.add_child(instruction_label)
 
 
 func _build_result_overlay() -> void:
 	result_overlay = ColorRect.new()
 	result_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	result_overlay.color = Color(0.035, 0.055, 0.09, 0.9)
+	result_overlay.color = Color(0.025, 0.04, 0.075, 0.92)
 	result_overlay.visible = false
 	result_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(result_overlay)
 
 	var card := ColorRect.new()
-	card.position = Vector2(65, 330)
-	card.size = Vector2(410, 250)
+	card.position = Vector2(55, 340)
+	card.size = Vector2(430, 250)
 	card.color = GameConfig.COLOR_PANEL
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	result_overlay.add_child(card)
 
-	result_label = Label.new()
-	result_label.position = Vector2(20, 38)
-	result_label.size = Vector2(370, 70)
+	result_label = _make_label(Vector2(20, 34), Vector2(390, 80), 38, BLUE)
 	result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	result_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	result_label.add_theme_font_size_override("font_size", 42)
 	card.add_child(result_label)
 
-	var subtitle := Label.new()
-	subtitle.position = Vector2(20, 112)
-	subtitle.size = Vector2(370, 30)
-	subtitle.text = "SECTOR RUN COMPLETE"
+	var subtitle := _make_label(Vector2(20, 113), Vector2(390, 28), 15, Color(GameConfig.COLOR_TEXT, 0.68))
+	subtitle.text = "FRONTLINE SIMULATION COMPLETE"
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	subtitle.add_theme_color_override("font_color", Color(GameConfig.COLOR_TEXT, 0.7))
 	card.add_child(subtitle)
 
 	restart_button = Button.new()
-	restart_button.position = Vector2(95, 164)
+	restart_button.position = Vector2(105, 166)
 	restart_button.size = Vector2(220, 58)
 	restart_button.text = "RESTART"
 	restart_button.add_theme_font_size_override("font_size", 19)
-	_style_button(restart_button, GameConfig.COLOR_ORANGE)
+	_style_button(restart_button, GameConfig.COLOR_TEAL)
 	restart_button.pressed.connect(func() -> void: restart_pressed.emit())
 	card.add_child(restart_button)
 
 
-func _build_wave_banner() -> void:
-	banner_label = Label.new()
-	banner_label.position = Vector2(120, 168)
-	banner_label.size = Vector2(300, 64)
-	banner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	banner_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	banner_label.add_theme_font_size_override("font_size", 36)
-	banner_label.add_theme_color_override("font_color", GameConfig.COLOR_TEXT)
-	banner_label.visible = false
-	banner_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(banner_label)
+func _format_time(seconds_left: float) -> String:
+	var whole_seconds := maxi(0, ceili(seconds_left))
+	return "%02d:%02d" % [whole_seconds / 60, whole_seconds % 60]
 
 
-func _stat_label(at: Vector2, width: float) -> Label:
+func _make_label(at: Vector2, dimensions: Vector2, font_size: int, color: Color) -> Label:
 	var label := Label.new()
 	label.position = at
-	label.size = Vector2(width, 30)
-	label.add_theme_font_size_override("font_size", 16)
-	label.add_theme_color_override("font_color", GameConfig.COLOR_TEXT)
+	label.size = dimensions
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", color)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 
 
@@ -173,12 +226,7 @@ func _style_button(button: Button, accent: Color) -> void:
 	normal.corner_radius_bottom_right = 3
 	var pressed := normal.duplicate()
 	pressed.bg_color = accent.darkened(0.3)
-	var disabled := normal.duplicate()
-	disabled.bg_color = GameConfig.COLOR_NEUTRAL
-	disabled.border_color = GameConfig.COLOR_GRID_LINE
 	button.add_theme_stylebox_override("normal", normal)
 	button.add_theme_stylebox_override("hover", pressed)
 	button.add_theme_stylebox_override("pressed", pressed)
-	button.add_theme_stylebox_override("disabled", disabled)
 	button.add_theme_color_override("font_color", GameConfig.COLOR_TEXT)
-	button.add_theme_color_override("font_disabled_color", Color(GameConfig.COLOR_TEXT, 0.35))
