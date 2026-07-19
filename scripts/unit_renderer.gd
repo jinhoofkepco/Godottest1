@@ -80,13 +80,26 @@ func _sync_team(instance: MultiMeshInstance2D, team: int, body_rotation: float) 
 	instance.multimesh.instance_count = indices.size()
 	for draw_index in indices.size():
 		var unit_index := indices[draw_index]
-		var screen_position := _grid.grid_to_screen(_simulation.unit_positions[unit_index]) + Vector2(0, -11)
+		var screen_position := get_unit_render_position(unit_index)
 		var transform := Transform2D(body_rotation, screen_position)
 		instance.multimesh.set_instance_transform_2d(draw_index, transform)
 		var base_color := GameConfig.COLOR_ALLY.lightened(0.28) if team == TEAM_ALLY else GameConfig.COLOR_ENEMY.lightened(0.18)
 		if _simulation.unit_states[unit_index] == 0:
 			base_color = base_color.darkened(0.12)
 		instance.multimesh.set_instance_color(draw_index, base_color)
+
+
+func get_unit_render_position(unit_index: int) -> Vector2:
+	var lunge_offset := Vector2.ZERO
+	if _simulation.unit_lunge_timers[unit_index] > 0.0:
+		var remaining_ratio: float = clampf(
+			_simulation.unit_lunge_timers[unit_index] / GameConfig.UNIT_LUNGE_DURATION,
+			0.0,
+			1.0
+		)
+		var lunge_envelope := sin((1.0 - remaining_ratio) * PI)
+		lunge_offset = _simulation.unit_lunge_directions[unit_index] * GameConfig.UNIT_LUNGE_DISTANCE * lunge_envelope
+	return _grid.grid_to_screen(_simulation.unit_positions[unit_index] + lunge_offset) + Vector2(0, -11)
 
 
 func _draw() -> void:

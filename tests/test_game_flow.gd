@@ -11,6 +11,8 @@ func run(tree: SceneTree) -> Array[String]:
 	await _test_scene_contract(tree, main_scene)
 	await _test_dynamic_building(tree, main_scene)
 	await _test_production_and_feedback(tree, main_scene)
+	await _test_batched_lunge(tree, main_scene)
+	await _test_trauma_shake(tree)
 	await _test_terminal_routes(tree, main_scene)
 	return failures
 
@@ -83,6 +85,10 @@ func _test_terminal_routes(tree: SceneTree, main_scene: PackedScene) -> void:
 	victory.step_simulation(1.0 / 30.0)
 	_expect(victory.game_result == "VICTORY", "enemy HQ destruction routes victory")
 	_expect(victory.fx.hq_hit_feedback_count == 1, "HQ damage routes strongest flash event")
+	var fx_properties := _property_names(victory.fx)
+	_expect(fx_properties.has("hq_destroyed_feedback_count"), "HQ destruction exposes distinct major feedback counter")
+	if fx_properties.has("hq_destroyed_feedback_count"):
+		_expect(victory.fx.hq_destroyed_feedback_count == 1, "HQ destruction routes one major shake event")
 	_expect(victory.hud.result_overlay.visible, "terminal state reveals restart overlay")
 	var enemy_hq_view = victory.building_views[victory.simulation.enemy_hq_id]
 	enemy_hq_view._process(0.7)
@@ -100,6 +106,74 @@ func _test_terminal_routes(tree: SceneTree, main_scene: PackedScene) -> void:
 	await tree.process_frame
 
 
+func _test_batched_lunge(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(5.5, 12.0))
+	var simulation_properties := _property_names(main.simulation)
+	if not simulation_properties.has("unit_lunge_timers"):
+		_expect(false, "renderer lunge contract has packed timer data")
+		main.queue_free()
+		await tree.process_frame
+		return
+	main.simulation.unit_lunge_timers[0] = main.simulation.config.UNIT_LUNGE_DURATION * 0.5
+	main.simulation.unit_lunge_directions[0] = Vector2.RIGHT
+	_expect(main.unit_renderer.has_method("get_unit_render_position"), "renderer exposes its shared batched position calculation")
+	if not main.unit_renderer.has_method("get_unit_render_position"):
+		main.queue_free()
+		await tree.process_frame
+		return
+	main.unit_renderer.sync()
+	var rendered_origin: Vector2 = main.unit_renderer.get_unit_render_position(0)
+	var expected_origin: Vector2 = main.grid.grid_to_screen(
+		main.simulation.unit_positions[0] + Vector2.RIGHT * main.simulation.config.UNIT_LUNGE_DISTANCE
+	) + Vector2(0, -11)
+	_expect(rendered_origin.is_equal_approx(expected_origin), "batched transform applies target-facing lunge without a unit node")
+	main.queue_free()
+	await tree.process_frame
+
+
+func _test_trauma_shake(tree: SceneTree) -> void:
+	var fx_script := load("res://scripts/fx.gd")
+	var fx = fx_script.new()
+	var fx_properties := _property_names(fx)
+	_expect(fx_properties.has("trauma"), "FX exposes trauma state")
+	_expect(fx.has_method("show_hq_destroyed"), "FX exposes separate HQ destruction shake")
+	if not fx_properties.has("trauma") or not fx.has_method("show_hq_destroyed"):
+		fx.free()
+		return
+	fx.show_hq_hit(Vector2i(5, 21), 2)
+	_expect(is_equal_approx(fx.trauma, 0.25), "one HQ hit adds exactly 0.25 trauma")
+	fx.show_hq_hit(Vector2i(5, 21), 2)
+	_expect(is_equal_approx(fx.trauma, 0.25), "same HQ hit cannot retrigger inside 0.5 seconds")
+	var same_phase_a: Vector2 = fx.get_screen_shake_offset()
+	var same_phase_b: Vector2 = fx.get_screen_shake_offset()
+	_expect(same_phase_a.is_equal_approx(same_phase_b), "shake uses stable smooth phase instead of per-call randomness")
+	var maximum_normal_offset := same_phase_a.length()
+	for sample in 30:
+		fx._process(1.0 / 60.0)
+		maximum_normal_offset = maxf(maximum_normal_offset, fx.get_screen_shake_offset().length())
+	_expect(maximum_normal_offset <= 3.001, "continuous HQ hits stay within three screen pixels")
+	_expect(fx.trauma < 0.25, "trauma decays over time")
+	fx.show_hq_hit(Vector2i(5, 21), 2)
+	_expect(fx.trauma <= 1.0, "trauma remains capped at one")
+	fx.show_hq_destroyed(Vector2i(5, 21), 2)
+	var maximum_major_offset := 0.0
+	for sample in 24:
+		maximum_major_offset = maxf(maximum_major_offset, fx.get_screen_shake_offset().length())
+		fx._process(1.0 / 60.0)
+	_expect(maximum_major_offset <= 6.001 and maximum_major_offset > 3.0, "terminal HQ shake is stronger but capped at six pixels")
+	fx.free()
+
+
 func _expect(condition: bool, message: String) -> void:
 	if not condition:
 		failures.append(message)
+
+
+func _property_names(value: Object) -> Array[String]:
+	var names: Array[String] = []
+	for property in value.get_property_list():
+		names.append(String(property.name))
+	return names

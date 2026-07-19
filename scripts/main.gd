@@ -98,7 +98,9 @@ func _consume_events(events: Array) -> void:
 				fx.show_hq_hit(Vector2i(event.cell), int(event.team))
 				_flash_building(int(event.building_id))
 			"building_destroyed":
-				if int(event.kind) != simulation.BUILDING_HQ:
+				if int(event.kind) == simulation.BUILDING_HQ:
+					fx.show_hq_destroyed(Vector2i(event.cell), int(event.team))
+				else:
 					fx.show_spawner_destroyed(Vector2i(event.cell), int(event.team))
 				_start_building_destroy(int(event.building_id))
 			"territory_changed":

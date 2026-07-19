@@ -18,7 +18,13 @@ const DARK_DEBRIS := Color("182033")
 @export var building_destroy_duration := 0.72
 @export var territory_duration := 0.62
 @export var hq_hit_duration := 0.48
-@export var fragment_count := 10
+@export var fragment_count := 7
+@export var hq_hit_trauma := 0.25
+@export var trauma_decay_per_second := 0.35
+@export var hq_retrigger_interval := 0.5
+@export var normal_shake_max_offset := 3.0
+@export var major_shake_max_offset := 6.0
+@export var major_shake_duration := 0.4
 
 var placement_feedback_count := 0
 var hit_feedback_count := 0
@@ -28,15 +34,19 @@ var spawner_hit_feedback_count := 0
 var spawner_destroyed_feedback_count := 0
 var territory_change_feedback_count := 0
 var hq_hit_feedback_count := 0
+var hq_destroyed_feedback_count := 0
 var last_feedback_mode := ""
 var last_placement_cell := Vector2i(-1, -1)
 var last_placement_valid := false
-var screen_shake_strength := 0.0
+var trauma := 0.0
 
 var _grid: GridBoard
 var _effects: Array[Dictionary] = []
 var _fragments: Array[Dictionary] = []
 var _rng := RandomNumberGenerator.new()
+var _hq_retrigger_left := 0.0
+var _major_shake_left := 0.0
+var _shake_time := 0.0
 
 
 func _ready() -> void:
@@ -67,7 +77,7 @@ func show_hit(grid_position: Vector2) -> void:
 
 func show_unit_death(grid_position: Vector2, team: int) -> void:
 	_add_effect("unit_death", grid_position, team, death_duration)
-	_spawn_fragments(grid_position, team, fragment_count, 95.0, 190.0)
+	_spawn_fragments(grid_position, team, fragment_count, 70.0, 125.0, 2.0, 4.0)
 	unit_death_feedback_count += 1
 	last_feedback_mode = "unit_death"
 
@@ -86,7 +96,7 @@ func show_spawner_hit(cell: Vector2i, team: int) -> void:
 
 func show_spawner_destroyed(cell: Vector2i, team: int) -> void:
 	_add_effect("spawner_destroyed", cell, team, building_destroy_duration)
-	_spawn_fragments(Vector2(cell) + Vector2(0.5, 0.5), team, fragment_count + 6, 70.0, 155.0)
+	_spawn_fragments(Vector2(cell) + Vector2(0.5, 0.5), team, fragment_count + 6, 70.0, 155.0, 3.0, 7.0)
 	spawner_destroyed_feedback_count += 1
 	last_feedback_mode = "spawner_destroyed"
 
@@ -99,18 +109,33 @@ func show_territory_change(cell: Vector2i, team: int) -> void:
 
 func show_hq_hit(cell: Vector2i, team: int) -> void:
 	_add_effect("hq_hit", cell, team, hq_hit_duration)
-	screen_shake_strength = 8.0
+	if _hq_retrigger_left <= 0.0:
+		trauma = minf(1.0, trauma + hq_hit_trauma)
+		_hq_retrigger_left = hq_retrigger_interval
 	hq_hit_feedback_count += 1
 	last_feedback_mode = "hq_hit"
 
 
+func show_hq_destroyed(cell: Vector2i, team: int) -> void:
+	_add_effect("hq_hit", cell, team, hq_hit_duration)
+	_major_shake_left = major_shake_duration
+	trauma = minf(1.0, maxf(trauma, 0.6))
+	hq_destroyed_feedback_count += 1
+	last_feedback_mode = "hq_destroyed"
+
+
 func get_screen_shake_offset() -> Vector2:
-	if screen_shake_strength <= 0.01:
+	var normal_amplitude := normal_shake_max_offset * trauma * trauma
+	var major_ratio := clampf(_major_shake_left / maxf(major_shake_duration, 0.001), 0.0, 1.0)
+	var major_amplitude := major_shake_max_offset * major_ratio * major_ratio
+	var amplitude := maxf(normal_amplitude, major_amplitude)
+	if amplitude <= 0.001:
 		return Vector2.ZERO
-	return Vector2(
-		_rng.randf_range(-screen_shake_strength, screen_shake_strength),
-		_rng.randf_range(-screen_shake_strength, screen_shake_strength)
+	var wave := Vector2(
+		sin(_shake_time * TAU * 6.7 + 0.23),
+		sin(_shake_time * TAU * 4.9 + 1.61)
 	)
+	return wave.normalized() * amplitude
 
 
 func _add_effect(kind: String, grid_position: Variant, team: int, duration: float, extras: Dictionary = {}) -> void:
@@ -126,7 +151,15 @@ func _add_effect(kind: String, grid_position: Variant, team: int, duration: floa
 	queue_redraw()
 
 
-func _spawn_fragments(grid_position: Vector2, team: int, count: int, min_speed: float, max_speed: float) -> void:
+func _spawn_fragments(
+	grid_position: Vector2,
+	team: int,
+	count: int,
+	min_speed: float,
+	max_speed: float,
+	min_size: float,
+	max_size: float
+) -> void:
 	var at := _screen_position(grid_position)
 	for index in count:
 		var angle := TAU * float(index) / float(count) + _rng.randf_range(-0.18, 0.18)
@@ -137,11 +170,15 @@ func _spawn_fragments(grid_position: Vector2, team: int, count: int, min_speed: 
 			"team": team,
 			"life": death_duration,
 			"duration": death_duration,
-			"size": _rng.randf_range(3.0, 7.0),
+			"size": _rng.randf_range(min_size, max_size),
 		})
 
 
 func _process(delta: float) -> void:
+	_shake_time += delta
+	_hq_retrigger_left = maxf(0.0, _hq_retrigger_left - delta)
+	_major_shake_left = maxf(0.0, _major_shake_left - delta)
+	trauma = maxf(0.0, trauma - trauma_decay_per_second * delta)
 	for index in range(_effects.size() - 1, -1, -1):
 		var effect := _effects[index]
 		effect["life"] = float(effect.life) - delta
@@ -158,7 +195,6 @@ func _process(delta: float) -> void:
 		fragment["position"] = Vector2(fragment.position) + Vector2(fragment.velocity) * delta
 		fragment["velocity"] = Vector2(fragment.velocity) * pow(0.055, delta)
 		_fragments[index] = fragment
-	screen_shake_strength = move_toward(screen_shake_strength, 0.0, delta * 24.0)
 	queue_redraw()
 
 
@@ -217,10 +253,10 @@ func _draw_hit(effect: Dictionary) -> void:
 func _draw_unit_death(effect: Dictionary) -> void:
 	var at := _screen_position(Vector2(effect.grid_position)) + Vector2(0, -13)
 	var ratio := _life_ratio(effect)
-	var radius := 8.0 + 19.0 * (1.0 - ratio)
+	var radius := 4.0 + 10.0 * (1.0 - ratio)
 	draw_arc(at, radius, 0.0, TAU, 24, Color(_team_color(int(effect.team)), ratio), 3.0, true)
 	# The contracting center makes death read as a pop rather than another hit.
-	draw_circle(at, 8.0 * ratio, Color(HIT_WHITE, ratio * 0.85))
+	draw_circle(at, 5.0 * ratio, Color(HIT_WHITE, ratio * 0.85))
 
 
 func _draw_production(effect: Dictionary) -> void:
