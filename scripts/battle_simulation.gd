@@ -41,7 +41,6 @@ var _enemy_build_timer := GameConfig.ENEMY_BUILD_INTERVAL
 var _enemy_build_cursor := 0
 var _events: Array[Dictionary] = []
 var _buckets: Array[Array] = []
-var _unit_index_by_id: Dictionary = {}
 var _rng := RandomNumberGenerator.new()
 
 
@@ -75,7 +74,6 @@ func reset() -> void:
 	_rng.seed = 731942
 	_events.clear()
 	_buckets.clear()
-	_unit_index_by_id.clear()
 	_buckets.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	enemy_hq_id = add_building(TEAM_ENEMY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, 0))
 	ally_hq_id = add_building(TEAM_ALLY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 1))
@@ -102,7 +100,6 @@ func spawn_unit(team: int, position: Vector2) -> int:
 	unit_speed_scales.append(_rng.randf_range(1.0 - GameConfig.UNIT_SPEED_VARIATION, 1.0 + GameConfig.UNIT_SPEED_VARIATION))
 	unit_lunge_timers.append(0.0)
 	unit_lunge_directions.append(Vector2.ZERO)
-	_unit_index_by_id[unit_id] = unit_ids.size() - 1
 	return unit_id
 
 
@@ -330,13 +327,9 @@ func _rebuild_buckets() -> void:
 func _find_target(unit_index: int) -> Dictionary:
 	var position := unit_positions[unit_index]
 	var team := unit_teams[unit_index]
-	var retained := _resolve_target(unit_target_ids[unit_index], team, position, GameConfig.UNIT_DETECT_RANGE)
-	if int(retained.id) != 0:
-		return retained
 	var cell := Vector2i(floori(position.x), floori(position.y))
 	var best_distance_sq := GameConfig.UNIT_DETECT_RANGE * GameConfig.UNIT_DETECT_RANGE
-	var best_id := 0
-	var best_index := -1
+	var best_target := {"id": 0, "unit_index": -1, "building_index": -1, "position": Vector2.ZERO}
 	var bucket_radius := ceili(GameConfig.UNIT_DETECT_RANGE)
 	for row in range(maxi(0, cell.y - bucket_radius), mini(GameConfig.GRID_ROWS - 1, cell.y + bucket_radius) + 1):
 		for column in range(maxi(0, cell.x - bucket_radius), mini(GameConfig.GRID_COLUMNS - 1, cell.x + bucket_radius) + 1):
@@ -347,10 +340,12 @@ func _find_target(unit_index: int) -> Dictionary:
 				var distance_sq := position.distance_squared_to(unit_positions[candidate_index])
 				if distance_sq <= best_distance_sq:
 					best_distance_sq = distance_sq
-					best_id = unit_ids[candidate_index]
-					best_index = candidate_index
-	if best_id != 0:
-		return {"id": best_id, "unit_index": best_index, "building_index": -1, "position": unit_positions[best_index]}
+					best_target = {
+						"id": unit_ids[candidate_index],
+						"unit_index": candidate_index,
+						"building_index": -1,
+						"position": unit_positions[candidate_index],
+					}
 	for building_index in buildings.size():
 		var building := buildings[building_index]
 		if bool(building.destroyed) or int(building.team) == team:
@@ -359,28 +354,13 @@ func _find_target(unit_index: int) -> Dictionary:
 		var distance_sq := position.distance_squared_to(building_position)
 		if distance_sq <= best_distance_sq:
 			best_distance_sq = distance_sq
-			best_id = -int(building.id)
-			best_index = building_index
-	var resolved_position := Vector2.ZERO
-	if best_index >= 0:
-		resolved_position = Vector2(buildings[best_index].cell) + Vector2(0.5, 0.5)
-	return {"id": best_id, "unit_index": -1, "building_index": best_index, "position": resolved_position}
-
-
-func _resolve_target(target_id: int, team: int, position: Vector2, maximum_range: float) -> Dictionary:
-	var range_squared := maximum_range * maximum_range
-	if target_id > 0 and _unit_index_by_id.has(target_id):
-		var index := int(_unit_index_by_id[target_id])
-		if unit_hp[index] > 0.0 and unit_teams[index] != team and position.distance_squared_to(unit_positions[index]) <= range_squared:
-			return {"id": target_id, "unit_index": index, "building_index": -1, "position": unit_positions[index]}
-	elif target_id < 0:
-		var building_index := _building_index_from_id(-target_id)
-		if building_index >= 0:
-			var building := buildings[building_index]
-			var building_position := Vector2(building.cell) + Vector2(0.5, 0.5)
-			if not bool(building.destroyed) and int(building.team) != team and position.distance_squared_to(building_position) <= range_squared:
-				return {"id": target_id, "unit_index": -1, "building_index": building_index, "position": building_position}
-	return {"id": 0, "unit_index": -1, "building_index": -1, "position": Vector2.ZERO}
+			best_target = {
+				"id": -int(building.id),
+				"unit_index": -1,
+				"building_index": building_index,
+				"position": building_position,
+			}
+	return best_target
 
 
 func _calculate_separation(unit_index: int) -> Vector2:
@@ -424,7 +404,6 @@ func _attack_target(attacker_index: int, target: Dictionary) -> void:
 
 func _remove_dead_units() -> void:
 	var index := unit_ids.size() - 1
-	var removed_any := false
 	while index >= 0:
 		if unit_hp[index] <= 0.0:
 			var dead_position := unit_positions[index]
@@ -433,10 +412,7 @@ func _remove_dead_units() -> void:
 			_events.append({"type": "unit_death", "team": dead_team, "position": dead_position})
 			_award_kill(killer_team)
 			_remove_unit_at(index)
-			removed_any = true
 		index -= 1
-	if removed_any:
-		_rebuild_unit_index()
 
 
 func _remove_unit_at(index: int) -> void:
@@ -464,12 +440,6 @@ func _remove_unit_at(index: int) -> void:
 	unit_speed_scales.resize(last)
 	unit_lunge_timers.resize(last)
 	unit_lunge_directions.resize(last)
-
-
-func _rebuild_unit_index() -> void:
-	_unit_index_by_id.clear()
-	for unit_index in unit_ids.size():
-		_unit_index_by_id[unit_ids[unit_index]] = unit_index
 
 
 func _add_building(team: int, kind: int, cell: Vector2i) -> int:

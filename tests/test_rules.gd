@@ -11,6 +11,7 @@ func run() -> Array[String]:
 	_test_build_and_economy()
 	_test_combat_and_kill_reward()
 	_test_cross_column_engagement()
+	_test_nearest_hostile_selection()
 	_test_ally_separation()
 	_test_lunge_state_contract()
 	_test_frontline_ownership()
@@ -171,6 +172,35 @@ func _test_cross_column_engagement() -> void:
 			break
 	_expect(hit_seen, "units spawned in different columns pursue and strike each other")
 	_expect(simulation.unit_positions[0].x > 4.35 or simulation.unit_positions[1].x < 5.65, "hostile seek changes logical x")
+
+
+func _test_nearest_hostile_selection() -> void:
+	var retarget_simulation = _new_simulation()
+	if retarget_simulation == null:
+		return
+	retarget_simulation.spawn_unit(retarget_simulation.TEAM_ALLY, Vector2(5.5, 12.0))
+	var far_enemy_id: int = retarget_simulation.spawn_unit(retarget_simulation.TEAM_ENEMY, Vector2(4.0, 10.6))
+	retarget_simulation.unit_positions[0] = Vector2(5.5, 12.0)
+	retarget_simulation.unit_positions[1] = Vector2(4.0, 10.6)
+	retarget_simulation.tick(1.0 / 30.0)
+	_expect(retarget_simulation.unit_target_ids[0] == far_enemy_id, "unit initially acquires the only detected hostile")
+	var near_enemy_id: int = retarget_simulation.spawn_unit(retarget_simulation.TEAM_ENEMY, Vector2(5.8, 11.8))
+	retarget_simulation.unit_positions[2] = Vector2(5.8, 11.8)
+	retarget_simulation.tick(1.0 / 30.0)
+	_expect(retarget_simulation.unit_target_ids[0] == near_enemy_id, "unit switches to a newly detected nearer hostile")
+
+	var building_simulation = _new_simulation()
+	building_simulation.spawn_unit(building_simulation.TEAM_ALLY, Vector2(5.5, 11.4))
+	building_simulation.spawn_unit(building_simulation.TEAM_ENEMY, Vector2(7.0, 11.4))
+	building_simulation.unit_positions[0] = Vector2(5.5, 11.4)
+	building_simulation.unit_positions[1] = Vector2(7.0, 11.4)
+	var near_building_id: int = building_simulation.add_building(
+		building_simulation.TEAM_ENEMY,
+		building_simulation.BUILDING_SPAWNER,
+		Vector2i(5, 10)
+	)
+	building_simulation.tick(1.0 / 30.0)
+	_expect(building_simulation.unit_target_ids[0] == -near_building_id, "nearest hostile building wins over a farther hostile unit")
 
 
 func _test_ally_separation() -> void:
