@@ -10,6 +10,8 @@ func run(tree: SceneTree) -> Array[String]:
 		return failures
 	await _test_economy_and_victory(tree, main_scene)
 	await _test_defeat(tree, main_scene)
+	await _test_final_enemy_core_race(tree, main_scene)
+	await _test_final_wave_reward(tree, main_scene)
 	return failures
 
 
@@ -51,7 +53,35 @@ func _test_defeat(tree: SceneTree, main_scene: PackedScene) -> void:
 	await tree.process_frame
 
 
+func _test_final_enemy_core_race(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	main.core_hp = 1
+	main.core.set_hp(1)
+	main.wave_manager.current_wave = 5
+	main.wave_manager.wave_active = true
+	main.wave_manager.set("_remaining_to_spawn", 0)
+	main.wave_manager.set("_living_enemies", 1)
+	main._on_enemy_reached_core(Vector2.ZERO)
+	_expect(main.core_hp == 0, "lethal final enemy depletes core before wave resolution")
+	_expect(main.game_result == "DEFEAT", "lethal final enemy resolves as defeat, not victory")
+	main.queue_free()
+	await tree.process_frame
+
+
+func _test_final_wave_reward(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	main.gold = 100
+	main._on_wave_cleared(5)
+	_expect(main.gold == 125, "final wave clear grants the locked +25 reward")
+	_expect(main.game_result == "VICTORY", "final wave clear resolves as victory")
+	main.queue_free()
+	await tree.process_frame
+
+
 func _expect(condition: bool, message: String) -> void:
 	if not condition:
 		failures.append(message)
-

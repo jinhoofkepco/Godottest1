@@ -26,7 +26,7 @@ Entity scenes are instantiated into dedicated `Enemies`, `Towers`, and `Projecti
 
 ## Game Flow
 
-The match opens between waves with 150 gold and the next-wave button enabled. Starting a wave makes the wave manager spawn enemies in cycling columns. Defeated enemies award gold and trigger white flash, orange fragments, and about 60 ms of hit-stop. Enemies crossing the core line reduce core HP and trigger a small decaying world offset. When all scheduled enemies are gone, a non-final wave awards 25 gold and enables the next-wave button. Clearing wave five shows victory. Core HP zero immediately stops spawning and shows defeat.
+The match opens between waves with 150 gold and the next-wave button enabled. Starting a wave makes the wave manager spawn enemies in cycling columns. Defeated enemies award gold and trigger white flash, orange fragments, and about 60 ms of hit-stop. Enemies crossing the core line reduce core HP and trigger a small decaying world offset. When all scheduled enemies are gone, the cleared wave awards 25 gold; non-final waves enable the next-wave button and wave five shows victory. Core damage resolves before wave completion, so a final enemy that depletes the core produces defeat. Core HP zero immediately stops spawning and shows defeat.
 
 Restart reloads the main scene. The design deliberately has no upgrades, tower selection, pathfinding, audio, persistence, menus, or extra game modes.
 

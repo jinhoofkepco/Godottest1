@@ -116,8 +116,9 @@ func _on_enemy_defeated(at: Vector2) -> void:
 func _on_enemy_reached_core(_at: Vector2) -> void:
 	if game_result != "":
 		return
-	wave_manager.notify_enemy_removed()
 	damage_core(1)
+	if game_result == "":
+		wave_manager.notify_enemy_removed()
 
 
 func _on_wave_started(wave: int) -> void:
@@ -147,4 +148,3 @@ func _finish_match(result: String) -> void:
 func _restart() -> void:
 	get_tree().paused = false
 	get_tree().reload_current_scene()
-
