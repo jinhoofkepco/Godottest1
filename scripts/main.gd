@@ -11,9 +11,9 @@ const EnemyScene = preload("res://scenes/enemy.tscn")
 @onready var world: Node2D = $World
 @onready var grid = $World/Grid
 @onready var core = $World/Core
-@onready var enemies: Node2D = $World/Enemies
-@onready var towers: Node2D = $World/Towers
-@onready var projectiles: Node2D = $World/Projectiles
+@onready var enemies: Node = $World/EntitySort/Enemies
+@onready var towers: Node = $World/EntitySort/Towers
+@onready var projectiles: Node = $World/EntitySort/Projectiles
 @onready var fx = $World/Fx
 @onready var wave_manager = $WaveManager
 @onready var hud = $Hud
@@ -82,8 +82,8 @@ func try_place_tower(cell: Vector2i) -> bool:
 		return false
 	var tower = TowerScene.instantiate()
 	towers.add_child(tower)
-	tower.position = grid.cell_to_world(cell)
-	tower.setup(enemies, projectiles)
+	tower.grid_position = Vector2(cell) + Vector2(0.5, 0.5)
+	tower.setup(grid, enemies, projectiles)
 	grid.occupy(cell)
 	gold -= GameConfig.TOWER_COST
 	hud.update_stats(gold, core_hp, wave_manager.current_wave)
@@ -113,17 +113,17 @@ func _on_spawn_enemy(_wave: int, column: int, speed: float, health: float) -> vo
 		return
 	var enemy = EnemyScene.instantiate()
 	enemies.add_child(enemy)
-	enemy.setup(column, speed, health)
+	enemy.setup(grid, column, speed, health)
 	enemy.defeated.connect(_on_enemy_defeated)
 	enemy.reached_core.connect(_on_enemy_reached_core)
 
 
-func _on_enemy_defeated(at: Vector2) -> void:
+func _on_enemy_defeated(at_grid: Vector2) -> void:
 	if game_result != "":
 		return
 	gold += GameConfig.KILL_REWARD
 	wave_manager.notify_enemy_removed()
-	fx.spawn_burst(at)
+	fx.spawn_burst(grid.grid_to_screen(at_grid))
 	hud.update_stats(gold, core_hp, wave_manager.current_wave)
 
 
