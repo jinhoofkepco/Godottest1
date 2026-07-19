@@ -22,6 +22,8 @@ var _ally_dragons: MultiMeshInstance2D
 var _shadows: MultiMeshInstance2D
 var _death_ghosts: Array[Dictionary] = []
 var _animation_clock := 0.0
+var _last_hp_by_id: Dictionary = {}
+var _hp_bar_time_by_id: Dictionary = {}
 
 
 func _ready() -> void:
@@ -48,6 +50,8 @@ func setup(board: GridBoard, simulation) -> void:
 
 func advance_visuals(delta: float) -> void:
 	_animation_clock += delta
+	for unit_id in _hp_bar_time_by_id.keys():
+		_hp_bar_time_by_id[unit_id] = maxf(0.0, float(_hp_bar_time_by_id[unit_id]) - delta)
 	var index := _death_ghosts.size() - 1
 	while index >= 0:
 		_death_ghosts[index].remaining = float(_death_ghosts[index].remaining) - delta
@@ -85,6 +89,7 @@ func get_shadow_batch_count() -> int:
 func sync() -> void:
 	if not is_instance_valid(_grid) or _simulation == null or _infantry_units == null:
 		return
+	_update_hp_bar_visibility()
 	_sync_infantry_batch()
 	_sync_dragon_batch(_enemy_dragons, TEAM_ENEMY)
 	_sync_dragon_batch(_ally_dragons, TEAM_ALLY)
@@ -221,7 +226,7 @@ func _sync_infantry_batch() -> void:
 			var ghost: Dictionary = _death_ghosts[int(entry.ghost_index)]
 			team = int(ghost.team)
 			unit_kind = int(ghost.kind)
-			screen_position = _grid.grid_to_screen(Vector2(ghost.position)) + Vector2(0, -11)
+			screen_position = _grid.grid_to_screen(Vector2(ghost.position)) + Vector2(0, GameConfig.INFANTRY_FOOT_ANCHOR_Y)
 			direction = Vector2(ghost.direction)
 			state_index = 3
 			var death_progress := 1.0 - clampf(float(ghost.remaining) / GameConfig.INFANTRY_DEATH_DURATION, 0.0, 1.0)
@@ -263,7 +268,7 @@ func _sync_shadows() -> void:
 		var scale := Vector2(1.28, 1.0) if bool(entry.dragon) else Vector2.ONE
 		var at := _grid.grid_to_screen(Vector2(entry.position)) + Vector2(0, 2)
 		_shadows.multimesh.set_instance_transform_2d(index, Transform2D(0.0, scale, 0.0, at))
-		_shadows.multimesh.set_instance_color(index, Color(0.02, 0.03, 0.05, 0.20 if bool(entry.dragon) else 0.32))
+		_shadows.multimesh.set_instance_color(index, Color(0.02, 0.03, 0.05, 0.24 if bool(entry.dragon) else 0.35))
 
 
 func get_direction_index(direction: Vector2, team: int) -> int:
@@ -292,7 +297,35 @@ func get_unit_render_position(unit_index: int) -> Vector2:
 		var remaining_ratio: float = clampf(_simulation.unit_lunge_timers[unit_index] / GameConfig.UNIT_LUNGE_DURATION, 0.0, 1.0)
 		var lunge_envelope := sin((1.0 - remaining_ratio) * PI)
 		lunge_offset = _simulation.unit_lunge_directions[unit_index] * GameConfig.UNIT_LUNGE_DISTANCE * lunge_envelope
-	return _grid.grid_to_screen(_simulation.unit_positions[unit_index] + lunge_offset) + Vector2(0, -11)
+	return _grid.grid_to_screen(_simulation.unit_positions[unit_index] + lunge_offset) + Vector2(0, GameConfig.INFANTRY_FOOT_ANCHOR_Y)
+
+
+func _update_hp_bar_visibility() -> void:
+	var living_ids: Dictionary = {}
+	for index in _simulation.unit_ids.size():
+		var unit_id: int = _simulation.unit_ids[index]
+		living_ids[unit_id] = true
+		var current_hp: float = _simulation.unit_hp[index]
+		var maximum_hp := GameConfig.UNIT_MAX_HP
+		if _simulation.unit_kinds[index] == UNIT_RANGED:
+			maximum_hp = GameConfig.RANGED_UNIT_MAX_HP
+		elif _simulation.unit_kinds[index] == UNIT_DRAGON:
+			maximum_hp = GameConfig.DRAGON_UNIT_MAX_HP
+		var previous_hp: float = float(_last_hp_by_id.get(unit_id, maximum_hp))
+		if current_hp + 0.0001 < previous_hp:
+			_hp_bar_time_by_id[unit_id] = GameConfig.UNIT_HP_BAR_VISIBLE_SECONDS
+		elif current_hp >= maximum_hp - 0.0001:
+			_hp_bar_time_by_id[unit_id] = 0.0
+		_last_hp_by_id[unit_id] = current_hp
+	for unit_id in _last_hp_by_id.keys():
+		if not living_ids.has(unit_id):
+			_last_hp_by_id.erase(unit_id)
+			_hp_bar_time_by_id.erase(unit_id)
+
+
+func get_hp_bar_alpha(unit_id: int) -> float:
+	var remaining: float = float(_hp_bar_time_by_id.get(unit_id, 0.0))
+	return clampf(remaining / GameConfig.UNIT_HP_BAR_FADE_SECONDS, 0.0, 1.0)
 
 
 func _draw() -> void:
@@ -305,9 +338,10 @@ func _draw() -> void:
 		elif _simulation.unit_kinds[index] == UNIT_DRAGON:
 			maximum_hp = GameConfig.DRAGON_UNIT_MAX_HP
 		var ratio := clampf(_simulation.unit_hp[index] / maximum_hp, 0.0, 1.0)
-		if ratio >= 0.995:
+		var alpha := get_hp_bar_alpha(_simulation.unit_ids[index])
+		if ratio >= 0.995 or alpha <= 0.0:
 			continue
-		var at := _grid.grid_to_screen(_simulation.unit_positions[index]) + Vector2(-9, -31)
-		draw_rect(Rect2(at, Vector2(18, 3)), Color("10131c"))
+		var at := _grid.grid_to_screen(_simulation.unit_positions[index]) + Vector2(-9, -53)
+		draw_rect(Rect2(at, Vector2(18, 2)), Color(0.04, 0.05, 0.08, 0.86 * alpha))
 		var color := GameConfig.COLOR_ALLY if _simulation.unit_teams[index] == TEAM_ALLY else GameConfig.COLOR_ENEMY
-		draw_rect(Rect2(at + Vector2.ONE, Vector2(16.0 * ratio, 1)), color.lightened(0.25))
+		draw_rect(Rect2(at + Vector2(1, 0.5), Vector2(16.0 * ratio, 1)), Color(color.lightened(0.25), alpha))

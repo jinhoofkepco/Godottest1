@@ -39,6 +39,7 @@ func run(tree: SceneTree) -> Array[String]:
 	await _test_dynamic_building(tree, main_scene)
 	await _test_production_and_feedback(tree, main_scene)
 	await _test_ranged_presentation(tree, main_scene)
+	await _test_damage_hp_bar_policy(tree, main_scene)
 	await _test_map_view_transform_and_input(tree, main_scene)
 	await _test_emulated_mouse_stream_filter(tree, main_scene)
 	await _test_finished_map_interaction_gate(tree, main_scene)
@@ -47,6 +48,31 @@ func run(tree: SceneTree) -> Array[String]:
 	await _test_zero_screen_shake(tree, main_scene)
 	await _test_terminal_routes(tree, main_scene)
 	return failures
+
+
+func _test_damage_hp_bar_policy(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	var unit_id: int = main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(8.5, 25.5), main.simulation.UNIT_MELEE)
+	main.unit_renderer.sync()
+	_expect(main.unit_renderer.has_method("get_hp_bar_alpha"), "renderer exposes damage-only HP-bar visibility")
+	if not main.unit_renderer.has_method("get_hp_bar_alpha"):
+		main.queue_free()
+		await tree.process_frame
+		return
+	_expect(is_zero_approx(main.unit_renderer.get_hp_bar_alpha(unit_id)), "full-health unit hides its HP bar")
+	var unit_index: int = main.simulation.unit_ids.find(unit_id)
+	main.simulation.unit_hp[unit_index] -= 1.0
+	main.unit_renderer.sync()
+	_expect(is_equal_approx(main.unit_renderer.get_hp_bar_alpha(unit_id), 1.0), "taking damage shows the HP bar at full alpha")
+	main.unit_renderer.advance_visuals(2.7)
+	var fade_alpha: float = main.unit_renderer.get_hp_bar_alpha(unit_id)
+	_expect(fade_alpha > 0.0 and fade_alpha < 1.0, "unit HP bar fades during the end of its three-second window")
+	main.unit_renderer.advance_visuals(0.4)
+	_expect(is_zero_approx(main.unit_renderer.get_hp_bar_alpha(unit_id)), "unit HP bar disappears after three seconds")
+	main.queue_free()
+	await tree.process_frame
 
 
 func _test_grid_draw_ownership_snapshot(tree: SceneTree) -> void:
@@ -125,7 +151,7 @@ func _test_production_and_feedback(tree: SceneTree, main_scene: PackedScene) -> 
 	_expect(main.fx.production_feedback_count == 1, "production queues a distinct pulse")
 	var red_id: int = main.simulation.spawn_unit(main.simulation.TEAM_ENEMY, Vector2(4.5, 10.2))
 	var blue_id: int = main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 10.7))
-	main.simulation.unit_hp[main.simulation.unit_ids.find(blue_id)] = 1.0
+	main.simulation.unit_hp[main.simulation.unit_ids.find(blue_id)] = 0.5
 	main.step_simulation(1.0 / 30.0)
 	_expect(red_id > 0 and main.fx.hit_feedback_count > 0, "melee strike routes hit spark")
 	_expect(main.fx.unit_death_feedback_count > 0, "lethal strike routes death pop")
@@ -511,7 +537,7 @@ func _test_batched_lunge(tree: SceneTree, main_scene: PackedScene) -> void:
 	var rendered_origin: Vector2 = main.unit_renderer.get_unit_render_position(0)
 	var expected_origin: Vector2 = main.grid.grid_to_screen(
 		main.simulation.unit_positions[0] + Vector2.RIGHT * main.simulation.config.UNIT_LUNGE_DISTANCE
-	) + Vector2(0, -11)
+	) + Vector2(0, main.simulation.config.INFANTRY_FOOT_ANCHOR_Y)
 	_expect(rendered_origin.is_equal_approx(expected_origin), "batched transform applies target-facing lunge without a unit node")
 	main.queue_free()
 	await tree.process_frame

@@ -541,10 +541,11 @@ func _find_target(unit_index: int) -> void:
 	var position := unit_positions[unit_index]
 	var team := unit_teams[unit_index]
 	var can_target_air := unit_kinds[unit_index] != UNIT_MELEE
+	var detect_range := get_unit_detect_range(unit_kinds[unit_index])
 	var cell := Vector2i(floori(position.x), floori(position.y))
-	var best_distance_sq := _seed_retained_target(unit_target_ids[unit_index], team, position, can_target_air)
+	var best_distance_sq := _seed_retained_target(unit_target_ids[unit_index], team, position, can_target_air, detect_range)
 	var target_buckets := _ally_buckets if team == TEAM_ENEMY else _enemy_buckets
-	var bucket_radius := ceili(GameConfig.UNIT_DETECT_RANGE)
+	var bucket_radius := ceili(detect_range)
 	for row in range(maxi(0, cell.y - bucket_radius), mini(GameConfig.GRID_ROWS - 1, cell.y + bucket_radius) + 1):
 		for column in range(maxi(0, cell.x - bucket_radius), mini(GameConfig.GRID_COLUMNS - 1, cell.x + bucket_radius) + 1):
 			if not _bucket_can_contain_nearer_target(position, column, row, best_distance_sq):
@@ -576,8 +577,8 @@ func _find_target(unit_index: int) -> void:
 		_assign_hq_fallback(team, position)
 
 
-func _seed_retained_target(target_id: int, team: int, position: Vector2, can_target_air: bool) -> float:
-	var maximum_distance_sq := GameConfig.UNIT_DETECT_RANGE * GameConfig.UNIT_DETECT_RANGE
+func _seed_retained_target(target_id: int, team: int, position: Vector2, can_target_air: bool, detect_range: float) -> float:
+	var maximum_distance_sq := detect_range * detect_range
 	_found_target_id = 0
 	_found_unit_index = -1
 	_found_building_index = -1
@@ -602,6 +603,10 @@ func _seed_retained_target(target_id: int, team: int, position: Vector2, can_tar
 				_found_target_position = building_position
 				return distance_sq
 	return maximum_distance_sq
+
+
+func get_unit_detect_range(unit_kind: int) -> float:
+	return GameConfig.DRAGON_UNIT_DETECT_RANGE if unit_kind == UNIT_DRAGON else GameConfig.UNIT_DETECT_RANGE
 
 
 func _bucket_can_contain_nearer_target(position: Vector2, column: int, row: int, best_distance_sq: float) -> bool:

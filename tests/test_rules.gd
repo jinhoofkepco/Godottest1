@@ -41,6 +41,14 @@ func _test_grid_projection_and_dynamic_building() -> void:
 	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(3.5, 36.5))
 	simulation.recalculate_territory()
 	_expect(not grid.can_build(Vector2i(3, 35), simulation.TEAM_ALLY), "frontline capture immediately revokes blue build permission")
+	_expect(grid.has_method("get_frontline_segments"), "grid exposes ownership-boundary segments for a highlighted front line")
+	if grid.has_method("get_frontline_segments"):
+		var split_ownership := PackedByteArray()
+		split_ownership.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+		for row in GameConfig.GRID_ROWS:
+			for column in GameConfig.GRID_COLUMNS:
+				split_ownership[row * GameConfig.GRID_COLUMNS + column] = simulation.TEAM_ENEMY if row < GameConfig.GRID_ROWS / 2 else simulation.TEAM_ALLY
+		_expect(grid.get_frontline_segments(split_ownership).size() == GameConfig.GRID_COLUMNS, "straight initial front produces one highlighted edge per column")
 	grid.free()
 
 
@@ -61,12 +69,32 @@ func _test_config_values() -> void:
 	_expect(constants.has("UNIT_SEPARATION_RADIUS"), "config exposes ally separation radius")
 	_expect(constants.has("UNIT_SEEK_WEIGHT"), "config exposes seek steering weight")
 	_expect(constants.has("UNIT_LUNGE_DURATION"), "config exposes attack lunge duration")
+	_expect(constants.has("BASE_UNIT_MAX_HP"), "config exposes neutral base HP for class ratios")
+	_expect(constants.has("BASE_UNIT_ATTACK_DAMAGE"), "config exposes neutral base damage for class ratios")
+	_expect(constants.has("BASE_UNIT_ATTACK_RANGE"), "config exposes neutral base range for class ratios")
+	if constants.has("BASE_UNIT_MAX_HP") and constants.has("BASE_UNIT_ATTACK_DAMAGE") and constants.has("BASE_UNIT_ATTACK_RANGE"):
+		var base_hp := float(constants.BASE_UNIT_MAX_HP)
+		var base_damage := float(constants.BASE_UNIT_ATTACK_DAMAGE)
+		var base_range := float(constants.BASE_UNIT_ATTACK_RANGE)
+		_expect(is_equal_approx(float(constants.get("UNIT_MAX_HP", -1.0)), base_hp * 2.0), "melee HP is exactly twice base")
+		_expect(is_equal_approx(float(constants.get("UNIT_ATTACK_DAMAGE", -1.0)), base_damage * 0.5), "melee damage is exactly half base")
+		_expect(is_equal_approx(float(constants.get("RANGED_UNIT_MAX_HP", -1.0)), base_hp * 0.5), "ranged HP is exactly half base")
+		_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_DAMAGE", -1.0)), base_damage * 1.5), "ranged damage is exactly 1.5 times base")
+		_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)), base_range * 2.0), "ranged range is exactly twice base")
+		_expect(is_equal_approx(float(constants.get("DRAGON_UNIT_ATTACK_RANGE", -1.0)), float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)) * 1.5), "dragon range is exactly 1.5 times ranged")
+		_expect(is_equal_approx(float(constants.get("DRAGON_UNIT_DETECT_RANGE", -1.0)), float(constants.get("UNIT_DETECT_RANGE", -1.0)) * 1.5), "dragon sight is exactly 1.5 times common sight")
 	_expect(constants.get("RANGED_SPAWNER_COST", -1) == 80, "ranged spawner costs 80 gold")
-	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_MAX_HP", -1.0)), 32.0), "ranged unit has 32 HP")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_MAX_HP", -1.0)), 24.0), "ranged unit has 24 HP")
 	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_SPEED", -1.0)), 1.25), "ranged unit speed is 1.25")
-	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)), 2.40), "ranged unit attack range is 2.40")
-	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_DAMAGE", -1.0)), 1.20), "ranged unit damage is 1.20")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)), 1.44), "ranged unit attack range is 1.44")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_DAMAGE", -1.0)), 2.475), "ranged unit damage is 2.475")
 	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_INTERVAL", -1.0)), 0.90), "ranged unit attack interval is 0.90 seconds")
+	_expect(constants.has("COLOR_TERRITORY_ALLY") and constants.has("COLOR_TERRITORY_ENEMY"), "config separates muted territory colors from vivid actor colors")
+	if constants.has("COLOR_TERRITORY_ALLY") and constants.has("COLOR_TERRITORY_ENEMY"):
+		var ally_ground := Color(constants.COLOR_TERRITORY_ALLY)
+		var enemy_ground := Color(constants.COLOR_TERRITORY_ENEMY)
+		_expect(ally_ground.s < Color(constants.COLOR_ALLY).s * 0.75 and ally_ground.get_luminance() < Color(constants.COLOR_ALLY).get_luminance() * 0.75, "blue territory is substantially more muted than blue actors")
+		_expect(enemy_ground.s < Color(constants.COLOR_ENEMY).s * 0.75 and enemy_ground.get_luminance() < Color(constants.COLOR_ENEMY).get_luminance() * 0.75, "red territory is substantially more muted than red actors")
 
 
 func _test_expanded_grid_and_obstacles() -> void:
@@ -256,7 +284,7 @@ func _test_ranged_data_and_combat() -> void:
 	swap_simulation.unit_positions[0] = Vector2(5.5, 10.2)
 	swap_simulation.unit_positions[1] = Vector2(5.5, 10.7)
 	swap_simulation.unit_positions[2] = Vector2(5.5, 36.0)
-	swap_simulation.unit_hp[1] = 1.0
+	swap_simulation.unit_hp[1] = 0.5
 	swap_simulation.tick(1.0 / 30.0)
 	_expect(swap_simulation.unit_ids.size() == 2, "lethal hit swap-removes one packed unit")
 	_expect(swap_simulation.unit_kinds.size() == swap_simulation.unit_ids.size(), "unit kinds stay size-aligned after removal")
@@ -271,17 +299,17 @@ func _test_ranged_data_and_combat() -> void:
 	_expect(not _has_event(melee_simulation.drain_events(), "hit"), "melee cannot hit at distance 2.0")
 
 	var ranged_simulation = _new_simulation()
-	ranged_simulation.spawn_unit(ranged_simulation.TEAM_ALLY, Vector2(5.5, 12.0), ranged_simulation.UNIT_RANGED)
+	ranged_simulation.spawn_unit(ranged_simulation.TEAM_ALLY, Vector2(5.5, 11.2), ranged_simulation.UNIT_RANGED)
 	ranged_simulation.spawn_unit(ranged_simulation.TEAM_ENEMY, Vector2(5.5, 10.0), ranged_simulation.UNIT_MELEE)
-	ranged_simulation.unit_positions[0] = Vector2(5.5, 12.0)
+	ranged_simulation.unit_positions[0] = Vector2(5.5, 11.2)
 	ranged_simulation.unit_positions[1] = Vector2(5.5, 10.0)
 	ranged_simulation.tick(1.0 / 30.0)
 	var ranged_events: Array = ranged_simulation.drain_events()
 	var shot: Dictionary = _event_of_type(ranged_events, "ranged_shot")
 	_expect(_has_event(ranged_events, "hit"), "ranged unit keeps shared hit feedback")
-	_expect(not shot.is_empty(), "ranged unit emits a ranged shot at distance 2.0")
+	_expect(not shot.is_empty(), "ranged unit emits a ranged shot inside its doubled base range")
 	_expect(shot.get("team", 0) == ranged_simulation.TEAM_ALLY, "ranged shot records the attacker team")
-	_expect(shot.get("origin", Vector2.ZERO) == Vector2(5.5, 12.0), "ranged shot records its origin")
+	_expect(shot.get("origin", Vector2.ZERO) == Vector2(5.5, 11.2), "ranged shot records its origin")
 	_expect(shot.get("position", Vector2.ZERO) == Vector2(5.5, 10.0), "ranged shot records its target position")
 	_expect(is_equal_approx(ranged_simulation.unit_hp[1], ranged_simulation.config.UNIT_MAX_HP - ranged_simulation.config.RANGED_UNIT_ATTACK_DAMAGE), "ranged hit applies ranged damage")
 	_expect(is_equal_approx(ranged_simulation.unit_cooldowns[0], ranged_simulation.config.RANGED_UNIT_ATTACK_INTERVAL), "ranged hit applies ranged interval")
@@ -332,6 +360,16 @@ func _test_air_targeting_and_hq_defense() -> void:
 			saw_hq_shot = true
 	_expect(saw_hq_shot, "HQ attack emits a distinct tracer event")
 
+	var sight_simulation = _new_simulation()
+	_expect(sight_simulation != null and sight_simulation.has_method("get_unit_detect_range"), "simulation exposes per-kind detection range")
+	if sight_simulation != null and sight_simulation.has_method("get_unit_detect_range"):
+		_expect(is_equal_approx(sight_simulation.get_unit_detect_range(sight_simulation.UNIT_DRAGON), sight_simulation.config.UNIT_DETECT_RANGE * 1.5), "dragon detection API returns 1.5 times common sight")
+		var scout_id: int = sight_simulation.spawn_unit(sight_simulation.TEAM_ALLY, Vector2(8.5, 23.5), sight_simulation.UNIT_DRAGON)
+		var distant_enemy_id: int = sight_simulation.spawn_unit(sight_simulation.TEAM_ENEMY, Vector2(8.5, 20.3), sight_simulation.UNIT_MELEE)
+		sight_simulation.tick(1.0 / float(sight_simulation.config.SIM_TICK_RATE))
+		var scout_index: int = sight_simulation.unit_ids.find(scout_id)
+		_expect(scout_index >= 0 and sight_simulation.unit_target_ids[scout_index] == distant_enemy_id, "dragon acquires an enemy beyond normal sight but inside extended sight")
+
 
 func _test_enemy_ai_kind_funding() -> void:
 	var simulation = _new_simulation()
@@ -373,7 +411,7 @@ func _test_combat_and_kill_reward() -> void:
 	simulation.unit_positions[0] = Vector2(5.5, 10.2)
 	simulation.unit_positions[1] = Vector2(5.5, 10.7)
 	_expect(red_id != blue_id, "units receive unique IDs")
-	simulation.unit_hp[1] = 1.0
+	simulation.unit_hp[1] = 0.5
 	var red_gold_before: int = simulation.enemy_gold
 	simulation.tick(1.0 / 30.0)
 	_expect(simulation.unit_ids.size() == 1, "lethal melee hit swap-removes dead unit")

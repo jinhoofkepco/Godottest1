@@ -104,11 +104,13 @@ func _draw() -> void:
 			])
 			draw_colored_polygon(diamond, color)
 			diamond.append(diamond[0])
-			draw_polyline(diamond, GameConfig.COLOR_GRID_LINE, 1.4, true)
+			draw_polyline(diamond, Color(GameConfig.COLOR_GRID_LINE, 0.48), 0.75, true)
 			if cell_blocked:
 				_draw_blocker(diamond)
 			if _can_build_with_ownership(cell, 2, current_ownership, cell_blocked):
 				draw_circle(cell_to_world(cell), 1.8, Color(GameConfig.COLOR_TEAL, 0.38))
+	for segment in get_frontline_segments(current_ownership):
+		draw_line(segment[0], segment[1], Color(GameConfig.COLOR_FRONTLINE, 0.82), 1.35, true)
 
 
 func _draw_blocker(base_diamond: PackedVector2Array) -> void:
@@ -124,14 +126,34 @@ func _draw_blocker(base_diamond: PackedVector2Array) -> void:
 	draw_polyline(top, GameConfig.COLOR_OBSTACLE_EDGE, 1.6, true)
 
 
+func get_frontline_segments(current_ownership: PackedByteArray) -> Array[PackedVector2Array]:
+	var segments: Array[PackedVector2Array] = []
+	if current_ownership.size() != GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS:
+		return segments
+	for row in GameConfig.GRID_ROWS:
+		for column in GameConfig.GRID_COLUMNS:
+			var owner: int = current_ownership[row * GameConfig.GRID_COLUMNS + column]
+			if column + 1 < GameConfig.GRID_COLUMNS and current_ownership[row * GameConfig.GRID_COLUMNS + column + 1] != owner:
+				segments.append(PackedVector2Array([
+					grid_to_screen(Vector2(column + 1, row)),
+					grid_to_screen(Vector2(column + 1, row + 1)),
+				]))
+			if row + 1 < GameConfig.GRID_ROWS and current_ownership[(row + 1) * GameConfig.GRID_COLUMNS + column] != owner:
+				segments.append(PackedVector2Array([
+					grid_to_screen(Vector2(column + 1, row + 1)),
+					grid_to_screen(Vector2(column, row + 1)),
+				]))
+	return segments
+
+
 func _cell_color(cell: Vector2i, current_ownership: PackedByteArray) -> Color:
 	var owner := 1 if cell.y < GameConfig.GRID_ROWS / 2 else 2
 	if not current_ownership.is_empty():
 		owner = current_ownership[cell.y * GameConfig.GRID_COLUMNS + cell.x]
 	var alternate := (cell.x + cell.y) % 2 == 0
 	if owner == 2:
-		return GameConfig.COLOR_ALLY if alternate else GameConfig.COLOR_ALLY_DARK
-	return GameConfig.COLOR_ENEMY if alternate else GameConfig.COLOR_ENEMY_DARK
+		return GameConfig.COLOR_TERRITORY_ALLY if alternate else GameConfig.COLOR_TERRITORY_ALLY_ALT
+	return GameConfig.COLOR_TERRITORY_ENEMY if alternate else GameConfig.COLOR_TERRITORY_ENEMY_ALT
 
 
 func _cell_is_valid(cell: Vector2i) -> bool:
