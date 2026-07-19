@@ -61,6 +61,9 @@ func _run() -> void:
 	if not budget_override.is_empty():
 		tick_budget_ms = maxf(0.001, budget_override.to_float())
 		p95_budget_ms = tick_budget_ms
+	var p95_budget_override := OS.get_environment("STRESS_P95_BUDGET_MS")
+	if not p95_budget_override.is_empty():
+		p95_budget_ms = maxf(0.001, p95_budget_override.to_float())
 	print("STRESS PASS: initial=%d mixed_kinds=true columns=%d remaining=%d warmup=%d ticks=%d avg_ms=%.3f p95_ms=%.3f max_ms=%.3f max_candidates=%d avg_budget_ms=%.3f p95_budget_ms=%.3f" % [
 		UNIT_COUNT,
 		GameConfig.GRID_COLUMNS,
