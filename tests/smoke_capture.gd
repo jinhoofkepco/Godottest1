@@ -5,6 +5,7 @@ const OUTPUTS := [
 	"res://build/smoke_opening.png",
 	"res://build/smoke_advantage.png",
 	"res://build/smoke_disadvantage.png",
+	"res://build/smoke_cluster.png",
 ]
 
 
@@ -40,7 +41,7 @@ func _run() -> void:
 			return
 		main.queue_free()
 		await process_frame
-	print("SMOKE CAPTURE PASS: opening / blue advantage / blue disadvantage (540x960)")
+	print("SMOKE CAPTURE PASS: opening / blue advantage / blue disadvantage / frontline cluster (540x960)")
 	quit(0)
 
 
@@ -61,13 +62,34 @@ func _stage_scenario(main: Node, scenario: int) -> void:
 				simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(float(column) + 0.5, 2.0))
 		simulation.recalculate_territory()
 		main.fx.show_territory_change(Vector2i(5, 4), simulation.TEAM_ALLY)
-	else:
+	elif scenario == 2:
 		for column in 11:
 			simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(float(column) + 0.5, 17.4 - float(column % 2) * 0.25))
 			if column % 2 == 0:
 				simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(column) + 0.5, 19.5))
 		simulation.recalculate_territory()
 		main.fx.show_hq_hit(Vector2i(5, 21), simulation.TEAM_ALLY)
+	else:
+		_stage_frontline_cluster(main)
+
+
+func _stage_frontline_cluster(main: Node) -> void:
+	var simulation = main.simulation
+	for rank in 4:
+		for column in range(1, 10):
+			var lane_shift := 0.42 if column % 2 == 0 else -0.42
+			simulation.spawn_unit(
+				simulation.TEAM_ENEMY,
+				Vector2(float(column) + 0.5 + lane_shift, 9.2 + float(rank) * 0.28)
+			)
+			simulation.spawn_unit(
+				simulation.TEAM_ALLY,
+				Vector2(float(column) + 0.5 - lane_shift, 12.8 - float(rank) * 0.28)
+			)
+	for tick_index in 75:
+		simulation.tick(1.0 / float(GameConfig.SIM_TICK_RATE))
+	simulation.recalculate_territory()
+	main.fx.show_hit(Vector2(5.5, 11.0))
 
 
 func _fail(message: String) -> void:
