@@ -26,6 +26,7 @@ var result_label: Label
 var restart_button: Button
 
 var message_time_left := 0.0
+var last_ally_occupancy := 0.5
 
 @export var message_duration := 1.1
 
@@ -48,6 +49,7 @@ func update_stats(
 	ally_occupancy: float
 ) -> void:
 	var blue_share := clampf(ally_occupancy, 0.0, 1.0)
+	last_ally_occupancy = blue_share
 	var red_share := 1.0 - blue_share
 	gold_label.text = "GOLD  %03d" % max(0, ally_gold)
 	ally_hq_label.text = "BLUE HQ  %04d" % ceili(maxf(0.0, ally_hq_hp))

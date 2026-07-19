@@ -2,70 +2,46 @@ class_name DefenseMain
 extends Node2D
 
 const GameConfig = preload("res://scripts/game_config.gd")
-const TowerScene = preload("res://scenes/tower.tscn")
-const EnemyScene = preload("res://scenes/enemy.tscn")
-
-@export var shake_duration := 0.22
-@export var shake_strength := 7.0
+const BattleSimulationScript = preload("res://scripts/battle_simulation.gd")
+const BuildingViewScript = preload("res://scripts/battle_building.gd")
 
 @onready var world: Node2D = $World
-@onready var grid = $World/Grid
-@onready var core = $World/Core
-@onready var enemies: Node = $World/EntitySort/Enemies
-@onready var towers: Node = $World/EntitySort/Towers
-@onready var projectiles: Node = $World/EntitySort/Projectiles
-@onready var fx = $World/Fx
-@onready var wave_manager = $WaveManager
-@onready var hud = $Hud
+@onready var grid: GridBoard = $World/Grid
+@onready var buildings_layer: Node2D = $World/Buildings
+@onready var unit_renderer: UnitRenderer = $World/UnitRenderer
+@onready var fx: DefenseFx = $World/Fx
+@onready var hud: DefenseHud = $Hud
 
-var gold := GameConfig.START_GOLD
-var core_hp := GameConfig.CORE_MAX_HP
+var simulation: BattleSimulation
+var building_views: Dictionary = {}
 var game_result := ""
-var _shake_left := 0.0
-var _rng := RandomNumberGenerator.new()
 var _world_base_position := Vector2.ZERO
 
 
 func _ready() -> void:
-	_rng.seed = 41025
-	var board_bounds: Rect2 = grid.get_board_bounds()
-	var frame_size := Vector2(
-		GameConfig.VIEW_SIZE.x - GameConfig.WORLD_FRAME_MARGIN * 2.0,
-		GameConfig.VIEW_SIZE.y - GameConfig.WORLD_FRAME_TOP - GameConfig.WORLD_FRAME_BOTTOM
-	)
-	var frame_scale := minf(frame_size.x / board_bounds.size.x, frame_size.y / board_bounds.size.y)
-	world.scale = Vector2.ONE * frame_scale
-	_world_base_position = Vector2(
-		(float(GameConfig.VIEW_SIZE.x) - board_bounds.size.x * frame_scale) * 0.5 - board_bounds.position.x * frame_scale,
-		GameConfig.WORLD_FRAME_TOP
-		+ (frame_size.y - board_bounds.size.y * frame_scale) * 0.5
-		- board_bounds.position.y * frame_scale
-	)
-	world.position = _world_base_position
-	core.position = grid.get_core_anchor()
-	fx.setup(grid, enemies)
-	wave_manager.spawn_enemy.connect(_on_spawn_enemy)
-	wave_manager.wave_started.connect(_on_wave_started)
-	wave_manager.wave_cleared.connect(_on_wave_cleared)
-	hud.next_wave_pressed.connect(start_next_wave)
+	simulation = BattleSimulationScript.new()
+	simulation.reset()
+	grid.set_simulation(simulation)
+	unit_renderer.setup(grid, simulation)
+	fx.setup(grid)
+	_frame_world()
+	_sync_building_views()
+	_update_hud()
 	hud.restart_pressed.connect(_restart)
-	hud.update_stats(gold, core_hp, wave_manager.current_wave)
-	hud.set_wave_button(true, wave_manager.current_wave)
+	hud.show_message("FRONTLINE ACTIVE", GameConfig.COLOR_TEXT)
 	queue_redraw()
 
 
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Vector2(GameConfig.VIEW_SIZE)), GameConfig.COLOR_BACKGROUND)
-	draw_rect(Rect2(Vector2(0, 100), Vector2(540, 5)), GameConfig.COLOR_TEAL.darkened(0.65))
+	draw_rect(Rect2(Vector2(0, 142), Vector2(GameConfig.VIEW_SIZE.x, 3)), GameConfig.COLOR_TEAL.darkened(0.55))
 
 
 func _process(delta: float) -> void:
-	if _shake_left > 0.0:
-		_shake_left = maxf(0.0, _shake_left - delta)
-		var falloff := _shake_left / shake_duration
-		world.position = _world_base_position + Vector2(_rng.randf_range(-1.0, 1.0), _rng.randf_range(-1.0, 1.0)) * shake_strength * falloff
-	else:
-		world.position = _world_base_position
+	if simulation != null and game_result == "":
+		step_simulation(delta)
+	if is_instance_valid(fx):
+		world.position = _world_base_position + fx.get_screen_shake_offset()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -77,101 +53,127 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		tap_position = event.position
 	if tap_position.x >= 0.0:
-		try_place_tower(grid.world_to_cell(world.to_local(tap_position)))
+		try_build_spawner(grid.world_to_cell(world.to_local(tap_position)))
 
 
-func try_place_tower(cell: Vector2i) -> bool:
-	var is_valid: bool = game_result == "" and gold >= GameConfig.TOWER_COST and grid.can_build(cell)
-	fx.show_placement(cell, is_valid, GameConfig.TOWER_RANGE / GameConfig.CELL_SIZE)
-	if not is_valid:
-		return false
-	var tower = TowerScene.instantiate()
-	towers.add_child(tower)
-	tower.grid_position = Vector2(cell) + Vector2(0.5, 0.5)
-	tower.setup(grid, enemies, projectiles)
-	grid.occupy(cell)
-	gold -= GameConfig.TOWER_COST
-	hud.update_stats(gold, core_hp, wave_manager.current_wave)
-	return true
-
-
-func start_next_wave() -> void:
-	if game_result != "":
-		return
-	if wave_manager.start_next_wave():
-		hud.set_wave_button(false, wave_manager.current_wave)
-
-
-func damage_core(amount: int) -> void:
-	if game_result != "":
-		return
-	core_hp = maxi(0, core_hp - amount)
-	core.set_hp(core_hp)
-	core.flash_damage()
-	_shake_left = shake_duration
-	hud.update_stats(gold, core_hp, wave_manager.current_wave)
-	if core_hp <= 0:
-		_finish_match("DEFEAT")
-
-
-func _on_spawn_enemy(_wave: int, column: int, speed: float, health: float) -> void:
-	if game_result != "":
-		return
-	var enemy = EnemyScene.instantiate()
-	enemies.add_child(enemy)
-	enemy.setup(grid, column, speed, health)
-	enemy.defeated.connect(_on_enemy_defeated)
-	enemy.reached_core.connect(_on_enemy_reached_core)
-	enemy.damaged.connect(_on_enemy_damaged)
-
-
-func _on_enemy_defeated(at_grid: Vector2) -> void:
-	if game_result != "":
-		return
-	gold += GameConfig.KILL_REWARD
-	wave_manager.notify_enemy_removed()
-	fx.spawn_kill_burst(at_grid)
-	hud.update_stats(gold, core_hp, wave_manager.current_wave)
-
-
-func _on_enemy_damaged(at_grid: Vector2, amount: float) -> void:
-	fx.show_damage(at_grid, amount)
-
-
-func _on_enemy_reached_core(at_grid: Vector2) -> void:
-	if game_result != "":
-		return
-	damage_core(1)
-	fx.show_leak(at_grid, grid.get_core_anchor())
-	if game_result == "":
-		wave_manager.notify_enemy_removed()
-
-
-func _on_wave_started(wave: int) -> void:
-	hud.update_stats(gold, core_hp, wave)
-	hud.show_wave_banner(wave)
-
-
-func _on_wave_cleared(wave: int) -> void:
-	if game_result != "":
-		return
-	gold += GameConfig.WAVE_REWARD
-	hud.update_stats(gold, core_hp, wave)
-	if wave >= GameConfig.TOTAL_WAVES:
-		_finish_match("VICTORY")
+func try_build_spawner(cell: Vector2i) -> bool:
+	var valid := game_result == "" and simulation.try_build_spawner(simulation.TEAM_ALLY, cell)
+	fx.show_placement(cell, valid)
+	if valid:
+		_sync_building_views()
+		grid.queue_redraw()
+		_update_hud()
 	else:
-		hud.set_wave_button(true, wave)
+		hud.show_message("BUILD BLOCKED", GameConfig.COLOR_ENEMY.lightened(0.25))
+	return valid
 
 
-func _finish_match(result: String) -> void:
-	game_result = result
-	wave_manager.stop()
-	hud.set_wave_button(false, wave_manager.current_wave)
-	hud.show_result(result)
-	if result == "DEFEAT":
-		world.process_mode = Node.PROCESS_MODE_DISABLED
+func step_simulation(delta: float) -> void:
+	if simulation == null:
+		return
+	if game_result == "":
+		simulation.tick(delta)
+	_sync_building_views()
+	unit_renderer.sync()
+	_consume_events(simulation.drain_events())
+	_update_hud()
+	if game_result == "" and simulation.result != "":
+		_finish_match(simulation.result)
+
+
+func _consume_events(events: Array) -> void:
+	for event in events:
+		var event_type := String(event.get("type", ""))
+		match event_type:
+			"hit":
+				fx.show_hit(Vector2(event.position))
+			"unit_death":
+				fx.show_unit_death(Vector2(event.position), int(event.team))
+			"unit_produced":
+				fx.show_production(Vector2i(event.cell), int(event.team))
+			"spawner_hit":
+				fx.show_spawner_hit(Vector2i(event.cell), int(event.team))
+				_flash_building(int(event.building_id))
+			"hq_hit":
+				fx.show_hq_hit(Vector2i(event.cell), int(event.team))
+				_flash_building(int(event.building_id))
+			"building_destroyed":
+				if int(event.kind) != simulation.BUILDING_HQ:
+					fx.show_spawner_destroyed(Vector2i(event.cell), int(event.team))
+				_start_building_destroy(int(event.building_id))
+			"territory_changed":
+				fx.show_territory_change(Vector2i(event.cell), int(event.team))
+				grid.queue_redraw()
+			"spawner_built":
+				hud.show_message("BLUE SPAWNER ONLINE" if int(event.team) == simulation.TEAM_ALLY else "RED SPAWNER ONLINE", GameConfig.COLOR_ALLY if int(event.team) == simulation.TEAM_ALLY else GameConfig.COLOR_ENEMY)
+
+
+func _sync_building_views() -> void:
+	if simulation == null:
+		return
+	for record in simulation.buildings:
+		var building_id := int(record.id)
+		if not building_views.has(building_id):
+			var view := BuildingViewScript.new()
+			view.name = "Building_%d" % building_id
+			buildings_layer.add_child(view)
+			view.setup(grid, record)
+			building_views[building_id] = view
+		var current_view = building_views[building_id]
+		if is_instance_valid(current_view):
+			current_view.update_from_data(record)
+
+
+func _flash_building(building_id: int) -> void:
+	if building_views.has(building_id) and is_instance_valid(building_views[building_id]):
+		building_views[building_id].flash_hit()
+
+
+func _start_building_destroy(building_id: int) -> void:
+	if building_views.has(building_id) and is_instance_valid(building_views[building_id]):
+		building_views[building_id].start_destroy()
+
+
+func _update_hud() -> void:
+	if simulation == null or not is_instance_valid(hud):
+		return
+	hud.update_stats(
+		simulation.ally_gold,
+		_building_hp(simulation.ally_hq_id),
+		_building_hp(simulation.enemy_hq_id),
+		simulation.time_remaining,
+		simulation.get_occupancy(simulation.TEAM_ALLY)
+	)
+
+
+func _building_hp(building_id: int) -> float:
+	for building in simulation.buildings:
+		if int(building.id) == building_id:
+			return float(building.hp)
+	return 0.0
+
+
+func _finish_match(value: String) -> void:
+	game_result = value
+	hud.show_result(value)
+
+
+func _frame_world() -> void:
+	var board_bounds := grid.get_board_bounds()
+	var frame_top := 154.0
+	var frame_bottom := 78.0
+	var frame_size := Vector2(
+		GameConfig.VIEW_SIZE.x - GameConfig.WORLD_FRAME_MARGIN * 2.0,
+		GameConfig.VIEW_SIZE.y - frame_top - frame_bottom
+	)
+	var frame_scale := minf(frame_size.x / board_bounds.size.x, frame_size.y / board_bounds.size.y)
+	world.scale = Vector2.ONE * frame_scale
+	_world_base_position = Vector2(
+		(float(GameConfig.VIEW_SIZE.x) - board_bounds.size.x * frame_scale) * 0.5 - board_bounds.position.x * frame_scale,
+		frame_top + (frame_size.y - board_bounds.size.y * frame_scale) * 0.5 - board_bounds.position.y * frame_scale
+	)
+	world.position = _world_base_position
 
 
 func _restart() -> void:
-	get_tree().paused = false
 	get_tree().reload_current_scene()

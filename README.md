@@ -1,79 +1,54 @@
-# War Grid Defense
+# Frontline Grid
 
-Godot 4.5 stable + GDScript로 만든 540 x 960 세로형 아이소메트릭 타워디펜스 데모입니다. 외부 이미지·폰트·오디오 없이 코드 드로잉과 기본 Control만 사용합니다.
+Godot 4.5 stable + GDScript로 만든 540×960 세로형 아이소메트릭 양군 전선 시뮬레이션입니다. 외부 에셋 없이 모든 타일·유닛·건물·HUD·FX를 코드 도형으로 그립니다.
 
-## 조작
+## 한 판 규칙과 조작
 
-1. 녹색 아군 타일을 탭하거나 마우스 왼쪽 버튼으로 클릭하면 골드 50을 사용해 타워를 배치합니다.
-2. 화면 오른쪽 위 `START WAVE` 버튼을 탭하거나 클릭하면 다음 웨이브가 시작됩니다.
-3. 타워의 조준과 발사는 자동이며, 승패 화면의 `RESTART` 버튼으로 즉시 다시 시작할 수 있습니다.
+- 11×22 전장을 위쪽 빨강과 아래쪽 파랑이 나눠 가지며, 최상단/최하단 HQ 중 하나가 파괴되면 즉시 끝납니다.
+- 파랑 영토의 빈 타일을 터치하거나 클릭하면 골드 60으로 스포너를 짓습니다. 시작 골드는 180, 자동 수입은 초당 3, 유닛 처치 보상은 6입니다.
+- 빨강 AI도 14초 간격으로 전선 가까운 자기 영토에 최대 4개 스포너를 증설합니다.
+- 스포너가 만든 근접 유닛은 자동 진군·탐색·교전합니다. 90% 점유, HQ 파괴, 또는 3분 타임업 우세 판정으로 승패가 결정됩니다.
+- 스포너를 짓지 않으면 빨강 증원에 밀려 패배하고, 중앙 파랑 스포너를 지으면 적 HQ까지 돌파해 승리할 수 있도록 자동 규칙 테스트로 두 경로를 검증합니다.
 
-## 그대로 유지되는 게임 규칙
+## 로직과 렌더링 경계
 
-- 논리 보드는 9 x 14이며 적은 생성된 열을 따라 코어까지 직선으로 전진합니다.
-- 시작 골드 150, 타워 비용 50, 처치 보상 +10, 웨이브 클리어 보상 +25입니다.
-- 코어 HP는 20이고 0이 되면 패배하며, 기존 적 수·속도·체력과 타워 피해·연사·사거리를 유지한 5웨이브를 모두 막으면 승리합니다.
+`BattleSimulation`은 30 Hz 고정 틱에서 논리 `(col,row)` 좌표만 사용합니다. 유닛은 `PackedInt32Array`, `PackedVector2Array`, `PackedFloat32Array` 등 구조별 배열에 저장되며 유닛당 Node·시그널·`_physics_process`가 없습니다. 타깃 탐색은 11×22 그리드 버킷만 확인합니다.
 
-## 화면과 게임 로직의 경계
+`GridBoard`만 논리 좌표와 64×32 2:1 아이소 화면 좌표를 변환하고 역변환하여 입력을 픽킹합니다. 화면의 군단은 빨강/파랑 `MultiMeshInstance2D` 두 개로 일괄 렌더링하고, 수가 적은 HQ/스포너만 Node2D를 사용합니다. 타일 색과 HUD 점유율은 같은 소유권 배열에서 읽습니다.
 
-`GridBoard`만 9 x 14 논리 좌표와 64 x 32 크기의 2:1 다이아몬드 화면 좌표를 서로 변환합니다. 이동·사거리·조준·피해·경제·웨이브 판정은 논리 좌표에서 처리하고, 아이소메트릭 투영·화면 맞춤·깊이 정렬은 보기에만 적용됩니다.
+## 전투 피드백 자가검증
 
-## 전투 피드백
+1. **교전 타격:** 흰 방사형 스파크와 주황 중심점으로 짧고 날카롭게 표시됩니다.
+2. **유닛 사망:** 팀 색 원형 팝이 퍼지고 사각 파편이 흩어져 일반 타격과 구분됩니다.
+3. **스포너 생산:** 팀 색 원형 펄스와 위로 솟는 빔으로 증원 시점을 알립니다.
+4. **스포너 피격/파괴:** 피격은 흰 테두리+붉은 사선, 파괴는 블록 붕괴+파편으로 서로 구분됩니다.
+5. **전선 이동:** 소유권이 바뀐 다이아몬드 위를 팀 색 스윕이 통과하고 실제 타일색이 전환됩니다.
+6. **HQ 피격:** 다른 FX보다 큰 동심원·사선 플래시와 강한 감쇠 화면 흔들림이 발생합니다.
 
-- **발사:** 포신 반동, 옅은 총구 다이아몬드, 밝은 청록색 투사체 궤적이 동시에 나타납니다.
-- **피격:** 적이 흰색으로 번쩍이고 화면상으로만 밀리며 주황색 피해량이 표시됩니다.
-- **처치:** 적이 축소되고 주황색 파편이 퍼지며 약 60 ms 히트스톱이 적용됩니다.
-- **누수:** 코어가 빨갛게 번쩍이고 적에서 코어로 붉은 사선이 내려오며 화면이 감쇠 진동합니다.
-- **배치:** 성공하면 선택 타일과 사거리 윤곽이 청록색으로, 실패하면 타일과 X 표시가 빨간색으로 나타납니다.
-- **웨이브 시작:** 화면 중앙의 `WAVE X` 배너가 짧게 이동하며 사라집니다.
+건설 성공은 파란 다이아몬드, 실패는 빨간 다이아몬드와 X로 표시됩니다. 파랑/빨강 팀은 타일·유닛·건물·점유율 바 전체에 동일하게 적용됩니다.
 
-## 로컬 실행과 검증
-
-Godot 4.5 stable에서 저장소 루트의 `project.godot`을 열고 실행합니다. 마우스와 터치 입력을 모두 지원합니다.
+## 검증과 스트레스 결과
 
 ```bash
 godot --headless --path . --import
 godot --headless --path . -s tests/run_rules.gd
 godot --headless --path . -s tests/run_game_flow.gd
+godot --headless --path . -s tests/run_stress.gd
 godot --headless --path . --scene res://scenes/main.tscn --quit-after 180
-godot --path .
 ```
 
-마지막에서 두 번째 명령은 렌더링 픽셀과 무관한 실제 headless 런타임 스모크입니다. Godot의 `--headless` display driver는 dummy 렌더러만 지원하므로 Viewport 픽셀을 PNG로 읽을 수 없습니다.
+2026-07-19 Apple M4, Godot 4.7 stable 로컬 측정에서 데이터 유닛 400개·300틱은 평균 **1.234 ms**, p95 **4.367 ms**, 최대 버킷 후보 검사 **22,815회**였습니다. 30 Hz 틱 예산 33.333 ms보다 낮으며, 테스트는 평균과 p95가 이 예산을 넘으면 실패합니다. Android/CI의 절대 수치는 기기에 따라 달라집니다.
 
-화면 시각 QA는 상호작용 없이 실행하되 렌더링 가능한 display driver를 사용합니다. macOS 로컬 명령은 다음과 같습니다.
+렌더 가능한 로컬 환경에서는 다음 명령이 초반/파랑 우세/파랑 열세 세 장을 각각 540×960 PNG로 만듭니다.
 
 ```bash
 godot --display-driver macos --rendering-method gl_compatibility --audio-driver Dummy --path . -s tests/smoke_capture.gd
-file build/smoke_capture.png
 ```
 
-Linux CI는 Xvfb 안에서 같은 검사를 실행합니다.
-
-```bash
-xvfb-run -a -s "-screen 0 540x960x24" godot --display-driver x11 --rendering-method gl_compatibility --audio-driver Dummy --path . -s tests/smoke_capture.gd
-file build/smoke_capture.png
-```
-
-두 경로 모두 ignored 파일인 `build/smoke_capture.png`를 만들며, 캡처 스크립트와 CI는 정확히 540 x 960인지 검사합니다.
+Linux CI는 같은 스크립트를 Xvfb에서 실행하며 `build/smoke_opening.png`, `build/smoke_advantage.png`, `build/smoke_disadvantage.png`를 확인합니다.
 
 ## Android debug APK 받기
 
-항상 같은 주소에서 최신 검증 APK를 바로 받을 수 있습니다: [godottest1.apk 직접 다운로드](https://raw.githubusercontent.com/jinhoofkepco/Godottest1/main/apk/godottest1.apk)
+항상 같은 주소에서 최신 APK를 바로 받을 수 있습니다: [godottest1.apk 직접 다운로드](https://raw.githubusercontent.com/jinhoofkepco/Godottest1/main/apk/godottest1.apk)
 
-GitHub Actions가 만든 빌드 아티팩트를 받으려면 다음 순서를 따릅니다.
-
-1. GitHub 저장소의 **Actions** 탭을 엽니다.
-2. 최신 **Android Debug APK** 워크플로 실행을 선택합니다.
-3. 실행 요약 화면 아래 **Artifacts**에서 `godottest1-debug-apk`를 내려받습니다.
-4. 내려받은 ZIP을 풀고 안의 `godottest1.apk`를 Android 기기에 설치합니다.
-
-워크플로는 Godot 4.5, Android SDK/build-tools, export template을 GitHub runner에 설치하고 임시 debug keystore를 생성합니다. 로컬 Android SDK나 저장소 Secret은 필요하지 않습니다.
-
-## 검토 포인트
-
-- 9 x 14 아이소메트릭 보드와 보라색 적군존/녹색 아군존
-- 아군 빈 타일 탭 배치, 비용/처치/웨이브 보상
-- 최근접 자동 조준과 투사체 피해
-- 발사·피격·처치·누수·배치·웨이브 시작을 구분하는 색상과 움직임
-- 5웨이브 승리, Core HP 0 패배, 재시작
+GitHub Actions 빌드는 저장소의 **Actions → Android Debug APK → 최신 성공 실행 → Artifacts → `godottest1-debug-apk`**에서 받을 수 있습니다. 워크플로가 Godot 4.5 stable, Android SDK/build-tools, export template과 임시 debug keystore를 준비하므로 로컬 Android SDK나 저장소 Secret이 필요하지 않습니다.

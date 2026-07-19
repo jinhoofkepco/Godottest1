@@ -38,6 +38,7 @@ var _enemy_build_timer := GameConfig.ENEMY_BUILD_INTERVAL
 var _enemy_build_cursor := 0
 var _events: Array[Dictionary] = []
 var _buckets: Array[Array] = []
+var _unit_index_by_id: Dictionary = {}
 
 
 func reset() -> void:
@@ -66,9 +67,10 @@ func reset() -> void:
 	_enemy_build_cursor = 0
 	_events.clear()
 	_buckets.clear()
+	_unit_index_by_id.clear()
 	_buckets.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
-	enemy_hq_id = _add_building(TEAM_ENEMY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, 0))
-	ally_hq_id = _add_building(TEAM_ALLY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 1))
+	enemy_hq_id = add_building(TEAM_ENEMY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, 0))
+	ally_hq_id = add_building(TEAM_ALLY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 1))
 	recalculate_territory(false)
 
 
@@ -83,7 +85,14 @@ func spawn_unit(team: int, position: Vector2) -> int:
 	unit_target_ids.append(0)
 	unit_cooldowns.append(0.0)
 	unit_last_attacker_teams.append(TEAM_NONE)
+	_unit_index_by_id[unit_id] = unit_ids.size() - 1
 	return unit_id
+
+
+func add_building(team: int, kind: int, cell: Vector2i) -> int:
+	if team not in [TEAM_ALLY, TEAM_ENEMY] or kind not in [BUILDING_HQ, BUILDING_SPAWNER] or not _cell_is_valid(cell):
+		return 0
+	return _add_building(team, kind, cell)
 
 
 func tick(delta: float) -> void:
@@ -115,7 +124,7 @@ func try_build_spawner(team: int, cell: Vector2i) -> bool:
 		enemy_gold -= GameConfig.SPAWNER_COST
 	else:
 		return false
-	var building_id := _add_building(team, BUILDING_SPAWNER, cell)
+	var building_id := add_building(team, BUILDING_SPAWNER, cell)
 	_events.append({"type": "spawner_built", "team": team, "building_id": building_id, "cell": cell})
 	recalculate_territory()
 	return true
@@ -184,7 +193,6 @@ func apply_building_damage(building_id: int, damage: float, attacker_team: int) 
 	if int(building.kind) == BUILDING_HQ:
 		result = "VICTORY" if attacker_team == TEAM_ALLY else "DEFEAT"
 	else:
-		_award_kill(attacker_team)
 		recalculate_territory()
 
 
@@ -240,7 +248,11 @@ func _update_enemy_ai(delta: float) -> void:
 	_enemy_build_timer += GameConfig.ENEMY_BUILD_INTERVAL
 	for offset in GameConfig.GRID_COLUMNS:
 		var column := (_enemy_build_cursor + offset) % GameConfig.GRID_COLUMNS
-		for row in range(1, GameConfig.GRID_ROWS - 1):
+		var frontline_row := 0
+		for row in GameConfig.GRID_ROWS:
+			if ownership[row * GameConfig.GRID_COLUMNS + column] == TEAM_ENEMY:
+				frontline_row = row
+		for row in range(mini(frontline_row, GameConfig.GRID_ROWS - 2), 0, -1):
 			var cell := Vector2i(column, row)
 			if try_build_spawner(TEAM_ENEMY, cell):
 				_enemy_build_cursor = (column + 3) % GameConfig.GRID_COLUMNS
@@ -279,6 +291,9 @@ func _rebuild_buckets() -> void:
 func _find_target(unit_index: int) -> Dictionary:
 	var position := unit_positions[unit_index]
 	var team := unit_teams[unit_index]
+	var retained := _resolve_target(unit_target_ids[unit_index], team, position)
+	if int(retained.id) != 0:
+		return retained
 	var cell := Vector2i(floori(position.x), floori(position.y))
 	var best_distance_sq := GameConfig.UNIT_ATTACK_RANGE * GameConfig.UNIT_ATTACK_RANGE
 	var best_id := 0
@@ -307,6 +322,22 @@ func _find_target(unit_index: int) -> Dictionary:
 			best_id = -int(building.id)
 			best_index = building_index
 	return {"id": best_id, "unit_index": -1, "building_index": best_index}
+
+
+func _resolve_target(target_id: int, team: int, position: Vector2) -> Dictionary:
+	var range_squared := GameConfig.UNIT_ATTACK_RANGE * GameConfig.UNIT_ATTACK_RANGE
+	if target_id > 0 and _unit_index_by_id.has(target_id):
+		var index := int(_unit_index_by_id[target_id])
+		if unit_hp[index] > 0.0 and unit_teams[index] != team and position.distance_squared_to(unit_positions[index]) <= range_squared:
+			return {"id": target_id, "unit_index": index, "building_index": -1}
+	elif target_id < 0:
+		var building_index := _building_index_from_id(-target_id)
+		if building_index >= 0:
+			var building := buildings[building_index]
+			var building_position := Vector2(building.cell) + Vector2(0.5, 0.5)
+			if not bool(building.destroyed) and int(building.team) != team and position.distance_squared_to(building_position) <= range_squared:
+				return {"id": target_id, "unit_index": -1, "building_index": building_index}
+	return {"id": 0, "unit_index": -1, "building_index": -1}
 
 
 func _attack_target(attacker_index: int, target: Dictionary) -> void:
@@ -355,6 +386,13 @@ func _remove_unit_at(index: int) -> void:
 	unit_target_ids.resize(last)
 	unit_cooldowns.resize(last)
 	unit_last_attacker_teams.resize(last)
+	_rebuild_unit_index()
+
+
+func _rebuild_unit_index() -> void:
+	_unit_index_by_id.clear()
+	for unit_index in unit_ids.size():
+		_unit_index_by_id[unit_ids[unit_index]] = unit_index
 
 
 func _add_building(team: int, kind: int, cell: Vector2i) -> int:

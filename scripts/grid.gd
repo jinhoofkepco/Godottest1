@@ -3,25 +3,32 @@ extends Node2D
 
 const GameConfig = preload("res://scripts/game_config.gd")
 
-var occupied: Dictionary = {}
+var simulation
 
 
 func _ready() -> void:
 	queue_redraw()
 
 
-func can_build(cell: Vector2i) -> bool:
-	return (
-		cell.x >= 0
-		and cell.x < GameConfig.GRID_COLUMNS
-		and cell.y >= GameConfig.ALLY_BUILD_START_ROW
-		and cell.y < GameConfig.CORE_ROW
-		and not occupied.has(cell)
-	)
+func set_simulation(value) -> void:
+	simulation = value
+	queue_redraw()
+
+
+func can_build(cell: Vector2i, team: int = 2) -> bool:
+	if not _cell_is_valid(cell) or simulation == null:
+		return false
+	var current_ownership: PackedByteArray = simulation.get_ownership()
+	if current_ownership[cell.y * GameConfig.GRID_COLUMNS + cell.x] != team:
+		return false
+	for building in simulation.buildings:
+		if not bool(building.destroyed) and Vector2i(building.cell) == cell:
+			return false
+	return true
 
 
 func occupy(cell: Vector2i) -> void:
-	occupied[cell] = true
+	# Kept as a no-op compatibility hook; occupancy now belongs to the simulation.
 	queue_redraw()
 
 
@@ -75,9 +82,7 @@ func _draw() -> void:
 		for row in range(first_row, last_row + 1):
 			var column := depth - row
 			var cell := Vector2i(column, row)
-			var color := _cell_color(row)
-			if occupied.has(cell):
-				color = color.darkened(0.22)
+			var color := _cell_color(cell)
 			var diamond := PackedVector2Array([
 				grid_to_screen(Vector2(column, row)),
 				grid_to_screen(Vector2(column + 1, row)),
@@ -88,12 +93,19 @@ func _draw() -> void:
 			diamond.append(diamond[0])
 			draw_polyline(diamond, GameConfig.COLOR_GRID_LINE, 1.4, true)
 			if can_build(cell):
-				draw_circle(cell_to_world(cell), 2.2, Color(GameConfig.COLOR_TEAL, 0.32))
+				draw_circle(cell_to_world(cell), 1.8, Color(GameConfig.COLOR_TEAL, 0.38))
 
 
-func _cell_color(row: int) -> Color:
-	if row < GameConfig.ENEMY_ZONE_ROWS:
-		return GameConfig.COLOR_ENEMY if row % 2 == 0 else GameConfig.COLOR_ENEMY_DARK
-	if row >= GameConfig.ALLY_BUILD_START_ROW:
-		return GameConfig.COLOR_ALLY if row % 2 == 0 else GameConfig.COLOR_ALLY_DARK
-	return GameConfig.COLOR_NEUTRAL
+func _cell_color(cell: Vector2i) -> Color:
+	var owner := 1 if cell.y < GameConfig.GRID_ROWS / 2 else 2
+	if simulation != null:
+		var current_ownership: PackedByteArray = simulation.get_ownership()
+		owner = current_ownership[cell.y * GameConfig.GRID_COLUMNS + cell.x]
+	var alternate := (cell.x + cell.y) % 2 == 0
+	if owner == 2:
+		return GameConfig.COLOR_ALLY if alternate else GameConfig.COLOR_ALLY_DARK
+	return GameConfig.COLOR_ENEMY if alternate else GameConfig.COLOR_ENEMY_DARK
+
+
+func _cell_is_valid(cell: Vector2i) -> bool:
+	return cell.x >= 0 and cell.x < GameConfig.GRID_COLUMNS and cell.y >= 0 and cell.y < GameConfig.GRID_ROWS

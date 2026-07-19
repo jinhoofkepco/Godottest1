@@ -38,10 +38,10 @@ jobs:
             -dname "CN=Android Debug,O=GodotTest1,C=KR"
           touch .godot/export_credentials.cfg
 
-      # v4.1.0 installs JDK 17, Android SDK, Godot, export templates, and
+      # v4.2.0 installs JDK 17, Android SDK, Godot, export templates, and
       # the Android build template. Its final internal export is release-mode.
       - name: Set up Godot Android export environment
-        uses: dulvui/godot-android-export@v4.1.0
+        uses: dulvui/godot-android-export@v4.2.0
         continue-on-error: true # The archived action hardcodes an unused release export.
         with:
           godot-version: 4.5
@@ -58,6 +58,7 @@ jobs:
           godot --headless --path . --import
           godot --headless --path . -s tests/run_rules.gd
           godot --headless --path . -s tests/run_game_flow.gd
+          godot --headless --path . -s tests/run_stress.gd
           godot --headless --path . --scene res://scenes/main.tscn --quit-after 180
 
       - name: Run unattended visual QA
@@ -69,10 +70,12 @@ jobs:
           xvfb-run -a -s "-screen 0 540x960x24" \
             godot --display-driver x11 --rendering-method gl_compatibility \
             --audio-driver Dummy --path . -s tests/smoke_capture.gd
-          test -s build/smoke_capture.png
-          capture_info="$(file build/smoke_capture.png)"
-          printf '%s\n' "$capture_info"
-          printf '%s\n' "$capture_info" | grep -Fq 'PNG image data, 540 x 960'
+          for capture in build/smoke_opening.png build/smoke_advantage.png build/smoke_disadvantage.png; do
+            test -s "$capture"
+            capture_info="$(file "$capture")"
+            printf '%s\n' "$capture_info"
+            printf '%s\n' "$capture_info" | grep -Fq 'PNG image data, 540 x 960'
+          done
 
       # The requested deliverable is debug, so overwrite the action's
       # release-mode output using the same installed 4.5 toolchain.

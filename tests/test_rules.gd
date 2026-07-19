@@ -5,14 +5,33 @@ var failures: Array[String] = []
 
 func run() -> Array[String]:
 	_test_config_values()
+	_test_grid_projection_and_dynamic_building()
 	_test_simulation_contract()
 	_test_initial_territory()
 	_test_build_and_economy()
 	_test_combat_and_kill_reward()
 	_test_frontline_ownership()
 	_test_terminal_results()
+	_test_balance_paths()
 	_test_bucket_search_scale()
 	return failures
+
+
+func _test_grid_projection_and_dynamic_building() -> void:
+	var grid_script := load("res://scripts/grid.gd")
+	var simulation = _new_simulation()
+	if grid_script == null or simulation == null:
+		return
+	var grid = grid_script.new()
+	grid.set_simulation(simulation)
+	for cell in [Vector2i(0, 0), Vector2i(5, 11), Vector2i(10, 21), Vector2i(3, 17)]:
+		_expect(grid.world_to_cell(grid.cell_to_world(cell)) == cell, "isometric picking round trips %s" % cell)
+	_expect(grid.can_build(Vector2i(3, 17), simulation.TEAM_ALLY), "dynamic blue territory is buildable")
+	_expect(not grid.can_build(Vector2i(3, 3), simulation.TEAM_ALLY), "dynamic red territory rejects blue build")
+	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(3.5, 18.5))
+	simulation.recalculate_territory()
+	_expect(not grid.can_build(Vector2i(3, 17), simulation.TEAM_ALLY), "frontline capture immediately revokes blue build permission")
+	grid.free()
 
 
 func _test_config_values() -> void:
@@ -55,6 +74,14 @@ func _test_simulation_contract() -> void:
 	_expect(simulation.unit_positions[0].is_equal_approx(Vector2(4.5, 18.5)), "spawn preserves logical position")
 	simulation.tick(1.0 / 30.0)
 	_expect(simulation.unit_positions[0].y < 18.5, "blue unit advances toward red HQ")
+	var building_id: int = simulation.add_building(simulation.TEAM_ALLY, simulation.BUILDING_SPAWNER, Vector2i(1, 18))
+	_expect(building_id > 0, "public building insertion API returns an ID")
+	var fixed_simulation = _new_simulation()
+	fixed_simulation.spawn_unit(fixed_simulation.TEAM_ALLY, Vector2(4.5, 18.5))
+	fixed_simulation.tick(1.0 / 60.0)
+	_expect(is_equal_approx(fixed_simulation.unit_positions[0].y, 18.5), "sub-tick delta accumulates without partial simulation")
+	fixed_simulation.tick(1.0 / 60.0)
+	_expect(fixed_simulation.unit_positions[0].y < 18.5, "two half ticks produce exactly one fixed simulation step")
 
 
 func _test_initial_territory() -> void:
@@ -139,7 +166,30 @@ func _test_terminal_results() -> void:
 	_expect(timeout_sim.result == "DEFEAT", "timeout awards the match to the territory leader")
 
 
+func _test_balance_paths() -> void:
+	var passive_simulation = _new_simulation()
+	_run_complete_match(passive_simulation)
+	_expect(passive_simulation.result == "DEFEAT", "building no blue spawner lets red AI win")
+	var active_simulation = _new_simulation()
+	_expect(active_simulation.try_build_spawner(active_simulation.TEAM_ALLY, Vector2i(5, 18)), "balance fixture builds a central blue spawner")
+	_run_complete_match(active_simulation)
+	_expect(active_simulation.result == "VICTORY", "central blue spawner can push through and win")
+
+
+func _run_complete_match(simulation) -> void:
+	var fixed_delta := 1.0 / 30.0
+	for step in int(181.0 / fixed_delta):
+		if simulation.result != "":
+			return
+		simulation.tick(fixed_delta)
+
+
 func _test_bucket_search_scale() -> void:
+	var acquire_simulation = _new_simulation()
+	acquire_simulation.spawn_unit(acquire_simulation.TEAM_ENEMY, Vector2(5.1, 10.1))
+	acquire_simulation.spawn_unit(acquire_simulation.TEAM_ALLY, Vector2(5.5, 10.5))
+	acquire_simulation.tick(1.0 / 30.0)
+	_expect(acquire_simulation.unit_target_ids[0] > 0, "adjacent bucket search acquires an enemy target")
 	var simulation = _new_simulation()
 	if simulation == null:
 		return
