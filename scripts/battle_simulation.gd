@@ -98,8 +98,6 @@ func add_building(team: int, kind: int, cell: Vector2i) -> int:
 func tick(delta: float) -> void:
 	if result != "" or delta <= 0.0:
 		return
-	_apply_income(delta)
-	time_remaining = maxf(0.0, time_remaining - delta)
 	_tick_accumulator += delta
 	var fixed_delta := 1.0 / float(GameConfig.SIM_TICK_RATE)
 	var catch_up_ticks := 0
@@ -207,6 +205,8 @@ func drain_events() -> Array:
 
 
 func _step(delta: float) -> void:
+	_apply_income(delta)
+	time_remaining = maxf(0.0, time_remaining - delta)
 	_update_enemy_ai(delta)
 	_update_spawners(delta)
 	_rebuild_buckets()
@@ -360,6 +360,7 @@ func _attack_target(attacker_index: int, target: Dictionary) -> void:
 
 func _remove_dead_units() -> void:
 	var index := unit_ids.size() - 1
+	var removed_any := false
 	while index >= 0:
 		if unit_hp[index] <= 0.0:
 			var dead_position := unit_positions[index]
@@ -368,7 +369,10 @@ func _remove_dead_units() -> void:
 			_events.append({"type": "unit_death", "team": dead_team, "position": dead_position})
 			_award_kill(killer_team)
 			_remove_unit_at(index)
+			removed_any = true
 		index -= 1
+	if removed_any:
+		_rebuild_unit_index()
 
 
 func _remove_unit_at(index: int) -> void:
@@ -390,7 +394,6 @@ func _remove_unit_at(index: int) -> void:
 	unit_target_ids.resize(last)
 	unit_cooldowns.resize(last)
 	unit_last_attacker_teams.resize(last)
-	_rebuild_unit_index()
 
 
 func _rebuild_unit_index() -> void:

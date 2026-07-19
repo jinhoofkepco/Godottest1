@@ -14,8 +14,9 @@ var _blue_units: MultiMeshInstance2D
 func _ready() -> void:
 	z_as_relative = false
 	z_index = 40
-	_red_units = _make_team_multimesh("RedUnits")
-	_blue_units = _make_team_multimesh("BlueUnits")
+	var soldier_mesh := _make_soldier_mesh()
+	_red_units = _make_team_multimesh("RedUnits", soldier_mesh)
+	_blue_units = _make_team_multimesh("BlueUnits", soldier_mesh)
 
 
 func setup(board: GridBoard, simulation) -> void:
@@ -36,7 +37,7 @@ func sync() -> void:
 	queue_redraw()
 
 
-func _make_team_multimesh(node_name: String) -> MultiMeshInstance2D:
+func _make_team_multimesh(node_name: String, soldier_mesh: ArrayMesh) -> MultiMeshInstance2D:
 	var instance := MultiMeshInstance2D.new()
 	instance.name = node_name
 	instance.z_as_relative = false
@@ -44,7 +45,7 @@ func _make_team_multimesh(node_name: String) -> MultiMeshInstance2D:
 	var multimesh := MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_2D
 	multimesh.use_colors = true
-	multimesh.mesh = _make_soldier_mesh()
+	multimesh.mesh = soldier_mesh
 	multimesh.instance_count = 0
 	instance.multimesh = multimesh
 	add_child(instance)

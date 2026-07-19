@@ -113,11 +113,14 @@ func _sync_building_views() -> void:
 		return
 	for record in simulation.buildings:
 		var building_id := int(record.id)
+		if bool(record.destroyed):
+			continue
 		if not building_views.has(building_id):
 			var view := BuildingViewScene.instantiate()
 			view.name = "Building_%d" % building_id
 			buildings_layer.add_child(view)
 			view.setup(grid, record)
+			view.collapse_finished.connect(_on_building_view_collapsed)
 			building_views[building_id] = view
 		var current_view = building_views[building_id]
 		if is_instance_valid(current_view):
@@ -132,6 +135,10 @@ func _flash_building(building_id: int) -> void:
 func _start_building_destroy(building_id: int) -> void:
 	if building_views.has(building_id) and is_instance_valid(building_views[building_id]):
 		building_views[building_id].start_destroy()
+
+
+func _on_building_view_collapsed(building_id: int) -> void:
+	building_views.erase(building_id)
 
 
 func _update_hud() -> void:

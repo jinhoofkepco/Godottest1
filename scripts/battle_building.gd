@@ -1,6 +1,8 @@
 class_name BattleBuildingView
 extends Node2D
 
+signal collapse_finished(building_id: int)
+
 const GameConfig = preload("res://scripts/game_config.gd")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
@@ -48,7 +50,9 @@ func _process(delta: float) -> void:
 		_collapse_left = maxf(0.0, _collapse_left - delta)
 		scale = Vector2(1.0, maxf(0.05, _collapse_left / 0.6))
 		if _collapse_left <= 0.0:
-			visible = false
+			collapse_finished.emit(building_id)
+			set_process(false)
+			queue_free()
 	queue_redraw()
 
 

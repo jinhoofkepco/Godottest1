@@ -88,6 +88,7 @@ func _test_simulation_contract() -> void:
 	catch_up_simulation.tick(1.0)
 	var expected_catch_up_y: float = 18.5 - catch_up_simulation.config.UNIT_SPEED * 8.0 / 30.0
 	_expect(is_equal_approx(catch_up_simulation.unit_positions[0].y, expected_catch_up_y), "long frame performs at most eight fixed catch-up ticks")
+	_expect(is_equal_approx(catch_up_simulation.time_remaining, 180.0 - 8.0 / 30.0), "clock discards the same excess time as combat")
 
 
 func _test_initial_territory() -> void:
@@ -115,7 +116,8 @@ func _test_build_and_economy() -> void:
 	_expect(not simulation.try_build_spawner(simulation.TEAM_ENEMY, Vector2i(5, 18)), "red cannot build on blue territory")
 	_expect(simulation.ally_gold == gold_after_build, "invalid build attempts never spend blue gold")
 	var before_income: int = simulation.ally_gold
-	simulation.tick(1.0)
+	for tick_index in 30:
+		simulation.tick(1.0 / 30.0)
 	_expect(simulation.ally_gold == before_income + 3, "one second grants exact passive income")
 
 
@@ -170,7 +172,7 @@ func _test_terminal_results() -> void:
 	for column in 11:
 		timeout_sim.spawn_unit(timeout_sim.TEAM_ENEMY, Vector2(float(column) + 0.5, 17.5))
 	timeout_sim.time_remaining = 0.01
-	timeout_sim.tick(0.02)
+	timeout_sim.tick(1.0 / 30.0)
 	_expect(timeout_sim.result == "DEFEAT", "timeout awards the match to the territory leader")
 
 

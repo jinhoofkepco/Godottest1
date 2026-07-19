@@ -84,6 +84,9 @@ func _test_terminal_routes(tree: SceneTree, main_scene: PackedScene) -> void:
 	_expect(victory.game_result == "VICTORY", "enemy HQ destruction routes victory")
 	_expect(victory.fx.hq_hit_feedback_count == 1, "HQ damage routes strongest flash event")
 	_expect(victory.hud.result_overlay.visible, "terminal state reveals restart overlay")
+	var enemy_hq_view = victory.building_views[victory.simulation.enemy_hq_id]
+	enemy_hq_view._process(0.7)
+	_expect(not victory.building_views.has(victory.simulation.enemy_hq_id), "collapsed building view is removed from the ID registry")
 	victory.queue_free()
 	await tree.process_frame
 
