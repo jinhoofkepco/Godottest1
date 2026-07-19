@@ -9,9 +9,12 @@ const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const BUILDING_HQ := 0
 const BUILDING_SPAWNER := 1
+const UNIT_MELEE := 0
+const UNIT_RANGED := 1
 
 var unit_ids := PackedInt32Array()
 var unit_teams := PackedInt32Array()
+var unit_kinds := PackedInt32Array()
 var unit_positions := PackedVector2Array()
 var unit_hp := PackedFloat32Array()
 var unit_states := PackedInt32Array()
@@ -54,6 +57,7 @@ var _found_target_position := Vector2.ZERO
 func reset() -> void:
 	unit_ids.clear()
 	unit_teams.clear()
+	unit_kinds.clear()
 	unit_positions.clear()
 	unit_hp.clear()
 	unit_states.clear()
@@ -96,11 +100,14 @@ func reset() -> void:
 	recalculate_territory(false)
 
 
-func spawn_unit(team: int, position: Vector2) -> int:
+func spawn_unit(team: int, position: Vector2, unit_kind: int = UNIT_MELEE) -> int:
+	if team not in [TEAM_ALLY, TEAM_ENEMY] or unit_kind not in [UNIT_MELEE, UNIT_RANGED]:
+		return 0
 	var unit_id := _next_unit_id
 	_next_unit_id += 1
 	unit_ids.append(unit_id)
 	unit_teams.append(team)
+	unit_kinds.append(unit_kind)
 	var varied_position := position
 	varied_position.x = clampf(
 		varied_position.x + _rng.randf_range(-GameConfig.UNIT_SPAWN_X_VARIATION, GameConfig.UNIT_SPAWN_X_VARIATION),
@@ -108,7 +115,7 @@ func spawn_unit(team: int, position: Vector2) -> int:
 		float(GameConfig.GRID_COLUMNS) - 0.2
 	)
 	unit_positions.append(varied_position)
-	unit_hp.append(GameConfig.UNIT_MAX_HP)
+	unit_hp.append(_unit_max_hp(unit_kind))
 	unit_states.append(0)
 	unit_target_ids.append(0)
 	unit_cooldowns.append(0.0)
@@ -120,10 +127,10 @@ func spawn_unit(team: int, position: Vector2) -> int:
 	return unit_id
 
 
-func add_building(team: int, kind: int, cell: Vector2i) -> int:
-	if team not in [TEAM_ALLY, TEAM_ENEMY] or kind not in [BUILDING_HQ, BUILDING_SPAWNER] or not _cell_is_valid(cell) or is_blocked(cell):
+func add_building(team: int, kind: int, cell: Vector2i, unit_kind: int = UNIT_MELEE) -> int:
+	if team not in [TEAM_ALLY, TEAM_ENEMY] or kind not in [BUILDING_HQ, BUILDING_SPAWNER] or unit_kind not in [UNIT_MELEE, UNIT_RANGED] or not _cell_is_valid(cell) or is_blocked(cell):
 		return 0
-	return _add_building(team, kind, cell)
+	return _add_building(team, kind, cell, unit_kind)
 
 
 func tick(delta: float) -> void:
@@ -142,22 +149,23 @@ func tick(delta: float) -> void:
 		_check_terminal_state()
 
 
-func try_build_spawner(team: int, cell: Vector2i) -> bool:
-	if result != "" or not _cell_is_valid(cell) or is_blocked(cell):
+func try_build_spawner(team: int, cell: Vector2i, unit_kind: int = UNIT_MELEE) -> bool:
+	if result != "" or unit_kind not in [UNIT_MELEE, UNIT_RANGED] or not _cell_is_valid(cell) or is_blocked(cell):
 		return false
 	if ownership[_cell_index(cell)] != team or _building_at(cell) != -1:
 		return false
+	var cost := _spawner_cost(unit_kind)
 	if team == TEAM_ALLY:
-		if ally_gold < GameConfig.SPAWNER_COST:
+		if ally_gold < cost:
 			return false
-		ally_gold -= GameConfig.SPAWNER_COST
+		ally_gold -= cost
 	elif team == TEAM_ENEMY:
-		if enemy_gold < GameConfig.SPAWNER_COST:
+		if enemy_gold < cost:
 			return false
-		enemy_gold -= GameConfig.SPAWNER_COST
+		enemy_gold -= cost
 	else:
 		return false
-	var building_id := add_building(team, BUILDING_SPAWNER, cell)
+	var building_id := add_building(team, BUILDING_SPAWNER, cell, unit_kind)
 	_events.append({"type": "spawner_built", "team": team, "building_id": building_id, "cell": cell})
 	recalculate_territory()
 	return true
@@ -275,7 +283,8 @@ func _step(delta: float) -> void:
 		_find_target(index)
 		unit_target_ids[index] = _found_target_id
 		var position := unit_positions[index]
-		var target_in_attack_range := _found_target_id != 0 and position.distance_squared_to(_found_target_position) <= GameConfig.UNIT_ATTACK_RANGE * GameConfig.UNIT_ATTACK_RANGE
+		var attack_range := _unit_attack_range(unit_kinds[index])
+		var target_in_attack_range := _found_target_id != 0 and position.distance_squared_to(_found_target_position) <= attack_range * attack_range
 		if target_in_attack_range:
 			unit_states[index] = 1
 			unit_lunge_directions[index] = position.direction_to(_found_target_position)
@@ -297,7 +306,7 @@ func _step(delta: float) -> void:
 			)
 			if steering.length_squared() <= 0.000001:
 				steering = advance_direction
-			var velocity := steering.normalized() * GameConfig.UNIT_SPEED * unit_speed_scales[index]
+			var velocity := steering.normalized() * _unit_speed(unit_kinds[index]) * unit_speed_scales[index]
 			unit_positions[index] = _move_without_entering_blocked(position, velocity * delta)
 	_remove_dead_units()
 	recalculate_territory()
@@ -322,6 +331,9 @@ func _update_enemy_ai(delta: float) -> void:
 	if _enemy_build_timer > 0.0 or _count_spawners(TEAM_ENEMY) >= GameConfig.ENEMY_MAX_SPAWNERS:
 		return
 	_enemy_build_timer += GameConfig.ENEMY_BUILD_INTERVAL
+	var unit_kind := UNIT_RANGED if _enemy_build_cursor % 2 == 1 else UNIT_MELEE
+	if enemy_gold < _spawner_cost(unit_kind):
+		return
 	for offset in GameConfig.GRID_COLUMNS:
 		var column := (_enemy_build_cursor + offset) % GameConfig.GRID_COLUMNS
 		var frontline_row := 0
@@ -330,7 +342,7 @@ func _update_enemy_ai(delta: float) -> void:
 				frontline_row = row
 		for row in range(mini(frontline_row, GameConfig.GRID_ROWS - 2), 0, -1):
 			var cell := Vector2i(column, row)
-			if try_build_spawner(TEAM_ENEMY, cell):
+			if try_build_spawner(TEAM_ENEMY, cell, unit_kind):
 				_enemy_build_cursor = (column + 3) % GameConfig.GRID_COLUMNS
 				return
 
@@ -345,9 +357,10 @@ func _update_spawners(delta: float) -> void:
 			building.spawn_timer = float(building.spawn_timer) + GameConfig.SPAWNER_PRODUCTION_INTERVAL
 			var cell: Vector2i = building.cell
 			var team := int(building.team)
+			var unit_kind := int(building.unit_kind)
 			var offset_y := -0.2 if team == TEAM_ALLY else 0.2
-			var unit_id := spawn_unit(team, Vector2(cell) + Vector2(0.5, 0.5 + offset_y))
-			_events.append({"type": "unit_produced", "team": team, "unit_id": unit_id, "cell": cell})
+			var unit_id := spawn_unit(team, Vector2(cell) + Vector2(0.5, 0.5 + offset_y), unit_kind)
+			_events.append({"type": "unit_produced", "team": team, "unit_id": unit_id, "cell": cell, "unit_kind": unit_kind})
 		buildings[index] = building
 
 
@@ -518,16 +531,21 @@ func _assign_hq_fallback(team: int, position: Vector2) -> void:
 
 
 func _attack_target(attacker_index: int, target_unit_index: int, building_index: int) -> void:
-	unit_cooldowns[attacker_index] = GameConfig.UNIT_ATTACK_INTERVAL
+	var unit_kind := unit_kinds[attacker_index]
+	unit_cooldowns[attacker_index] = _unit_attack_interval(unit_kind)
 	unit_lunge_timers[attacker_index] = GameConfig.UNIT_LUNGE_DURATION
 	var attacker_team := unit_teams[attacker_index]
 	if target_unit_index >= 0 and target_unit_index < unit_ids.size():
-		unit_hp[target_unit_index] -= GameConfig.UNIT_ATTACK_DAMAGE
+		if unit_kind == UNIT_RANGED:
+			_events.append({"type": "ranged_shot", "team": attacker_team, "origin": unit_positions[attacker_index], "position": unit_positions[target_unit_index]})
+		unit_hp[target_unit_index] -= _unit_attack_damage(unit_kind)
 		unit_last_attacker_teams[target_unit_index] = attacker_team
 		_events.append({"type": "hit", "team": unit_teams[target_unit_index], "position": unit_positions[target_unit_index]})
 		return
 	if building_index >= 0 and building_index < buildings.size():
-		apply_building_damage(int(buildings[building_index].id), GameConfig.UNIT_ATTACK_DAMAGE, attacker_team)
+		if unit_kind == UNIT_RANGED:
+			_events.append({"type": "ranged_shot", "team": attacker_team, "origin": unit_positions[attacker_index], "position": Vector2(buildings[building_index].cell) + Vector2(0.5, 0.5)})
+		apply_building_damage(int(buildings[building_index].id), _unit_attack_damage(unit_kind), attacker_team)
 
 
 func _remove_dead_units() -> void:
@@ -552,6 +570,7 @@ func _remove_unit_at(index: int) -> void:
 	if index != last:
 		unit_ids[index] = unit_ids[last]
 		unit_teams[index] = unit_teams[last]
+		unit_kinds[index] = unit_kinds[last]
 		unit_positions[index] = unit_positions[last]
 		unit_hp[index] = unit_hp[last]
 		unit_states[index] = unit_states[last]
@@ -563,6 +582,7 @@ func _remove_unit_at(index: int) -> void:
 		unit_lunge_directions[index] = unit_lunge_directions[last]
 	unit_ids.resize(last)
 	unit_teams.resize(last)
+	unit_kinds.resize(last)
 	unit_positions.resize(last)
 	unit_hp.resize(last)
 	unit_states.resize(last)
@@ -580,7 +600,7 @@ func _rebuild_unit_index() -> void:
 		_unit_index_by_id[unit_ids[unit_index]] = unit_index
 
 
-func _add_building(team: int, kind: int, cell: Vector2i) -> int:
+func _add_building(team: int, kind: int, cell: Vector2i, unit_kind: int) -> int:
 	var building_id := _next_building_id
 	_next_building_id += 1
 	var maximum_hp := GameConfig.HQ_MAX_HP if kind == BUILDING_HQ else GameConfig.SPAWNER_MAX_HP
@@ -588,6 +608,7 @@ func _add_building(team: int, kind: int, cell: Vector2i) -> int:
 		"id": building_id,
 		"team": team,
 		"kind": kind,
+		"unit_kind": unit_kind,
 		"cell": cell,
 		"hp": maximum_hp,
 		"max_hp": maximum_hp,
@@ -595,6 +616,30 @@ func _add_building(team: int, kind: int, cell: Vector2i) -> int:
 		"destroyed": false,
 	})
 	return building_id
+
+
+func _spawner_cost(unit_kind: int) -> int:
+	return GameConfig.RANGED_SPAWNER_COST if unit_kind == UNIT_RANGED else GameConfig.SPAWNER_COST
+
+
+func _unit_max_hp(unit_kind: int) -> float:
+	return GameConfig.RANGED_UNIT_MAX_HP if unit_kind == UNIT_RANGED else GameConfig.UNIT_MAX_HP
+
+
+func _unit_speed(unit_kind: int) -> float:
+	return GameConfig.RANGED_UNIT_SPEED if unit_kind == UNIT_RANGED else GameConfig.UNIT_SPEED
+
+
+func _unit_attack_range(unit_kind: int) -> float:
+	return GameConfig.RANGED_UNIT_ATTACK_RANGE if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_RANGE
+
+
+func _unit_attack_damage(unit_kind: int) -> float:
+	return GameConfig.RANGED_UNIT_ATTACK_DAMAGE if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_DAMAGE
+
+
+func _unit_attack_interval(unit_kind: int) -> float:
+	return GameConfig.RANGED_UNIT_ATTACK_INTERVAL if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_INTERVAL
 
 
 func _building_at(cell: Vector2i) -> int:

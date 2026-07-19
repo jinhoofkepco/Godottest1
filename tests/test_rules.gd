@@ -10,6 +10,8 @@ func run() -> Array[String]:
 	_test_simulation_contract()
 	_test_initial_territory()
 	_test_build_and_economy()
+	_test_ranged_data_and_combat()
+	_test_enemy_ai_kind_funding()
 	_test_combat_and_kill_reward()
 	_test_cross_column_engagement()
 	_test_nearest_hostile_selection()
@@ -58,6 +60,12 @@ func _test_config_values() -> void:
 	_expect(constants.has("UNIT_SEPARATION_RADIUS"), "config exposes ally separation radius")
 	_expect(constants.has("UNIT_SEEK_WEIGHT"), "config exposes seek steering weight")
 	_expect(constants.has("UNIT_LUNGE_DURATION"), "config exposes attack lunge duration")
+	_expect(constants.get("RANGED_SPAWNER_COST", -1) == 80, "ranged spawner costs 80 gold")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_MAX_HP", -1.0)), 32.0), "ranged unit has 32 HP")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_SPEED", -1.0)), 1.25), "ranged unit speed is 1.25")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)), 2.40), "ranged unit attack range is 2.40")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_DAMAGE", -1.0)), 1.00), "ranged unit damage is 1.00")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_INTERVAL", -1.0)), 0.90), "ranged unit attack interval is 0.90 seconds")
 
 
 func _test_expanded_grid_and_obstacles() -> void:
@@ -196,6 +204,103 @@ func _test_build_and_economy() -> void:
 	for tick_index in 30:
 		simulation.tick(1.0 / 30.0)
 	_expect(simulation.ally_gold == before_income + 3, "one second grants exact passive income")
+
+
+func _test_ranged_data_and_combat() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	var constants: Dictionary = simulation.get_script().get_script_constant_map()
+	var properties := _property_names(simulation)
+	_expect(constants.get("UNIT_MELEE", -1) == 0, "simulation exposes melee kind zero")
+	_expect(constants.get("UNIT_RANGED", -1) == 1, "simulation exposes ranged kind one")
+	_expect(properties.has("unit_kinds"), "unit kinds use an aligned packed array")
+	_expect(_method_argument_count(simulation, "spawn_unit") == 3, "spawn accepts a unit kind")
+	_expect(_method_argument_count(simulation, "try_build_spawner") == 3, "build accepts a unit kind")
+	if constants.get("UNIT_MELEE", -1) != 0 or constants.get("UNIT_RANGED", -1) != 1 or not properties.has("unit_kinds"):
+		return
+
+	_expect(typeof(simulation.unit_kinds) == TYPE_PACKED_INT32_ARRAY, "unit kinds use PackedInt32Array")
+	for building in simulation.buildings:
+		_expect(building.has("unit_kind"), "every building record carries a unit kind")
+
+	var ranged_cell := Vector2i(6, 36)
+	_expect(simulation.try_build_spawner(simulation.TEAM_ALLY, ranged_cell, simulation.UNIT_RANGED), "ranged spawner builds")
+	_expect(simulation.ally_gold == simulation.config.START_GOLD - simulation.config.RANGED_SPAWNER_COST, "ranged cost is charged")
+	var spawner_index: int = simulation.buildings.size() - 1
+	_expect(int(simulation.buildings[spawner_index].unit_kind) == simulation.UNIT_RANGED, "spawner stores selected kind")
+	var spawner: Dictionary = simulation.buildings[spawner_index]
+	spawner.spawn_timer = 0.0
+	simulation.buildings[spawner_index] = spawner
+	simulation.tick(1.0 / 30.0)
+	_expect(simulation.unit_ids.size() == 1, "ready spawner produces one unit")
+	_expect(simulation.unit_kinds[0] == simulation.UNIT_RANGED, "spawner produces selected kind")
+	_expect(is_equal_approx(simulation.unit_hp[0], simulation.config.RANGED_UNIT_MAX_HP), "spawn applies ranged max HP")
+
+	var swap_simulation = _new_simulation()
+	swap_simulation.spawn_unit(swap_simulation.TEAM_ENEMY, Vector2(5.5, 10.2), swap_simulation.UNIT_MELEE)
+	swap_simulation.spawn_unit(swap_simulation.TEAM_ALLY, Vector2(5.5, 10.7), swap_simulation.UNIT_MELEE)
+	var survivor_id: int = swap_simulation.spawn_unit(swap_simulation.TEAM_ALLY, Vector2(5.5, 36.0), swap_simulation.UNIT_RANGED)
+	swap_simulation.unit_positions[0] = Vector2(5.5, 10.2)
+	swap_simulation.unit_positions[1] = Vector2(5.5, 10.7)
+	swap_simulation.unit_positions[2] = Vector2(5.5, 36.0)
+	swap_simulation.unit_hp[1] = 1.0
+	swap_simulation.tick(1.0 / 30.0)
+	_expect(swap_simulation.unit_ids.size() == 2, "lethal hit swap-removes one packed unit")
+	_expect(swap_simulation.unit_kinds.size() == swap_simulation.unit_ids.size(), "unit kinds stay size-aligned after removal")
+	_expect(swap_simulation.unit_ids[1] == survivor_id and swap_simulation.unit_kinds[1] == swap_simulation.UNIT_RANGED, "swap-removal preserves the moved unit kind")
+
+	var melee_simulation = _new_simulation()
+	melee_simulation.spawn_unit(melee_simulation.TEAM_ALLY, Vector2(5.5, 12.0), melee_simulation.UNIT_MELEE)
+	melee_simulation.spawn_unit(melee_simulation.TEAM_ENEMY, Vector2(5.5, 10.0), melee_simulation.UNIT_MELEE)
+	melee_simulation.unit_positions[0] = Vector2(5.5, 12.0)
+	melee_simulation.unit_positions[1] = Vector2(5.5, 10.0)
+	melee_simulation.tick(1.0 / 30.0)
+	_expect(not _has_event(melee_simulation.drain_events(), "hit"), "melee cannot hit at distance 2.0")
+
+	var ranged_simulation = _new_simulation()
+	ranged_simulation.spawn_unit(ranged_simulation.TEAM_ALLY, Vector2(5.5, 12.0), ranged_simulation.UNIT_RANGED)
+	ranged_simulation.spawn_unit(ranged_simulation.TEAM_ENEMY, Vector2(5.5, 10.0), ranged_simulation.UNIT_MELEE)
+	ranged_simulation.unit_positions[0] = Vector2(5.5, 12.0)
+	ranged_simulation.unit_positions[1] = Vector2(5.5, 10.0)
+	ranged_simulation.tick(1.0 / 30.0)
+	var ranged_events: Array = ranged_simulation.drain_events()
+	var shot: Dictionary = _event_of_type(ranged_events, "ranged_shot")
+	_expect(_has_event(ranged_events, "hit"), "ranged unit keeps shared hit feedback")
+	_expect(not shot.is_empty(), "ranged unit emits a ranged shot at distance 2.0")
+	_expect(shot.get("team", 0) == ranged_simulation.TEAM_ALLY, "ranged shot records the attacker team")
+	_expect(shot.get("origin", Vector2.ZERO) == Vector2(5.5, 12.0), "ranged shot records its origin")
+	_expect(shot.get("position", Vector2.ZERO) == Vector2(5.5, 10.0), "ranged shot records its target position")
+	_expect(is_equal_approx(ranged_simulation.unit_hp[1], ranged_simulation.config.UNIT_MAX_HP - ranged_simulation.config.RANGED_UNIT_ATTACK_DAMAGE), "ranged hit applies ranged damage")
+	_expect(is_equal_approx(ranged_simulation.unit_cooldowns[0], ranged_simulation.config.RANGED_UNIT_ATTACK_INTERVAL), "ranged hit applies ranged interval")
+
+
+func _test_enemy_ai_kind_funding() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	var constants: Dictionary = simulation.get_script().get_script_constant_map()
+	if constants.get("UNIT_MELEE", -1) != 0 or constants.get("UNIT_RANGED", -1) != 1 or not _property_names(simulation).has("unit_kinds"):
+		_expect(false, "enemy kind funding fixture requires ranged interfaces")
+		return
+	simulation._enemy_build_timer = 0.0
+	simulation.tick(1.0 / 30.0)
+	var enemy_spawners := _spawners_for_team(simulation, simulation.TEAM_ENEMY)
+	_expect(enemy_spawners.size() == 1 and int(enemy_spawners[0].unit_kind) == simulation.UNIT_MELEE, "enemy AI first builds melee from an even cursor")
+	_expect(simulation.enemy_gold == simulation.config.ENEMY_START_GOLD - simulation.config.SPAWNER_COST, "enemy melee build charges melee cost")
+
+	simulation.enemy_gold = simulation.config.RANGED_SPAWNER_COST - 1
+	simulation._enemy_build_timer = 0.0
+	simulation.tick(1.0 / 30.0)
+	_expect(_spawners_for_team(simulation, simulation.TEAM_ENEMY).size() == 1, "enemy AI waits when alternating ranged kind is unaffordable")
+	_expect(simulation.enemy_gold == simulation.config.RANGED_SPAWNER_COST - 1, "failed enemy ranged build spends no gold")
+
+	simulation.enemy_gold = simulation.config.RANGED_SPAWNER_COST
+	simulation._enemy_build_timer = 0.0
+	simulation.tick(1.0 / 30.0)
+	enemy_spawners = _spawners_for_team(simulation, simulation.TEAM_ENEMY)
+	_expect(enemy_spawners.size() == 2 and int(enemy_spawners[1].unit_kind) == simulation.UNIT_RANGED, "enemy AI alternates to ranged from an odd cursor")
+	_expect(simulation.enemy_gold == 0, "enemy ranged build charges ranged cost")
 
 
 func _test_combat_and_kill_reward() -> void:
@@ -430,6 +535,28 @@ func _has_event(events: Array, event_type: String) -> bool:
 		if String(event.get("type", "")) == event_type:
 			return true
 	return false
+
+
+func _event_of_type(events: Array, event_type: String) -> Dictionary:
+	for event in events:
+		if String(event.get("type", "")) == event_type:
+			return event
+	return {}
+
+
+func _spawners_for_team(simulation, team: int) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for building in simulation.buildings:
+		if int(building.team) == team and int(building.kind) == simulation.BUILDING_SPAWNER and not bool(building.destroyed):
+			result.append(building)
+	return result
+
+
+func _method_argument_count(value: Object, method_name: String) -> int:
+	for method in value.get_method_list():
+		if String(method.name) == method_name:
+			return method.args.size()
+	return -1
 
 
 func _property_names(value: Object) -> Array[String]:
