@@ -18,6 +18,9 @@ var unit_states := PackedInt32Array()
 var unit_target_ids := PackedInt32Array()
 var unit_cooldowns := PackedFloat32Array()
 var unit_last_attacker_teams := PackedInt32Array()
+var unit_speed_scales := PackedFloat32Array()
+var unit_lunge_timers := PackedFloat32Array()
+var unit_lunge_directions := PackedVector2Array()
 
 var buildings: Array[Dictionary] = []
 var ownership := PackedByteArray()
@@ -39,6 +42,7 @@ var _enemy_build_cursor := 0
 var _events: Array[Dictionary] = []
 var _buckets: Array[Array] = []
 var _unit_index_by_id: Dictionary = {}
+var _rng := RandomNumberGenerator.new()
 
 
 func reset() -> void:
@@ -50,6 +54,9 @@ func reset() -> void:
 	unit_target_ids.clear()
 	unit_cooldowns.clear()
 	unit_last_attacker_teams.clear()
+	unit_speed_scales.clear()
+	unit_lunge_timers.clear()
+	unit_lunge_directions.clear()
 	buildings.clear()
 	ownership.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	ownership.fill(TEAM_NONE)
@@ -65,6 +72,7 @@ func reset() -> void:
 	_enemy_income_remainder = 0.0
 	_enemy_build_timer = GameConfig.ENEMY_BUILD_INTERVAL
 	_enemy_build_cursor = 0
+	_rng.seed = 731942
 	_events.clear()
 	_buckets.clear()
 	_unit_index_by_id.clear()
@@ -79,12 +87,21 @@ func spawn_unit(team: int, position: Vector2) -> int:
 	_next_unit_id += 1
 	unit_ids.append(unit_id)
 	unit_teams.append(team)
-	unit_positions.append(position)
+	var varied_position := position
+	varied_position.x = clampf(
+		varied_position.x + _rng.randf_range(-GameConfig.UNIT_SPAWN_X_VARIATION, GameConfig.UNIT_SPAWN_X_VARIATION),
+		0.2,
+		float(GameConfig.GRID_COLUMNS) - 0.2
+	)
+	unit_positions.append(varied_position)
 	unit_hp.append(GameConfig.UNIT_MAX_HP)
 	unit_states.append(0)
 	unit_target_ids.append(0)
 	unit_cooldowns.append(0.0)
 	unit_last_attacker_teams.append(TEAM_NONE)
+	unit_speed_scales.append(_rng.randf_range(1.0 - GameConfig.UNIT_SPEED_VARIATION, 1.0 + GameConfig.UNIT_SPEED_VARIATION))
+	unit_lunge_timers.append(0.0)
+	unit_lunge_directions.append(Vector2.ZERO)
 	_unit_index_by_id[unit_id] = unit_ids.size() - 1
 	return unit_id
 
@@ -215,17 +232,35 @@ func _step(delta: float) -> void:
 		if unit_hp[index] <= 0.0:
 			continue
 		unit_cooldowns[index] = maxf(0.0, unit_cooldowns[index] - delta)
+		unit_lunge_timers[index] = maxf(0.0, unit_lunge_timers[index] - delta)
 		var target := _find_target(index)
 		unit_target_ids[index] = int(target.id)
-		if int(target.id) != 0:
+		var position := unit_positions[index]
+		var target_position := Vector2(target.position)
+		var target_in_attack_range := int(target.id) != 0 and position.distance_squared_to(target_position) <= GameConfig.UNIT_ATTACK_RANGE * GameConfig.UNIT_ATTACK_RANGE
+		if target_in_attack_range:
 			unit_states[index] = 1
+			unit_lunge_directions[index] = position.direction_to(target_position)
 			if unit_cooldowns[index] <= 0.0:
 				_attack_target(index, target)
 		else:
 			unit_states[index] = 0
-			var direction := -1.0 if unit_teams[index] == TEAM_ALLY else 1.0
-			var position := unit_positions[index]
-			position.y = clampf(position.y + direction * GameConfig.UNIT_SPEED * delta, 0.5, float(GameConfig.GRID_ROWS) - 0.5)
+			var advance_direction := Vector2(0.0, -1.0 if unit_teams[index] == TEAM_ALLY else 1.0)
+			var seek_direction := Vector2.ZERO
+			if int(target.id) != 0:
+				seek_direction = position.direction_to(target_position)
+			var separation_direction := _calculate_separation(index)
+			var steering := (
+				advance_direction * GameConfig.UNIT_ADVANCE_WEIGHT
+				+ seek_direction * GameConfig.UNIT_SEEK_WEIGHT
+				+ separation_direction * GameConfig.UNIT_SEPARATION_WEIGHT
+			)
+			if steering.length_squared() <= 0.000001:
+				steering = advance_direction
+			var velocity := steering.normalized() * GameConfig.UNIT_SPEED * unit_speed_scales[index]
+			position += velocity * delta
+			position.x = clampf(position.x, 0.2, float(GameConfig.GRID_COLUMNS) - 0.2)
+			position.y = clampf(position.y, 0.5, float(GameConfig.GRID_ROWS) - 0.5)
 			unit_positions[index] = position
 	_remove_dead_units()
 	recalculate_territory()
@@ -295,15 +330,16 @@ func _rebuild_buckets() -> void:
 func _find_target(unit_index: int) -> Dictionary:
 	var position := unit_positions[unit_index]
 	var team := unit_teams[unit_index]
-	var retained := _resolve_target(unit_target_ids[unit_index], team, position)
+	var retained := _resolve_target(unit_target_ids[unit_index], team, position, GameConfig.UNIT_DETECT_RANGE)
 	if int(retained.id) != 0:
 		return retained
 	var cell := Vector2i(floori(position.x), floori(position.y))
-	var best_distance_sq := GameConfig.UNIT_ATTACK_RANGE * GameConfig.UNIT_ATTACK_RANGE
+	var best_distance_sq := GameConfig.UNIT_DETECT_RANGE * GameConfig.UNIT_DETECT_RANGE
 	var best_id := 0
 	var best_index := -1
-	for row in range(maxi(0, cell.y - 1), mini(GameConfig.GRID_ROWS - 1, cell.y + 1) + 1):
-		for column in range(maxi(0, cell.x - 1), mini(GameConfig.GRID_COLUMNS - 1, cell.x + 1) + 1):
+	var bucket_radius := ceili(GameConfig.UNIT_DETECT_RANGE)
+	for row in range(maxi(0, cell.y - bucket_radius), mini(GameConfig.GRID_ROWS - 1, cell.y + bucket_radius) + 1):
+		for column in range(maxi(0, cell.x - bucket_radius), mini(GameConfig.GRID_COLUMNS - 1, cell.x + bucket_radius) + 1):
 			for candidate_index in _buckets[row * GameConfig.GRID_COLUMNS + column]:
 				target_candidate_checks += 1
 				if candidate_index == unit_index or unit_teams[candidate_index] == team or unit_hp[candidate_index] <= 0.0:
@@ -314,7 +350,7 @@ func _find_target(unit_index: int) -> Dictionary:
 					best_id = unit_ids[candidate_index]
 					best_index = candidate_index
 	if best_id != 0:
-		return {"id": best_id, "unit_index": best_index, "building_index": -1}
+		return {"id": best_id, "unit_index": best_index, "building_index": -1, "position": unit_positions[best_index]}
 	for building_index in buildings.size():
 		var building := buildings[building_index]
 		if bool(building.destroyed) or int(building.team) == team:
@@ -325,27 +361,55 @@ func _find_target(unit_index: int) -> Dictionary:
 			best_distance_sq = distance_sq
 			best_id = -int(building.id)
 			best_index = building_index
-	return {"id": best_id, "unit_index": -1, "building_index": best_index}
+	var resolved_position := Vector2.ZERO
+	if best_index >= 0:
+		resolved_position = Vector2(buildings[best_index].cell) + Vector2(0.5, 0.5)
+	return {"id": best_id, "unit_index": -1, "building_index": best_index, "position": resolved_position}
 
 
-func _resolve_target(target_id: int, team: int, position: Vector2) -> Dictionary:
-	var range_squared := GameConfig.UNIT_ATTACK_RANGE * GameConfig.UNIT_ATTACK_RANGE
+func _resolve_target(target_id: int, team: int, position: Vector2, maximum_range: float) -> Dictionary:
+	var range_squared := maximum_range * maximum_range
 	if target_id > 0 and _unit_index_by_id.has(target_id):
 		var index := int(_unit_index_by_id[target_id])
 		if unit_hp[index] > 0.0 and unit_teams[index] != team and position.distance_squared_to(unit_positions[index]) <= range_squared:
-			return {"id": target_id, "unit_index": index, "building_index": -1}
+			return {"id": target_id, "unit_index": index, "building_index": -1, "position": unit_positions[index]}
 	elif target_id < 0:
 		var building_index := _building_index_from_id(-target_id)
 		if building_index >= 0:
 			var building := buildings[building_index]
 			var building_position := Vector2(building.cell) + Vector2(0.5, 0.5)
 			if not bool(building.destroyed) and int(building.team) != team and position.distance_squared_to(building_position) <= range_squared:
-				return {"id": target_id, "unit_index": -1, "building_index": building_index}
-	return {"id": 0, "unit_index": -1, "building_index": -1}
+				return {"id": target_id, "unit_index": -1, "building_index": building_index, "position": building_position}
+	return {"id": 0, "unit_index": -1, "building_index": -1, "position": Vector2.ZERO}
+
+
+func _calculate_separation(unit_index: int) -> Vector2:
+	var position := unit_positions[unit_index]
+	var team := unit_teams[unit_index]
+	var cell := Vector2i(floori(position.x), floori(position.y))
+	var separation := Vector2.ZERO
+	var radius_squared := GameConfig.UNIT_SEPARATION_RADIUS * GameConfig.UNIT_SEPARATION_RADIUS
+	for row in range(maxi(0, cell.y - 1), mini(GameConfig.GRID_ROWS - 1, cell.y + 1) + 1):
+		for column in range(maxi(0, cell.x - 1), mini(GameConfig.GRID_COLUMNS - 1, cell.x + 1) + 1):
+			for candidate_index in _buckets[row * GameConfig.GRID_COLUMNS + column]:
+				if candidate_index == unit_index or unit_teams[candidate_index] != team or unit_hp[candidate_index] <= 0.0:
+					continue
+				var offset := position - unit_positions[candidate_index]
+				var distance_squared := offset.length_squared()
+				if distance_squared >= radius_squared:
+					continue
+				if distance_squared <= 0.000001:
+					var pair_direction := 1.0 if unit_ids[unit_index] < unit_ids[candidate_index] else -1.0
+					separation += Vector2(pair_direction, 0.0)
+				else:
+					var distance := sqrt(distance_squared)
+					separation += offset / distance * (1.0 - distance / GameConfig.UNIT_SEPARATION_RADIUS)
+	return separation.normalized() if separation.length_squared() > 0.000001 else Vector2.ZERO
 
 
 func _attack_target(attacker_index: int, target: Dictionary) -> void:
 	unit_cooldowns[attacker_index] = GameConfig.UNIT_ATTACK_INTERVAL
+	unit_lunge_timers[attacker_index] = GameConfig.UNIT_LUNGE_DURATION
 	var attacker_team := unit_teams[attacker_index]
 	var target_unit_index := int(target.unit_index)
 	if target_unit_index >= 0 and target_unit_index < unit_ids.size():
@@ -386,6 +450,9 @@ func _remove_unit_at(index: int) -> void:
 		unit_target_ids[index] = unit_target_ids[last]
 		unit_cooldowns[index] = unit_cooldowns[last]
 		unit_last_attacker_teams[index] = unit_last_attacker_teams[last]
+		unit_speed_scales[index] = unit_speed_scales[last]
+		unit_lunge_timers[index] = unit_lunge_timers[last]
+		unit_lunge_directions[index] = unit_lunge_directions[last]
 	unit_ids.resize(last)
 	unit_teams.resize(last)
 	unit_positions.resize(last)
@@ -394,6 +461,9 @@ func _remove_unit_at(index: int) -> void:
 	unit_target_ids.resize(last)
 	unit_cooldowns.resize(last)
 	unit_last_attacker_teams.resize(last)
+	unit_speed_scales.resize(last)
+	unit_lunge_timers.resize(last)
+	unit_lunge_directions.resize(last)
 
 
 func _rebuild_unit_index() -> void:

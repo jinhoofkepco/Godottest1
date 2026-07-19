@@ -10,6 +10,9 @@ func run() -> Array[String]:
 	_test_initial_territory()
 	_test_build_and_economy()
 	_test_combat_and_kill_reward()
+	_test_cross_column_engagement()
+	_test_ally_separation()
+	_test_lunge_state_contract()
 	_test_frontline_ownership()
 	_test_terminal_results()
 	_test_balance_paths()
@@ -48,6 +51,11 @@ func _test_config_values() -> void:
 	_expect(config.START_GOLD == 180, "blue starts with 180 gold")
 	_expect(config.KILL_REWARD == 6, "unit kill reward is 6 gold")
 	_expect(is_equal_approx(config.OCCUPANCY_WIN_RATIO, 0.9), "90 percent territory ends the match")
+	var constants: Dictionary = config.get_script_constant_map()
+	_expect(constants.has("UNIT_DETECT_RANGE"), "config exposes hostile detection range")
+	_expect(constants.has("UNIT_SEPARATION_RADIUS"), "config exposes ally separation radius")
+	_expect(constants.has("UNIT_SEEK_WEIGHT"), "config exposes seek steering weight")
+	_expect(constants.has("UNIT_LUNGE_DURATION"), "config exposes attack lunge duration")
 
 
 func _new_simulation():
@@ -70,9 +78,16 @@ func _test_simulation_contract() -> void:
 	_expect(typeof(simulation.unit_teams) == TYPE_PACKED_INT32_ARRAY, "unit teams use PackedInt32Array")
 	_expect(typeof(simulation.unit_positions) == TYPE_PACKED_VECTOR2_ARRAY, "unit positions use PackedVector2Array")
 	_expect(typeof(simulation.unit_hp) == TYPE_PACKED_FLOAT32_ARRAY, "unit HP uses PackedFloat32Array")
+	var property_names := _property_names(simulation)
+	_expect(property_names.has("unit_speed_scales"), "unit speed variation uses one packed array")
+	_expect(property_names.has("unit_lunge_timers"), "unit lunge timers use one packed array")
+	_expect(property_names.has("unit_lunge_directions"), "unit lunge directions use one packed array")
 	var unit_id: int = simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(4.5, 18.5))
 	_expect(unit_id > 0 and simulation.unit_ids.size() == 1, "spawn inserts one packed unit")
-	_expect(simulation.unit_positions[0].is_equal_approx(Vector2(4.5, 18.5)), "spawn preserves logical position")
+	_expect(absf(simulation.unit_positions[0].x - 4.5) <= 0.3001 and is_equal_approx(simulation.unit_positions[0].y, 18.5), "spawn applies only bounded lateral variation")
+	if property_names.has("unit_speed_scales"):
+		_expect(simulation.unit_speed_scales.size() == 1, "speed variation stays index-aligned")
+		_expect(simulation.unit_speed_scales[0] >= 0.9 and simulation.unit_speed_scales[0] <= 1.1, "speed variation stays within ten percent")
 	simulation.tick(1.0 / 30.0)
 	_expect(simulation.unit_positions[0].y < 18.5, "blue unit advances toward red HQ")
 	var building_id: int = simulation.add_building(simulation.TEAM_ALLY, simulation.BUILDING_SPAWNER, Vector2i(1, 18))
@@ -86,7 +101,7 @@ func _test_simulation_contract() -> void:
 	var catch_up_simulation = _new_simulation()
 	catch_up_simulation.spawn_unit(catch_up_simulation.TEAM_ALLY, Vector2(4.5, 18.5))
 	catch_up_simulation.tick(1.0)
-	var expected_catch_up_y: float = 18.5 - catch_up_simulation.config.UNIT_SPEED * 8.0 / 30.0
+	var expected_catch_up_y: float = 18.5 - catch_up_simulation.config.UNIT_SPEED * catch_up_simulation.unit_speed_scales[0] * 8.0 / 30.0
 	_expect(is_equal_approx(catch_up_simulation.unit_positions[0].y, expected_catch_up_y), "long frame performs at most eight fixed catch-up ticks")
 	_expect(is_equal_approx(catch_up_simulation.time_remaining, 180.0 - 8.0 / 30.0), "clock discards the same excess time as combat")
 
@@ -127,6 +142,8 @@ func _test_combat_and_kill_reward() -> void:
 		return
 	var red_id: int = simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(5.5, 10.2))
 	var blue_id: int = simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(5.5, 10.7))
+	simulation.unit_positions[0] = Vector2(5.5, 10.2)
+	simulation.unit_positions[1] = Vector2(5.5, 10.7)
 	_expect(red_id != blue_id, "units receive unique IDs")
 	simulation.unit_hp[1] = 1.0
 	var red_gold_before: int = simulation.enemy_gold
@@ -136,6 +153,55 @@ func _test_combat_and_kill_reward() -> void:
 	var events: Array = simulation.drain_events()
 	_expect(_has_event(events, "hit"), "combat queues a hit event")
 	_expect(_has_event(events, "unit_death"), "combat queues a unit death event")
+
+
+func _test_cross_column_engagement() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(4.35, 10.0))
+	simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(5.65, 10.1))
+	simulation.unit_positions[0] = Vector2(4.35, 10.0)
+	simulation.unit_positions[1] = Vector2(5.65, 10.1)
+	var hit_seen := false
+	for tick_index in 120:
+		simulation.tick(1.0 / 30.0)
+		if _has_event(simulation.drain_events(), "hit"):
+			hit_seen = true
+			break
+	_expect(hit_seen, "units spawned in different columns pursue and strike each other")
+	_expect(simulation.unit_positions[0].x > 4.35 or simulation.unit_positions[1].x < 5.65, "hostile seek changes logical x")
+
+
+func _test_ally_separation() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(5.5, 15.0))
+	simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(5.5, 15.0))
+	simulation.unit_positions[0] = Vector2(5.5, 15.0)
+	simulation.unit_positions[1] = Vector2(5.5, 15.0)
+	for tick_index in 30:
+		simulation.tick(1.0 / 30.0)
+	_expect(simulation.unit_positions[0].distance_to(simulation.unit_positions[1]) >= 0.20, "overlapping allies separate into individually readable positions")
+
+
+func _test_lunge_state_contract() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	var property_names := _property_names(simulation)
+	if not property_names.has("unit_lunge_timers") or not property_names.has("unit_lunge_directions"):
+		_expect(false, "lunge packed arrays exist before attack contract can run")
+		return
+	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(5.2, 10.2))
+	simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(5.7, 10.5))
+	simulation.unit_positions[0] = Vector2(5.2, 10.2)
+	simulation.unit_positions[1] = Vector2(5.7, 10.5)
+	simulation.tick(1.0 / 30.0)
+	_expect(simulation.unit_states[0] == 1, "in-range unit stops in attack state")
+	_expect(simulation.unit_lunge_timers[0] > 0.0, "successful attack starts batched lunge timer")
+	_expect(simulation.unit_lunge_directions[0].x > 0.0, "lunge direction faces the attacked target")
 
 
 func _test_frontline_ownership() -> void:
@@ -216,6 +282,13 @@ func _has_event(events: Array, event_type: String) -> bool:
 		if String(event.get("type", "")) == event_type:
 			return true
 	return false
+
+
+func _property_names(value: Object) -> Array[String]:
+	var names: Array[String] = []
+	for property in value.get_property_list():
+		names.append(String(property.name))
+	return names
 
 
 func _expect(condition: bool, message: String) -> void:
