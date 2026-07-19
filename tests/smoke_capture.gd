@@ -9,6 +9,7 @@ const OUTPUTS := [
 	"res://build/smoke_persistent_flank.png",
 	"res://build/smoke_flow_split.png",
 	"res://build/smoke_infantry_closeup.png",
+	"res://build/smoke_visual_hierarchy.png",
 ]
 
 
@@ -46,7 +47,7 @@ func _run() -> void:
 			return
 		main.queue_free()
 		await process_frame
-	print("SMOKE CAPTURE PASS: opening / blue advantage / blue disadvantage / frontline cluster / persistent flank / flow split / infantry closeup (540x960)")
+	print("SMOKE CAPTURE PASS: opening / advantage / disadvantage / cluster / persistent flank / flow split / infantry closeup / visual hierarchy (540x960)")
 	quit(0)
 
 
@@ -89,8 +90,10 @@ func _stage_scenario(main: Node, scenario: int) -> bool:
 		return _stage_persistent_flank(main)
 	elif scenario == 5:
 		return _stage_flow_split(main)
-	else:
+	elif scenario == 6:
 		return _stage_infantry_closeup(main)
+	else:
+		return _stage_visual_hierarchy(main)
 	return true
 
 
@@ -181,6 +184,52 @@ func _stage_infantry_closeup(main: Node) -> bool:
 	main.hud.show_message("KAYKIT INFANTRY // 8 DIR + STATE", GameConfig.COLOR_TEAL)
 	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), 5.2)
 	return simulation.unit_ids.size() == 8
+
+
+func _stage_visual_hierarchy(main: Node) -> bool:
+	var simulation = main.simulation
+	var middle_row := GameConfig.GRID_ROWS / 2
+	var ally_spawner := _nearest_clear_cell(simulation, Vector2i(7, middle_row + 4))
+	var enemy_spawner := _nearest_clear_cell(simulation, Vector2i(14, middle_row - 4))
+	var ally_tower := _nearest_clear_cell(simulation, Vector2i(5, middle_row + 2), [ally_spawner])
+	var enemy_lair := _nearest_clear_cell(simulation, Vector2i(16, middle_row - 2), [enemy_spawner])
+	if ally_spawner.x < 0 or enemy_spawner.x < 0 or ally_tower.x < 0 or enemy_lair.x < 0:
+		return false
+	simulation.add_building(simulation.TEAM_ALLY, simulation.BUILDING_SPAWNER, ally_spawner, simulation.UNIT_MELEE)
+	simulation.add_building(simulation.TEAM_ENEMY, simulation.BUILDING_SPAWNER, enemy_spawner, simulation.UNIT_RANGED)
+	simulation.add_building(simulation.TEAM_ALLY, simulation.BUILDING_DEFENSE_TOWER, ally_tower)
+	simulation.add_building(simulation.TEAM_ENEMY, simulation.BUILDING_DRAGON_LAIR, enemy_lair, simulation.UNIT_DRAGON)
+	var damaged_ids: Array[int] = []
+	for column in range(7, 15, 2):
+		var ally_id: int = simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(column) + 0.5, float(middle_row) + 1.7), simulation.UNIT_MELEE if column % 4 == 3 else simulation.UNIT_RANGED)
+		var enemy_id: int = simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(float(column) + 0.5, float(middle_row) - 1.2), simulation.UNIT_RANGED if column % 4 == 3 else simulation.UNIT_MELEE)
+		if column in [9, 13]:
+			damaged_ids.append(ally_id)
+			damaged_ids.append(enemy_id)
+	var dragon_id: int = simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(12.5, float(middle_row) - 2.8), simulation.UNIT_DRAGON)
+	main._sync_building_views()
+	main.unit_renderer.sync()
+	for unit_id in damaged_ids:
+		var unit_index: int = simulation.unit_ids.find(unit_id)
+		if unit_index >= 0:
+			simulation.unit_hp[unit_index] *= 0.58
+	main.unit_renderer.sync()
+	main.hud.show_message("MUTED FIELD // SHADED ACTORS", GameConfig.COLOR_TEAL)
+	main.fx.show_ranged_shot(Vector2(8.5, middle_row + 1.7), Vector2(10.5, middle_row - 1.2), simulation.TEAM_ALLY)
+	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, middle_row), 3.15)
+	return dragon_id > 0 and not damaged_ids.is_empty() and main.unit_renderer.get_hp_bar_alpha(damaged_ids[0]) > 0.0
+
+
+func _nearest_clear_cell(simulation, desired: Vector2i, excluded: Array = []) -> Vector2i:
+	for radius in 6:
+		for y_offset in range(-radius, radius + 1):
+			for x_offset in range(-radius, radius + 1):
+				var cell := desired + Vector2i(x_offset, y_offset)
+				if cell.x < 0 or cell.x >= GameConfig.GRID_COLUMNS or cell.y < 0 or cell.y >= GameConfig.GRID_ROWS:
+					continue
+				if not simulation.is_blocked(cell) and cell not in excluded:
+					return cell
+	return Vector2i(-1, -1)
 
 
 func _spawn_if_clear(simulation, team: int, cell: Vector2i, unit_kind: int) -> void:

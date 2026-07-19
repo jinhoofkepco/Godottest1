@@ -6,6 +6,12 @@ const TEAM_PATHS := [
 	"res://assets/units/infantry_blue.png",
 	"res://assets/units/infantry_red.png",
 ]
+const WORLD_METADATA_PATH := "res://assets/world/world_atlas.json"
+const WORLD_ATLAS_PATH := "res://assets/world/world_atlas.png"
+const DRAGON_PATHS := [
+	"res://assets/world/dragon_blue.png",
+	"res://assets/world/dragon_red.png",
+]
 
 
 func _initialize() -> void:
@@ -69,8 +75,70 @@ func _initialize() -> void:
 			if direction_hashes.size() < 7:
 				_fail("directions are not visually distinct in %s model=%d" % [path, model_index])
 				return
-	print("ATLAS VALIDATION PASS: all 512 cells, 2 teams x 2 classes x 8 distinct directions, transparent 1536x1536 RGBA")
+			var representative_index := model_index * GameConfig.INFANTRY_CLASS_FRAME_COUNT + 2
+			var representative_origin := Vector2i((representative_index % GameConfig.INFANTRY_ATLAS_COLUMNS) * cell_size.x, (representative_index / GameConfig.INFANTRY_ATLAS_COLUMNS) * cell_size.y)
+			var representative := image.get_region(Rect2i(representative_origin, cell_size))
+			var luminance_range := _opaque_luminance_range(representative)
+			if luminance_range.x > 0.35 or luminance_range.y - luminance_range.x < 0.55:
+				_fail("infantry shading lacks readable dark-to-light form in %s model=%d range=%s" % [path, model_index, luminance_range])
+				return
+	if not _validate_world_atlas():
+		return
+	print("ATLAS VALIDATION PASS: shaded infantry, animated dragon, CC0 buildings and blockers")
 	quit(0)
+
+
+func _opaque_luminance_range(image: Image) -> Vector2:
+	var minimum := 1.0
+	var maximum := 0.0
+	for y in range(0, image.get_height(), 2):
+		for x in range(0, image.get_width(), 2):
+			var pixel := image.get_pixel(x, y)
+			if pixel.a <= 0.10:
+				continue
+			var luminance := pixel.get_luminance()
+			minimum = minf(minimum, luminance)
+			maximum = maxf(maximum, luminance)
+	return Vector2(minimum, maximum)
+
+
+func _validate_world_atlas() -> bool:
+	var metadata_file := FileAccess.open(WORLD_METADATA_PATH, FileAccess.READ)
+	if metadata_file == null:
+		_fail("world atlas metadata is missing")
+		return false
+	var metadata = JSON.parse_string(metadata_file.get_as_text())
+	if not metadata is Dictionary:
+		_fail("world atlas metadata is not a JSON object")
+		return false
+	var required_sprites := ["blue_hq", "red_hq", "blue_melee_spawner", "red_melee_spawner", "blue_ranged_spawner", "red_ranged_spawner", "blue_tower", "red_tower", "blue_dragon_lair", "red_dragon_lair", "rock_a", "rock_b", "rock_c", "crate"]
+	var sprites: Dictionary = metadata.get("sprites", {})
+	for sprite_name in required_sprites:
+		if not sprites.has(sprite_name):
+			_fail("world atlas is missing sprite %s" % sprite_name)
+			return false
+	var world_image := Image.load_from_file(ProjectSettings.globalize_path(WORLD_ATLAS_PATH))
+	if world_image == null or world_image.is_empty() or world_image.get_size() != Vector2i(512, 512):
+		_fail("world atlas must be a 512x512 image")
+		return false
+	if int(metadata.get("dragon_directions", 0)) != 8 or int(metadata.get("dragon_frames_per_direction", 0)) != 16:
+		_fail("dragon atlas contract must be 8 directions x 16 frames")
+		return false
+	for dragon_path in DRAGON_PATHS:
+		var dragon_image := Image.load_from_file(ProjectSettings.globalize_path(dragon_path))
+		if dragon_image == null or dragon_image.is_empty() or dragon_image.get_size() != Vector2i(1536, 768):
+			_fail("dragon atlas must be 1536x768: %s" % dragon_path)
+			return false
+		var direction_hashes: Dictionary = {}
+		for direction_index in 8:
+			var linear_index := direction_index * 16 + 2
+			var origin := Vector2i((linear_index % 16) * 96, (linear_index / 16) * 96)
+			var frame := dragon_image.get_region(Rect2i(origin, Vector2i(96, 96)))
+			direction_hashes[hash(frame.get_data())] = true
+		if direction_hashes.size() < 7:
+			_fail("dragon headings are not visually distinct: %s" % dragon_path)
+			return false
+	return true
 
 
 func _fail(message: String) -> void:

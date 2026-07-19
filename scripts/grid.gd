@@ -2,6 +2,7 @@ class_name GridBoard
 extends Node2D
 
 const GameConfig = preload("res://scripts/game_config.gd")
+const WORLD_ATLAS = preload("res://assets/world/world_atlas.png")
 
 var simulation
 
@@ -106,24 +107,29 @@ func _draw() -> void:
 			diamond.append(diamond[0])
 			draw_polyline(diamond, Color(GameConfig.COLOR_GRID_LINE, 0.48), 0.75, true)
 			if cell_blocked:
-				_draw_blocker(diamond)
+				_draw_blocker(diamond, cell)
 			if _can_build_with_ownership(cell, 2, current_ownership, cell_blocked):
 				draw_circle(cell_to_world(cell), 1.8, Color(GameConfig.COLOR_TEAL, 0.38))
 	for segment in get_frontline_segments(current_ownership):
 		draw_line(segment[0], segment[1], Color(GameConfig.COLOR_FRONTLINE, 0.82), 1.35, true)
 
 
-func _draw_blocker(base_diamond: PackedVector2Array) -> void:
-	var top := base_diamond.slice(0, 4)
-	for index in top.size():
-		top[index] += Vector2(0.0, -6.0)
-	var lower_side := PackedVector2Array([base_diamond[1], base_diamond[2], top[2], top[1]])
-	var left_side := PackedVector2Array([base_diamond[2], base_diamond[3], top[3], top[2]])
-	draw_colored_polygon(lower_side, GameConfig.COLOR_OBSTACLE_SIDE)
-	draw_colored_polygon(left_side, GameConfig.COLOR_NEUTRAL)
-	draw_colored_polygon(top, GameConfig.COLOR_OBSTACLE)
-	top.append(top[0])
-	draw_polyline(top, GameConfig.COLOR_OBSTACLE_EDGE, 1.6, true)
+func _draw_blocker(_base_diamond: PackedVector2Array, cell: Vector2i) -> void:
+	var center := cell_to_world(cell)
+	for ring in 3:
+		var shadow := PackedVector2Array()
+		for point_index in 16:
+			var angle := TAU * float(point_index) / 16.0
+			shadow.append(center + Vector2(cos(angle) * (16.0 - ring * 2.0), sin(angle) * (5.0 - ring * 0.6)) + Vector2(4, 4))
+		draw_colored_polygon(shadow, Color(0.02, 0.03, 0.05, 0.07 + ring * 0.035))
+	var variant := posmod(cell.x * 7 + cell.y * 13, 4)
+	var sprite_index := 10 + variant
+	var source := Rect2(Vector2(float(sprite_index % 4), float(sprite_index / 4)) * GameConfig.WORLD_ATLAS_CELL_SIZE, Vector2.ONE * GameConfig.WORLD_ATLAS_CELL_SIZE)
+	draw_texture_rect_region(WORLD_ATLAS, Rect2(center + Vector2(-25, -45), Vector2(50, 50)), source)
+
+
+func uses_baked_obstacles() -> bool:
+	return WORLD_ATLAS != null
 
 
 func get_frontline_segments(current_ownership: PackedByteArray) -> Array[PackedVector2Array]:

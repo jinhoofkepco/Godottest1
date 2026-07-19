@@ -19,6 +19,7 @@ func _initialize() -> void:
 		for animation_name in player.get_animation_list():
 			var animation := player.get_animation(animation_name)
 			print("  %s length=%.3f loop=%d" % [animation_name, animation.length, animation.loop_mode])
+	_print_materials(model)
 	quit(0)
 
 
@@ -29,3 +30,13 @@ func _animation_players(node: Node) -> Array[AnimationPlayer]:
 	for child in node.get_children():
 		players.append_array(_animation_players(child))
 	return players
+
+
+func _print_materials(node: Node) -> void:
+	if node is MeshInstance3D and node.mesh != null:
+		for surface_index in node.mesh.get_surface_count():
+			var material: Material = node.get_active_material(surface_index)
+			if material is BaseMaterial3D:
+				print("Material: node=%s surface=%d name=%s color=%s texture=%s" % [node.name, surface_index, material.resource_name, material.albedo_color, material.albedo_texture.resource_path if material.albedo_texture != null else "none"])
+	for child in node.get_children():
+		_print_materials(child)

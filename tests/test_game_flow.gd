@@ -107,6 +107,7 @@ func _test_scene_contract(tree: SceneTree, main_scene: PackedScene) -> void:
 	main.unit_renderer.sync()
 	_expect(main.unit_renderer.get_child_count() == 4, "spawning data creates only three unit batches plus one shared shadow batch")
 	_expect(main.unit_renderer.get_shadow_batch_count() == 1, "all units share one blob-shadow MultiMesh")
+	_expect(main.grid.has_method("uses_baked_obstacles") and main.grid.uses_baked_obstacles(), "grid blockers use the baked CC0 prop atlas")
 	_expect(main.buildings_layer.y_sort_enabled, "low-count building layer uses y sorting")
 	_expect(main.fx.z_index > main.unit_renderer.z_index, "FX overlay stays above units and buildings")
 	_expect(main.grid.world_to_cell(main.grid.cell_to_world(Vector2i(3, 35))) == Vector2i(3, 35), "isometric center picking remains exact")
@@ -196,6 +197,14 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	var ranged_view_properties := _property_names(ranged_view) if ranged_view != null else [] as Array[String]
 	var displayed_kind := int(ranged_view.get("unit_kind")) if ranged_view != null and ranged_view_properties.has("unit_kind") else -1
 	_expect(displayed_kind == main.simulation.UNIT_RANGED, "spawner view carries the produced unit kind for its visual marker")
+	_expect(ranged_view != null and ranged_view.has_method("uses_baked_sprite") and ranged_view.uses_baked_sprite(), "building views use the baked CC0 world atlas")
+
+	main.simulation.spawn_unit(main.simulation.TEAM_ENEMY, Vector2(8.5, 18.5), main.simulation.UNIT_DRAGON)
+	main.unit_renderer.sync()
+	var enemy_dragons = main.unit_renderer.get_node_or_null("EnemyDragons")
+	_expect(enemy_dragons is MultiMeshInstance2D and enemy_dragons.multimesh.mesh is QuadMesh, "dragon batch uses a sprite quad instead of a procedural silhouette")
+	if enemy_dragons is MultiMeshInstance2D:
+		_expect(enemy_dragons.multimesh.use_custom_data and enemy_dragons.material is ShaderMaterial, "dragon atlas frames are selected per packed instance")
 
 	var fx_properties := _property_names(main.fx)
 	var before_tracers: int = int(main.fx.get("ranged_shot_feedback_count")) if fx_properties.has("ranged_shot_feedback_count") else -1

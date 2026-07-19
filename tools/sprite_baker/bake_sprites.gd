@@ -110,6 +110,7 @@ func _run() -> void:
 						atlas.blit_rect(frame, Rect2i(Vector2i.ZERO, frame.get_size()), destination)
 			model.queue_free()
 			await process_frame
+		_tint_team_regions(atlas, Color(team.color), cell_size, columns, directions)
 		var atlas_path := output_dir.path_join("infantry_%s.png" % String(team.name))
 		var save_error := atlas.save_png(atlas_path)
 		if save_error != OK:
@@ -170,13 +171,13 @@ func _create_capture_rig() -> Dictionary:
 	stage.add_child(camera)
 	var key_light := DirectionalLight3D.new()
 	key_light.rotation_degrees = Vector3(-52.0, -38.0, 0.0)
-	key_light.light_energy = 1.35
+	key_light.light_energy = 1.55
 	key_light.shadow_enabled = false
 	stage.add_child(key_light)
 	var fill_light := DirectionalLight3D.new()
 	fill_light.rotation_degrees = Vector3(28.0, 142.0, 0.0)
 	fill_light.light_color = Color("9cc8ff")
-	fill_light.light_energy = 0.55
+	fill_light.light_energy = 0.18
 	stage.add_child(fill_light)
 	var world_environment := WorldEnvironment.new()
 	var environment := Environment.new()
@@ -184,13 +185,13 @@ func _create_capture_rig() -> Dictionary:
 	environment.background_color = Color.TRANSPARENT
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color.WHITE
-	environment.ambient_light_energy = 0.72
+	environment.ambient_light_energy = 0.22
 	world_environment.environment = environment
 	stage.add_child(world_environment)
 	return {"viewport": viewport, "stage": stage}
 
 
-func _recolor_model(node: Node, team_color: Color) -> void:
+func _recolor_model(node: Node, _team_color: Color) -> void:
 	if node is MeshInstance3D:
 		var mesh_instance := node as MeshInstance3D
 		if mesh_instance.mesh != null:
@@ -198,12 +199,26 @@ func _recolor_model(node: Node, team_color: Color) -> void:
 				var source := mesh_instance.get_active_material(surface_index)
 				if source is BaseMaterial3D:
 					var material := source.duplicate() as BaseMaterial3D
-					material.albedo_texture = null
-					material.albedo_color = team_color
 					material.roughness = 0.78
 					mesh_instance.set_surface_override_material(surface_index, material)
 	for child in node.get_children():
-		_recolor_model(child, team_color)
+		_recolor_model(child, _team_color)
+
+
+func _tint_team_regions(atlas: Image, team_color: Color, cell_size: int, columns: int, directions: int) -> void:
+	var frames_per_model := directions * 16
+	for y in atlas.get_height():
+		for x in atlas.get_width():
+			var pixel := atlas.get_pixel(x, y)
+			if pixel.a <= 0.05 or pixel.s < 0.58:
+				continue
+			var cell_index := (y / cell_size) * columns + x / cell_size
+			var model_index := cell_index / frames_per_model
+			var is_team_pixel := pixel.h <= 0.16 or pixel.h >= 0.92 if model_index == 0 else pixel.h >= 0.25 and pixel.h <= 0.58
+			if not is_team_pixel:
+				continue
+			var saturation := clampf(maxf(pixel.s * 0.82, team_color.s * 0.76), 0.0, 1.0)
+			atlas.set_pixel(x, y, Color.from_hsv(team_color.h, saturation, pixel.v, pixel.a))
 
 
 func _first_animation_player(node: Node) -> AnimationPlayer:

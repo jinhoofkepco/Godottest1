@@ -4,6 +4,7 @@ extends Node2D
 signal collapse_finished(building_id: int)
 
 const GameConfig = preload("res://scripts/game_config.gd")
+const WORLD_ATLAS = preload("res://assets/world/world_atlas.png")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const BUILDING_HQ := 0
@@ -65,34 +66,55 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	var color := GameConfig.COLOR_ALLY.lightened(0.18) if team == TEAM_ALLY else GameConfig.COLOR_ENEMY.lightened(0.12)
-	if _flash_left > 0.0:
-		color = Color.WHITE
-	var shadow := PackedVector2Array([Vector2(-23, 0), Vector2(0, -11), Vector2(23, 0), Vector2(0, 11)])
-	draw_colored_polygon(shadow, Color("111827"))
-	if kind == BUILDING_HQ:
-		draw_colored_polygon(PackedVector2Array([Vector2(-25, -2), Vector2(-18, -38), Vector2(0, -50), Vector2(18, -38), Vector2(25, -2)]), color.darkened(0.18))
-		draw_rect(Rect2(Vector2(-17, -34), Vector2(34, 27)), color)
-		draw_rect(Rect2(Vector2(-4, -50), Vector2(8, 35)), Color("f0f6ff"))
-	elif kind == BUILDING_SPAWNER:
-		draw_rect(Rect2(Vector2(-18, -28), Vector2(36, 24)), color.darkened(0.16))
-		draw_rect(Rect2(Vector2(-11, -38), Vector2(22, 15)), color)
-		if unit_kind == UNIT_RANGED:
-			draw_circle(Vector2(-4, -42), 5.0, Color("d8fff8"))
-			draw_line(Vector2(0, -42), Vector2(15, -47), Color("54f5d2"), 5.0, true)
-			draw_circle(Vector2(15, -47), 2.5, Color.WHITE)
-		else:
-			draw_circle(Vector2(0, -42), 6.0, Color("f0f6ff"))
-			draw_line(Vector2(-7, -42), Vector2(7, -42), color.darkened(0.45), 3.0, true)
-	elif kind == BUILDING_DEFENSE_TOWER:
-		draw_colored_polygon(PackedVector2Array([Vector2(-18, -4), Vector2(-13, -32), Vector2(13, -32), Vector2(18, -4)]), color.darkened(0.18))
-		draw_circle(Vector2(0, -38), 10.0, color.lightened(0.08))
-		draw_line(Vector2(0, -40), Vector2(23, -49), Color("f7fff8"), 6.0, true)
-		draw_circle(Vector2(24, -49), 3.0, GameConfig.COLOR_ORANGE)
-	else:
-		draw_colored_polygon(PackedVector2Array([Vector2(-24, -3), Vector2(-18, -31), Vector2(0, -43), Vector2(18, -31), Vector2(24, -3)]), color.darkened(0.22))
-		draw_colored_polygon(PackedVector2Array([Vector2(-3, -36), Vector2(-23, -50), Vector2(-14, -30), Vector2(0, -24), Vector2(14, -30), Vector2(23, -50), Vector2(3, -36)]), GameConfig.COLOR_ORANGE.lightened(0.08))
-		draw_circle(Vector2(0, -37), 5.0, Color("fff2ba"))
+	_draw_soft_shadow()
+	var sprite_size := _sprite_size()
+	var destination := Rect2(Vector2(-sprite_size.x * 0.5, -sprite_size.y + 10.0), sprite_size)
+	var source := _sprite_region()
+	var modulate := Color(1.85, 1.85, 1.85, 1.0) if _flash_left > 0.0 else Color.WHITE
+	draw_texture_rect_region(WORLD_ATLAS, destination, source, modulate)
 	var ratio := clampf(hp / maxf(max_hp, 1.0), 0.0, 1.0)
 	var bar_y := -60.0 if kind == BUILDING_HQ else -57.0
 	draw_rect(Rect2(Vector2(-22, bar_y), Vector2(44, 5)), Color("0b101b"))
 	draw_rect(Rect2(Vector2(-21, bar_y + 1.0), Vector2(42 * ratio, 3)), color.lightened(0.3))
+
+
+func uses_baked_sprite() -> bool:
+	return WORLD_ATLAS != null
+
+
+func _sprite_index() -> int:
+	var team_offset := 1 if team == TEAM_ENEMY else 0
+	if kind == BUILDING_HQ:
+		return team_offset
+	if kind == BUILDING_SPAWNER:
+		return (4 if unit_kind == UNIT_RANGED else 2) + team_offset
+	if kind == BUILDING_DEFENSE_TOWER:
+		return 6 + team_offset
+	return 8 + team_offset
+
+
+func _sprite_region() -> Rect2:
+	var sprite_index := _sprite_index()
+	var cell_size := float(GameConfig.WORLD_ATLAS_CELL_SIZE)
+	return Rect2(Vector2(float(sprite_index % 4), float(sprite_index / 4)) * cell_size, Vector2.ONE * cell_size)
+
+
+func _sprite_size() -> Vector2:
+	if kind == BUILDING_HQ:
+		return Vector2(86, 86)
+	if kind == BUILDING_DEFENSE_TOWER:
+		return Vector2(76, 76)
+	if kind == BUILDING_DRAGON_LAIR:
+		return Vector2(78, 78)
+	return Vector2(72, 72)
+
+
+func _draw_soft_shadow() -> void:
+	for ring in 3:
+		var points := PackedVector2Array()
+		var width := 42.0 - float(ring) * 5.0
+		var height := 13.0 - float(ring) * 2.0
+		for index in 20:
+			var angle := TAU * float(index) / 20.0
+			points.append(Vector2(cos(angle) * width * 0.5, sin(angle) * height * 0.5 + 2.0))
+		draw_colored_polygon(points, Color(0.02, 0.03, 0.05, 0.08 + float(ring) * 0.04))
