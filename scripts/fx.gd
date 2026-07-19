@@ -3,191 +3,311 @@ extends Node2D
 
 const GameConfig = preload("res://scripts/game_config.gd")
 
-@export var hit_stop_duration := 0.06
-@export var fragment_count := 12
+const TEAM_ENEMY := 1
+const TEAM_ALLY := 2
+const ALLY_BLUE := Color("43a8ff")
+const ENEMY_RED := Color("ff4f63")
+const HIT_WHITE := Color("fff8db")
+const DARK_DEBRIS := Color("182033")
+
 @export var placement_duration := 0.42
-@export var damage_duration := 0.55
-@export var leak_duration := 0.34
+@export var hit_duration := 0.18
+@export var death_duration := 0.42
+@export var production_duration := 0.58
+@export var building_hit_duration := 0.28
+@export var building_destroy_duration := 0.72
+@export var territory_duration := 0.62
+@export var hq_hit_duration := 0.48
+@export var fragment_count := 10
 
 var placement_feedback_count := 0
-var damage_feedback_count := 0
-var kill_burst_count := 0
-var leak_feedback_count := 0
+var hit_feedback_count := 0
+var unit_death_feedback_count := 0
+var production_feedback_count := 0
+var spawner_hit_feedback_count := 0
+var spawner_destroyed_feedback_count := 0
+var territory_change_feedback_count := 0
+var hq_hit_feedback_count := 0
 var last_feedback_mode := ""
 var last_placement_cell := Vector2i(-1, -1)
 var last_placement_valid := false
-var last_placement_range := 0.0
-var placement_time_left := 0.0
-var leak_time_left := 0.0
+var screen_shake_strength := 0.0
 
-var _fragments: Array[Dictionary] = []
-var _damage_numbers: Array[Dictionary] = []
-var _hit_stop_active := false
-var _rng := RandomNumberGenerator.new()
 var _grid: GridBoard
-var _enemies: Node
-var _leak_from := Vector2.ZERO
-var _leak_to := Vector2.ZERO
+var _effects: Array[Dictionary] = []
+var _fragments: Array[Dictionary] = []
+var _rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	z_as_relative = false
+	z_index = 1000
 	_rng.seed = 90714
 
 
-func setup(board: GridBoard, enemy_source: Node) -> void:
+func setup(board: GridBoard) -> void:
 	_grid = board
-	_enemies = enemy_source
 	queue_redraw()
 
 
-func show_placement(cell: Vector2i, is_valid: bool, range_cells: float) -> void:
+func show_placement(cell: Vector2i, is_valid: bool) -> void:
 	last_placement_cell = cell
 	last_placement_valid = is_valid
-	last_placement_range = range_cells
-	placement_time_left = placement_duration
+	_add_effect("placement", cell, TEAM_ALLY, placement_duration, {"valid": is_valid})
 	placement_feedback_count += 1
 	last_feedback_mode = "placement_valid" if is_valid else "placement_invalid"
+
+
+func show_hit(grid_position: Vector2) -> void:
+	_add_effect("hit", grid_position, 0, hit_duration)
+	hit_feedback_count += 1
+	last_feedback_mode = "hit"
+
+
+func show_unit_death(grid_position: Vector2, team: int) -> void:
+	_add_effect("unit_death", grid_position, team, death_duration)
+	_spawn_fragments(grid_position, team, fragment_count, 95.0, 190.0)
+	unit_death_feedback_count += 1
+	last_feedback_mode = "unit_death"
+
+
+func show_production(cell: Vector2i, team: int) -> void:
+	_add_effect("production", cell, team, production_duration)
+	production_feedback_count += 1
+	last_feedback_mode = "production"
+
+
+func show_spawner_hit(cell: Vector2i, team: int) -> void:
+	_add_effect("spawner_hit", cell, team, building_hit_duration)
+	spawner_hit_feedback_count += 1
+	last_feedback_mode = "spawner_hit"
+
+
+func show_spawner_destroyed(cell: Vector2i, team: int) -> void:
+	_add_effect("spawner_destroyed", cell, team, building_destroy_duration)
+	_spawn_fragments(Vector2(cell) + Vector2(0.5, 0.5), team, fragment_count + 6, 70.0, 155.0)
+	spawner_destroyed_feedback_count += 1
+	last_feedback_mode = "spawner_destroyed"
+
+
+func show_territory_change(cell: Vector2i, team: int) -> void:
+	_add_effect("territory_change", cell, team, territory_duration)
+	territory_change_feedback_count += 1
+	last_feedback_mode = "territory_change"
+
+
+func show_hq_hit(cell: Vector2i, team: int) -> void:
+	_add_effect("hq_hit", cell, team, hq_hit_duration)
+	screen_shake_strength = 8.0
+	hq_hit_feedback_count += 1
+	last_feedback_mode = "hq_hit"
+
+
+func get_screen_shake_offset() -> Vector2:
+	if screen_shake_strength <= 0.01:
+		return Vector2.ZERO
+	return Vector2(
+		_rng.randf_range(-screen_shake_strength, screen_shake_strength),
+		_rng.randf_range(-screen_shake_strength, screen_shake_strength)
+	)
+
+
+func _add_effect(kind: String, grid_position: Variant, team: int, duration: float, extras: Dictionary = {}) -> void:
+	var effect := {
+		"kind": kind,
+		"grid_position": Vector2(grid_position),
+		"team": team,
+		"life": duration,
+		"duration": duration,
+	}
+	effect.merge(extras, true)
+	_effects.append(effect)
 	queue_redraw()
 
 
-func show_damage(grid_position: Vector2, amount: float) -> void:
-	_damage_numbers.append({
-		"grid_position": grid_position,
-		"amount": amount,
-		"life": damage_duration,
-	})
-	damage_feedback_count += 1
-	last_feedback_mode = "damage"
-	queue_redraw()
-
-
-func spawn_kill_burst(grid_position: Vector2) -> void:
-	var at := _grid.grid_to_screen(grid_position) if is_instance_valid(_grid) else grid_position
-	for index in fragment_count:
-		var angle := _rng.randf_range(0.0, TAU)
-		var speed := _rng.randf_range(75.0, 180.0)
+func _spawn_fragments(grid_position: Vector2, team: int, count: int, min_speed: float, max_speed: float) -> void:
+	var at := _screen_position(grid_position)
+	for index in count:
+		var angle := TAU * float(index) / float(count) + _rng.randf_range(-0.18, 0.18)
+		var speed := _rng.randf_range(min_speed, max_speed)
 		_fragments.append({
 			"position": at,
 			"velocity": Vector2.from_angle(angle) * speed,
-			"life": _rng.randf_range(0.18, 0.34),
+			"team": team,
+			"life": death_duration,
+			"duration": death_duration,
 			"size": _rng.randf_range(3.0, 7.0),
 		})
-	kill_burst_count += 1
-	last_feedback_mode = "kill"
-	queue_redraw()
-	if hit_stop_duration > 0.0 and not _hit_stop_active and is_inside_tree():
-		_hit_stop()
-
-
-func show_leak(from_grid: Vector2, core_anchor: Vector2) -> void:
-	_leak_from = _grid.grid_to_screen(from_grid) if is_instance_valid(_grid) else from_grid
-	_leak_to = core_anchor
-	leak_time_left = leak_duration
-	leak_feedback_count += 1
-	last_feedback_mode = "leak"
-	queue_redraw()
 
 
 func _process(delta: float) -> void:
-	placement_time_left = maxf(0.0, placement_time_left - delta)
-	leak_time_left = maxf(0.0, leak_time_left - delta)
+	for index in range(_effects.size() - 1, -1, -1):
+		var effect := _effects[index]
+		effect["life"] = float(effect.life) - delta
+		if float(effect.life) <= 0.0:
+			_effects.remove_at(index)
+		else:
+			_effects[index] = effect
 	for index in range(_fragments.size() - 1, -1, -1):
 		var fragment := _fragments[index]
-		fragment.life = float(fragment.life) - delta
+		fragment["life"] = float(fragment.life) - delta
 		if float(fragment.life) <= 0.0:
 			_fragments.remove_at(index)
 			continue
-		fragment.position = Vector2(fragment.position) + Vector2(fragment.velocity) * delta
-		fragment.velocity = Vector2(fragment.velocity) * 0.9
+		fragment["position"] = Vector2(fragment.position) + Vector2(fragment.velocity) * delta
+		fragment["velocity"] = Vector2(fragment.velocity) * pow(0.055, delta)
 		_fragments[index] = fragment
-	for index in range(_damage_numbers.size() - 1, -1, -1):
-		var damage_number := _damage_numbers[index]
-		damage_number.life = float(damage_number.life) - delta
-		if float(damage_number.life) <= 0.0:
-			_damage_numbers.remove_at(index)
-			continue
-		_damage_numbers[index] = damage_number
+	screen_shake_strength = move_toward(screen_shake_strength, 0.0, delta * 24.0)
 	queue_redraw()
 
 
-func _hit_stop() -> void:
-	_hit_stop_active = true
-	get_tree().paused = true
-	await get_tree().create_timer(hit_stop_duration, true, false, true).timeout
-	get_tree().paused = false
-	_hit_stop_active = false
-
-
 func _draw() -> void:
-	_draw_enemy_health()
-	_draw_placement()
-	_draw_damage_numbers()
-	_draw_leak()
+	for effect in _effects:
+		var kind := String(effect.kind)
+		match kind:
+			"placement":
+				_draw_placement(effect)
+			"hit":
+				_draw_hit(effect)
+			"unit_death":
+				_draw_unit_death(effect)
+			"production":
+				_draw_production(effect)
+			"spawner_hit":
+				_draw_spawner_hit(effect)
+			"spawner_destroyed":
+				_draw_spawner_destroyed(effect)
+			"territory_change":
+				_draw_territory_change(effect)
+			"hq_hit":
+				_draw_hq_hit(effect)
 	for fragment in _fragments:
-		var position_value := Vector2(fragment.position)
-		var size_value := float(fragment.size)
-		draw_rect(Rect2(position_value - Vector2.ONE * size_value * 0.5, Vector2.ONE * size_value), GameConfig.COLOR_ORANGE)
+		var ratio := _life_ratio(fragment)
+		var size_value := float(fragment.size) * (0.35 + ratio * 0.65)
+		var color := Color(_team_color(int(fragment.team)), ratio)
+		draw_rect(Rect2(Vector2(fragment.position) - Vector2.ONE * size_value * 0.5, Vector2.ONE * size_value), color)
 
 
-func _draw_enemy_health() -> void:
-	if not is_instance_valid(_grid) or not is_instance_valid(_enemies):
+func _draw_placement(effect: Dictionary) -> void:
+	if not is_instance_valid(_grid):
 		return
-	for enemy in _enemies.get_children():
-		if not enemy is Node2D or bool(enemy.get("is_dead")):
-			continue
-		var max_health := float(enemy.get("max_health"))
-		if max_health <= 0.0:
-			continue
-		var anchor: Vector2 = _grid.grid_to_screen(enemy.grid_position) + Vector2(0, -43)
-		var ratio := clampf(float(enemy.get("health")) / max_health, 0.0, 1.0)
-		draw_rect(Rect2(anchor - Vector2(17, 2), Vector2(34, 5)), Color(0.03, 0.04, 0.07, 0.9))
-		draw_rect(Rect2(anchor - Vector2(16, 1), Vector2(32 * ratio, 3)), GameConfig.COLOR_ORANGE)
+	var cell := Vector2i(effect.grid_position)
+	var fade := _life_ratio(effect)
+	var valid := bool(effect.valid)
+	var color := Color(ALLY_BLUE if valid else ENEMY_RED, fade)
+	_draw_cell_outline(cell, color, 4.0)
+	if not valid:
+		var center := _grid.cell_to_world(cell)
+		draw_line(center + Vector2(-14, -8), center + Vector2(14, 8), color, 5.0, true)
+		draw_line(center + Vector2(-14, 8), center + Vector2(14, -8), color, 5.0, true)
 
 
-func _draw_placement() -> void:
-	if placement_time_left <= 0.0 or not is_instance_valid(_grid):
+func _draw_hit(effect: Dictionary) -> void:
+	var at := _screen_position(Vector2(effect.grid_position)) + Vector2(0, -17)
+	var ratio := _life_ratio(effect)
+	for index in 6:
+		var direction := Vector2.from_angle(TAU * float(index) / 6.0)
+		var inner := at + direction * (4.0 + 6.0 * (1.0 - ratio))
+		var outer := at + direction * (10.0 + 13.0 * (1.0 - ratio))
+		draw_line(inner, outer, Color(HIT_WHITE, ratio), 3.0, true)
+	draw_circle(at, 5.0 * ratio, Color(GameConfig.COLOR_ORANGE, ratio))
+
+
+func _draw_unit_death(effect: Dictionary) -> void:
+	var at := _screen_position(Vector2(effect.grid_position)) + Vector2(0, -13)
+	var ratio := _life_ratio(effect)
+	var radius := 8.0 + 19.0 * (1.0 - ratio)
+	draw_arc(at, radius, 0.0, TAU, 24, Color(_team_color(int(effect.team)), ratio), 3.0, true)
+	# The contracting center makes death read as a pop rather than another hit.
+	draw_circle(at, 8.0 * ratio, Color(HIT_WHITE, ratio * 0.85))
+
+
+func _draw_production(effect: Dictionary) -> void:
+	var at := _cell_center(Vector2i(effect.grid_position))
+	var ratio := _life_ratio(effect)
+	var progress := 1.0 - ratio
+	var color := _team_color(int(effect.team))
+	draw_arc(at, 9.0 + 24.0 * progress, 0.0, TAU, 32, Color(color, ratio), 3.0, true)
+	draw_line(at + Vector2(0, 7), at + Vector2(0, -22.0 - 10.0 * progress), Color(color.lightened(0.35), ratio), 4.0, true)
+
+
+func _draw_spawner_hit(effect: Dictionary) -> void:
+	var at := _cell_center(Vector2i(effect.grid_position)) + Vector2(0, -18)
+	var ratio := _life_ratio(effect)
+	var flash := Color(HIT_WHITE if ratio > 0.55 else ENEMY_RED, ratio)
+	draw_rect(Rect2(at - Vector2(19, 19), Vector2(38, 38)), flash, false, 5.0)
+	draw_line(at + Vector2(-18, -18), at + Vector2(18, 18), Color(ENEMY_RED, ratio), 4.0, true)
+
+
+func _draw_spawner_destroyed(effect: Dictionary) -> void:
+	var at := _cell_center(Vector2i(effect.grid_position))
+	var ratio := _life_ratio(effect)
+	var progress := 1.0 - ratio
+	var color := _team_color(int(effect.team))
+	# Three blocks sink at different rates, producing a readable collapse silhouette.
+	for index in 3:
+		var width := 31.0 - float(index) * 7.0
+		var height := 8.0
+		var y := -32.0 + float(index) * 10.0 + progress * (16.0 + float(index) * 7.0)
+		draw_rect(Rect2(at + Vector2(-width * 0.5, y), Vector2(width, height)), Color(color.darkened(progress * 0.65), ratio))
+	draw_circle(at + Vector2(0, 3), 14.0 + 20.0 * progress, Color(ENEMY_RED, ratio * 0.28))
+
+
+func _draw_territory_change(effect: Dictionary) -> void:
+	if not is_instance_valid(_grid):
 		return
-	var cell := last_placement_cell
-	var diamond := PackedVector2Array([
+	var cell := Vector2i(effect.grid_position)
+	var ratio := _life_ratio(effect)
+	var progress := 1.0 - ratio
+	var color := _team_color(int(effect.team))
+	var diamond := _cell_diamond(cell)
+	draw_colored_polygon(diamond, Color(color, 0.16 + 0.36 * ratio))
+	_draw_cell_outline(cell, Color(color.lightened(0.25), ratio), 2.0 + 3.0 * (1.0 - progress))
+	var center := _grid.cell_to_world(cell)
+	draw_line(center + Vector2(-18 + 36 * progress, -7), center + Vector2(-18 + 36 * progress, 7), Color(HIT_WHITE, ratio), 3.0, true)
+
+
+func _draw_hq_hit(effect: Dictionary) -> void:
+	var at := _cell_center(Vector2i(effect.grid_position)) + Vector2(0, -24)
+	var ratio := _life_ratio(effect)
+	var progress := 1.0 - ratio
+	var color := _team_color(int(effect.team))
+	# The concentric flash is intentionally much larger than unit/building feedback.
+	draw_circle(at, 30.0 * ratio, Color(HIT_WHITE, ratio * 0.64))
+	draw_arc(at, 32.0 + progress * 38.0, 0.0, TAU, 40, Color(ENEMY_RED, ratio), 7.0, true)
+	draw_arc(at, 19.0 + progress * 22.0, 0.0, TAU, 32, Color(color, ratio), 4.0, true)
+	for index in 4:
+		var direction := Vector2.from_angle(PI * 0.25 + PI * 0.5 * index)
+		draw_line(at + direction * 24.0, at + direction * (62.0 + progress * 12.0), Color(HIT_WHITE, ratio), 5.0, true)
+
+
+func _screen_position(grid_position: Vector2) -> Vector2:
+	return _grid.grid_to_screen(grid_position) if is_instance_valid(_grid) else grid_position
+
+
+func _cell_center(cell: Vector2i) -> Vector2:
+	return _grid.cell_to_world(cell) if is_instance_valid(_grid) else Vector2(cell)
+
+
+func _cell_diamond(cell: Vector2i) -> PackedVector2Array:
+	return PackedVector2Array([
 		_grid.grid_to_screen(Vector2(cell.x, cell.y)),
 		_grid.grid_to_screen(Vector2(cell.x + 1, cell.y)),
 		_grid.grid_to_screen(Vector2(cell.x + 1, cell.y + 1)),
 		_grid.grid_to_screen(Vector2(cell.x, cell.y + 1)),
-		_grid.grid_to_screen(Vector2(cell.x, cell.y)),
 	])
-	var fade := clampf(placement_time_left / placement_duration, 0.0, 1.0)
-	var color := Color(GameConfig.COLOR_TEAL if last_placement_valid else Color("ff455d"), fade)
-	draw_polyline(diamond, color, 4.0, true)
-	var center: Vector2 = _grid.cell_to_world(cell)
-	if last_placement_valid:
-		var range_points := PackedVector2Array()
-		var center_grid := Vector2(cell) + Vector2(0.5, 0.5)
-		for index in 49:
-			var angle := TAU * float(index) / 48.0
-			range_points.append(_grid.grid_to_screen(center_grid + Vector2.from_angle(angle) * last_placement_range))
-		draw_polyline(range_points, Color(GameConfig.COLOR_TEAL, fade * 0.72), 2.2, true)
-	else:
-		draw_line(center + Vector2(-13, -7), center + Vector2(13, 7), color, 4.0, true)
-		draw_line(center + Vector2(-13, 7), center + Vector2(13, -7), color, 4.0, true)
 
 
-func _draw_damage_numbers() -> void:
-	if not is_instance_valid(_grid):
-		return
-	for damage_number in _damage_numbers:
-		var life_ratio := clampf(float(damage_number.life) / damage_duration, 0.0, 1.0)
-		var rise := (1.0 - life_ratio) * 18.0
-		var at: Vector2 = _grid.grid_to_screen(Vector2(damage_number.grid_position)) + Vector2(-10, -48 - rise)
-		var text := "%d" % roundi(float(damage_number.amount))
-		draw_string(ThemeDB.fallback_font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, 16, Color(GameConfig.COLOR_ORANGE, life_ratio))
+func _draw_cell_outline(cell: Vector2i, color: Color, width: float) -> void:
+	var diamond := _cell_diamond(cell)
+	diamond.append(diamond[0])
+	draw_polyline(diamond, color, width, true)
 
 
-func _draw_leak() -> void:
-	if leak_time_left <= 0.0:
-		return
-	var fade := clampf(leak_time_left / leak_duration, 0.0, 1.0)
-	var red := Color(Color("ff455d"), fade)
-	draw_line(_leak_from, _leak_to, Color(red, fade * 0.45), 5.0, true)
-	var slash_center := _leak_from.lerp(_leak_to, 1.0 - fade)
-	draw_line(slash_center + Vector2(-13, -17), slash_center + Vector2(13, 17), red, 7.0, true)
+func _life_ratio(item: Dictionary) -> float:
+	return clampf(float(item.life) / maxf(float(item.duration), 0.001), 0.0, 1.0)
+
+
+func _team_color(team: int) -> Color:
+	return ALLY_BLUE if team == TEAM_ALLY else ENEMY_RED
