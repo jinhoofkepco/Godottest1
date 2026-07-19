@@ -3,6 +3,7 @@ extends SceneTree
 const UNIT_COUNT := 400
 const WARMUP_TICKS := 30
 const MEASURED_TICKS := 300
+const MAX_CANDIDATE_CHECKS := 30000
 
 
 func _initialize() -> void:
@@ -43,6 +44,10 @@ func _run() -> void:
 		maximum_ms,
 		maximum_candidate_checks,
 	])
+	if maximum_candidate_checks >= MAX_CANDIDATE_CHECKS:
+		push_error("STRESS FAILED: nearest-target bucket search examined too many candidates")
+		quit(1)
+		return
 	if average_ms >= 16.667 or p95_ms >= 16.667:
 		push_error("STRESS FAILED: simulation work exceeded the 60 FPS frame budget")
 		quit(1)

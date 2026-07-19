@@ -40,8 +40,14 @@ var _enemy_income_remainder := 0.0
 var _enemy_build_timer := GameConfig.ENEMY_BUILD_INTERVAL
 var _enemy_build_cursor := 0
 var _events: Array[Dictionary] = []
-var _buckets: Array[Array] = []
+var _enemy_buckets: Array[Array] = []
+var _ally_buckets: Array[Array] = []
+var _unit_index_by_id: Dictionary = {}
 var _rng := RandomNumberGenerator.new()
+var _found_target_id := 0
+var _found_unit_index := -1
+var _found_building_index := -1
+var _found_target_position := Vector2.ZERO
 
 
 func reset() -> void:
@@ -73,8 +79,11 @@ func reset() -> void:
 	_enemy_build_cursor = 0
 	_rng.seed = 731942
 	_events.clear()
-	_buckets.clear()
-	_buckets.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	_enemy_buckets.clear()
+	_ally_buckets.clear()
+	_unit_index_by_id.clear()
+	_enemy_buckets.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	_ally_buckets.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	enemy_hq_id = add_building(TEAM_ENEMY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, 0))
 	ally_hq_id = add_building(TEAM_ALLY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 1))
 	recalculate_territory(false)
@@ -100,6 +109,7 @@ func spawn_unit(team: int, position: Vector2) -> int:
 	unit_speed_scales.append(_rng.randf_range(1.0 - GameConfig.UNIT_SPEED_VARIATION, 1.0 + GameConfig.UNIT_SPEED_VARIATION))
 	unit_lunge_timers.append(0.0)
 	unit_lunge_directions.append(Vector2.ZERO)
+	_unit_index_by_id[unit_id] = unit_ids.size() - 1
 	return unit_id
 
 
@@ -230,22 +240,21 @@ func _step(delta: float) -> void:
 			continue
 		unit_cooldowns[index] = maxf(0.0, unit_cooldowns[index] - delta)
 		unit_lunge_timers[index] = maxf(0.0, unit_lunge_timers[index] - delta)
-		var target := _find_target(index)
-		unit_target_ids[index] = int(target.id)
+		_find_target(index)
+		unit_target_ids[index] = _found_target_id
 		var position := unit_positions[index]
-		var target_position := Vector2(target.position)
-		var target_in_attack_range := int(target.id) != 0 and position.distance_squared_to(target_position) <= GameConfig.UNIT_ATTACK_RANGE * GameConfig.UNIT_ATTACK_RANGE
+		var target_in_attack_range := _found_target_id != 0 and position.distance_squared_to(_found_target_position) <= GameConfig.UNIT_ATTACK_RANGE * GameConfig.UNIT_ATTACK_RANGE
 		if target_in_attack_range:
 			unit_states[index] = 1
-			unit_lunge_directions[index] = position.direction_to(target_position)
+			unit_lunge_directions[index] = position.direction_to(_found_target_position)
 			if unit_cooldowns[index] <= 0.0:
-				_attack_target(index, target)
+				_attack_target(index, _found_unit_index, _found_building_index)
 		else:
 			unit_states[index] = 0
 			var advance_direction := Vector2(0.0, -1.0 if unit_teams[index] == TEAM_ALLY else 1.0)
 			var seek_direction := Vector2.ZERO
-			if int(target.id) != 0:
-				seek_direction = position.direction_to(target_position)
+			if _found_target_id != 0:
+				seek_direction = position.direction_to(_found_target_position)
 			var separation_direction := _calculate_separation(index)
 			var steering := (
 				advance_direction * GameConfig.UNIT_ADVANCE_WEIGHT
@@ -312,7 +321,9 @@ func _update_spawners(delta: float) -> void:
 
 
 func _rebuild_buckets() -> void:
-	for bucket in _buckets:
+	for bucket in _enemy_buckets:
+		bucket.clear()
+	for bucket in _ally_buckets:
 		bucket.clear()
 	for index in unit_ids.size():
 		if unit_hp[index] <= 0.0:
@@ -321,31 +332,32 @@ func _rebuild_buckets() -> void:
 			clampi(floori(unit_positions[index].x), 0, GameConfig.GRID_COLUMNS - 1),
 			clampi(floori(unit_positions[index].y), 0, GameConfig.GRID_ROWS - 1)
 		)
-		_buckets[_cell_index(cell)].append(index)
+		var team_buckets := _enemy_buckets if unit_teams[index] == TEAM_ENEMY else _ally_buckets
+		team_buckets[_cell_index(cell)].append(index)
 
 
-func _find_target(unit_index: int) -> Dictionary:
+func _find_target(unit_index: int) -> void:
 	var position := unit_positions[unit_index]
 	var team := unit_teams[unit_index]
 	var cell := Vector2i(floori(position.x), floori(position.y))
-	var best_distance_sq := GameConfig.UNIT_DETECT_RANGE * GameConfig.UNIT_DETECT_RANGE
-	var best_target := {"id": 0, "unit_index": -1, "building_index": -1, "position": Vector2.ZERO}
+	var best_distance_sq := _seed_retained_target(unit_target_ids[unit_index], team, position)
+	var target_buckets := _ally_buckets if team == TEAM_ENEMY else _enemy_buckets
 	var bucket_radius := ceili(GameConfig.UNIT_DETECT_RANGE)
 	for row in range(maxi(0, cell.y - bucket_radius), mini(GameConfig.GRID_ROWS - 1, cell.y + bucket_radius) + 1):
 		for column in range(maxi(0, cell.x - bucket_radius), mini(GameConfig.GRID_COLUMNS - 1, cell.x + bucket_radius) + 1):
-			for candidate_index in _buckets[row * GameConfig.GRID_COLUMNS + column]:
+			if not _bucket_can_contain_nearer_target(position, column, row, best_distance_sq):
+				continue
+			for candidate_index in target_buckets[row * GameConfig.GRID_COLUMNS + column]:
 				target_candidate_checks += 1
-				if candidate_index == unit_index or unit_teams[candidate_index] == team or unit_hp[candidate_index] <= 0.0:
+				if unit_hp[candidate_index] <= 0.0:
 					continue
 				var distance_sq := position.distance_squared_to(unit_positions[candidate_index])
 				if distance_sq <= best_distance_sq:
 					best_distance_sq = distance_sq
-					best_target = {
-						"id": unit_ids[candidate_index],
-						"unit_index": candidate_index,
-						"building_index": -1,
-						"position": unit_positions[candidate_index],
-					}
+					_found_target_id = unit_ids[candidate_index]
+					_found_unit_index = candidate_index
+					_found_building_index = -1
+					_found_target_position = unit_positions[candidate_index]
 	for building_index in buildings.size():
 		var building := buildings[building_index]
 		if bool(building.destroyed) or int(building.team) == team:
@@ -354,13 +366,47 @@ func _find_target(unit_index: int) -> Dictionary:
 		var distance_sq := position.distance_squared_to(building_position)
 		if distance_sq <= best_distance_sq:
 			best_distance_sq = distance_sq
-			best_target = {
-				"id": -int(building.id),
-				"unit_index": -1,
-				"building_index": building_index,
-				"position": building_position,
-			}
-	return best_target
+			_found_target_id = -int(building.id)
+			_found_unit_index = -1
+			_found_building_index = building_index
+			_found_target_position = building_position
+
+
+func _seed_retained_target(target_id: int, team: int, position: Vector2) -> float:
+	var maximum_distance_sq := GameConfig.UNIT_DETECT_RANGE * GameConfig.UNIT_DETECT_RANGE
+	_found_target_id = 0
+	_found_unit_index = -1
+	_found_building_index = -1
+	_found_target_position = Vector2.ZERO
+	if target_id > 0 and _unit_index_by_id.has(target_id):
+		var index := int(_unit_index_by_id[target_id])
+		var distance_sq := position.distance_squared_to(unit_positions[index])
+		if unit_hp[index] > 0.0 and unit_teams[index] != team and distance_sq <= maximum_distance_sq:
+			_found_target_id = target_id
+			_found_unit_index = index
+			_found_target_position = unit_positions[index]
+			return distance_sq
+	elif target_id < 0:
+		var building_index := _building_index_from_id(-target_id)
+		if building_index >= 0:
+			var building := buildings[building_index]
+			var building_position := Vector2(building.cell) + Vector2(0.5, 0.5)
+			var distance_sq := position.distance_squared_to(building_position)
+			if not bool(building.destroyed) and int(building.team) != team and distance_sq <= maximum_distance_sq:
+				_found_target_id = target_id
+				_found_building_index = building_index
+				_found_target_position = building_position
+				return distance_sq
+	return maximum_distance_sq
+
+
+func _bucket_can_contain_nearer_target(position: Vector2, column: int, row: int, best_distance_sq: float) -> bool:
+	# Buckets are rebuilt before movement, so expand by one maximum fixed-tick step.
+	var movement_slop := GameConfig.UNIT_SPEED * (1.0 + GameConfig.UNIT_SPEED_VARIATION) / float(GameConfig.SIM_TICK_RATE)
+	var minimum := Vector2(float(column), float(row)) - Vector2.ONE * movement_slop
+	var maximum := Vector2(float(column + 1), float(row + 1)) + Vector2.ONE * movement_slop
+	var closest := position.clamp(minimum, maximum)
+	return position.distance_squared_to(closest) <= best_distance_sq
 
 
 func _calculate_separation(unit_index: int) -> Vector2:
@@ -369,10 +415,11 @@ func _calculate_separation(unit_index: int) -> Vector2:
 	var cell := Vector2i(floori(position.x), floori(position.y))
 	var separation := Vector2.ZERO
 	var radius_squared := GameConfig.UNIT_SEPARATION_RADIUS * GameConfig.UNIT_SEPARATION_RADIUS
+	var team_buckets := _enemy_buckets if team == TEAM_ENEMY else _ally_buckets
 	for row in range(maxi(0, cell.y - 1), mini(GameConfig.GRID_ROWS - 1, cell.y + 1) + 1):
 		for column in range(maxi(0, cell.x - 1), mini(GameConfig.GRID_COLUMNS - 1, cell.x + 1) + 1):
-			for candidate_index in _buckets[row * GameConfig.GRID_COLUMNS + column]:
-				if candidate_index == unit_index or unit_teams[candidate_index] != team or unit_hp[candidate_index] <= 0.0:
+			for candidate_index in team_buckets[row * GameConfig.GRID_COLUMNS + column]:
+				if candidate_index == unit_index or unit_hp[candidate_index] <= 0.0:
 					continue
 				var offset := position - unit_positions[candidate_index]
 				var distance_squared := offset.length_squared()
@@ -387,23 +434,22 @@ func _calculate_separation(unit_index: int) -> Vector2:
 	return separation.normalized() if separation.length_squared() > 0.000001 else Vector2.ZERO
 
 
-func _attack_target(attacker_index: int, target: Dictionary) -> void:
+func _attack_target(attacker_index: int, target_unit_index: int, building_index: int) -> void:
 	unit_cooldowns[attacker_index] = GameConfig.UNIT_ATTACK_INTERVAL
 	unit_lunge_timers[attacker_index] = GameConfig.UNIT_LUNGE_DURATION
 	var attacker_team := unit_teams[attacker_index]
-	var target_unit_index := int(target.unit_index)
 	if target_unit_index >= 0 and target_unit_index < unit_ids.size():
 		unit_hp[target_unit_index] -= GameConfig.UNIT_ATTACK_DAMAGE
 		unit_last_attacker_teams[target_unit_index] = attacker_team
 		_events.append({"type": "hit", "team": unit_teams[target_unit_index], "position": unit_positions[target_unit_index]})
 		return
-	var building_index := int(target.building_index)
 	if building_index >= 0 and building_index < buildings.size():
 		apply_building_damage(int(buildings[building_index].id), GameConfig.UNIT_ATTACK_DAMAGE, attacker_team)
 
 
 func _remove_dead_units() -> void:
 	var index := unit_ids.size() - 1
+	var removed_any := false
 	while index >= 0:
 		if unit_hp[index] <= 0.0:
 			var dead_position := unit_positions[index]
@@ -412,7 +458,10 @@ func _remove_dead_units() -> void:
 			_events.append({"type": "unit_death", "team": dead_team, "position": dead_position})
 			_award_kill(killer_team)
 			_remove_unit_at(index)
+			removed_any = true
 		index -= 1
+	if removed_any:
+		_rebuild_unit_index()
 
 
 func _remove_unit_at(index: int) -> void:
@@ -440,6 +489,12 @@ func _remove_unit_at(index: int) -> void:
 	unit_speed_scales.resize(last)
 	unit_lunge_timers.resize(last)
 	unit_lunge_directions.resize(last)
+
+
+func _rebuild_unit_index() -> void:
+	_unit_index_by_id.clear()
+	for unit_index in unit_ids.size():
+		_unit_index_by_id[unit_ids[unit_index]] = unit_index
 
 
 func _add_building(team: int, kind: int, cell: Vector2i) -> int:
