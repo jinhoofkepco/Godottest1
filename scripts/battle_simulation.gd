@@ -197,27 +197,34 @@ func get_occupancy(team: int) -> float:
 
 func recalculate_territory(emit_changes: bool = true) -> void:
 	var previous := ownership.duplicate()
+	var red_fronts := PackedInt32Array()
+	var blue_fronts := PackedInt32Array()
+	red_fronts.resize(GameConfig.GRID_COLUMNS)
+	blue_fronts.resize(GameConfig.GRID_COLUMNS)
+	red_fronts.fill(-1)
+	blue_fronts.fill(GameConfig.GRID_ROWS)
+	for index in unit_ids.size():
+		if unit_hp[index] <= 0.0:
+			continue
+		var column := floori(unit_positions[index].x)
+		if column < 0 or column >= GameConfig.GRID_COLUMNS:
+			continue
+		var row := floori(unit_positions[index].y)
+		if unit_teams[index] == TEAM_ENEMY:
+			red_fronts[column] = maxi(red_fronts[column], row)
+		elif unit_teams[index] == TEAM_ALLY:
+			blue_fronts[column] = mini(blue_fronts[column], row)
+	for building in buildings:
+		if bool(building.get("destroyed", false)):
+			continue
+		var cell: Vector2i = building.cell
+		if int(building.team) == TEAM_ENEMY:
+			red_fronts[cell.x] = maxi(red_fronts[cell.x], cell.y)
+		elif int(building.team) == TEAM_ALLY:
+			blue_fronts[cell.x] = mini(blue_fronts[cell.x], cell.y)
 	for column in GameConfig.GRID_COLUMNS:
-		var red_front := -1
-		var blue_front := GameConfig.GRID_ROWS
-		for index in unit_ids.size():
-			var position := unit_positions[index]
-			if floori(position.x) != column or unit_hp[index] <= 0.0:
-				continue
-			if unit_teams[index] == TEAM_ENEMY:
-				red_front = maxi(red_front, floori(position.y))
-			elif unit_teams[index] == TEAM_ALLY:
-				blue_front = mini(blue_front, floori(position.y))
-		for building in buildings:
-			if bool(building.get("destroyed", false)):
-				continue
-			var cell: Vector2i = building.cell
-			if cell.x != column:
-				continue
-			if int(building.team) == TEAM_ENEMY:
-				red_front = maxi(red_front, cell.y)
-			elif int(building.team) == TEAM_ALLY:
-				blue_front = mini(blue_front, cell.y)
+		var red_front := red_fronts[column]
+		var blue_front := blue_fronts[column]
 		var has_red := red_front >= 0
 		var has_blue := blue_front < GameConfig.GRID_ROWS
 		var overlap_midpoint := float(red_front + blue_front) * 0.5
