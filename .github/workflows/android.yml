@@ -46,6 +46,11 @@ jobs:
           godot-channel: stable
           working-directory: .
 
+      - name: Configure Godot Java SDK path
+        run: |
+          sed -i '/export\/android\/java_sdk_path/d' ~/.config/godot/editor_settings-4.tres
+          printf '\nexport/android/java_sdk_path = "%s"\n' "$JAVA_HOME" >> ~/.config/godot/editor_settings-4.tres
+
       - name: Run headless verification
         run: |
           godot --headless --path . --import
