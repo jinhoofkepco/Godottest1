@@ -14,8 +14,8 @@ var _blue_units: MultiMeshInstance2D
 func _ready() -> void:
 	z_as_relative = false
 	z_index = 40
-	_red_units = _make_team_multimesh("RedUnits", Vector2(13, 16), PI * 0.25)
-	_blue_units = _make_team_multimesh("BlueUnits", Vector2(14, 19), 0.0)
+	_red_units = _make_team_multimesh("RedUnits")
+	_blue_units = _make_team_multimesh("BlueUnits")
 
 
 func setup(board: GridBoard, simulation) -> void:
@@ -31,27 +31,41 @@ func get_multimesh_count() -> int:
 func sync() -> void:
 	if not is_instance_valid(_grid) or _simulation == null or _red_units == null:
 		return
-	_sync_team(_red_units, TEAM_ENEMY, PI * 0.25)
+	_sync_team(_red_units, TEAM_ENEMY, 0.0)
 	_sync_team(_blue_units, TEAM_ALLY, 0.0)
 	queue_redraw()
 
 
-func _make_team_multimesh(node_name: String, body_size: Vector2, rotation: float) -> MultiMeshInstance2D:
+func _make_team_multimesh(node_name: String) -> MultiMeshInstance2D:
 	var instance := MultiMeshInstance2D.new()
 	instance.name = node_name
 	instance.z_as_relative = false
 	instance.z_index = 7
-	var quad := QuadMesh.new()
-	quad.size = body_size
 	var multimesh := MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_2D
 	multimesh.use_colors = true
-	multimesh.mesh = quad
+	multimesh.mesh = _make_soldier_mesh()
 	multimesh.instance_count = 0
 	instance.multimesh = multimesh
-	instance.set_meta("body_rotation", rotation)
 	add_child(instance)
 	return instance
+
+
+func _make_soldier_mesh() -> ArrayMesh:
+	var silhouette := PackedVector2Array([
+		Vector2(-7, 8), Vector2(7, 8), Vector2(7, -3), Vector2(4, -6),
+		Vector2(4, -11), Vector2(0, -16), Vector2(-4, -11), Vector2(-4, -6), Vector2(-7, -3),
+	])
+	var vertices := PackedVector3Array()
+	for point in silhouette:
+		vertices.append(Vector3(point.x, point.y, 0.0))
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_INDEX] = Geometry2D.triangulate_polygon(silhouette)
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 func _sync_team(instance: MultiMeshInstance2D, team: int, body_rotation: float) -> void:

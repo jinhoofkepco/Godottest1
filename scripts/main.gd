@@ -3,7 +3,7 @@ extends Node2D
 
 const GameConfig = preload("res://scripts/game_config.gd")
 const BattleSimulationScript = preload("res://scripts/battle_simulation.gd")
-const BuildingViewScript = preload("res://scripts/battle_building.gd")
+const BuildingViewScene = preload("res://scenes/battle_building.tscn")
 
 @onready var world: Node2D = $World
 @onready var grid: GridBoard = $World/Grid
@@ -114,7 +114,7 @@ func _sync_building_views() -> void:
 	for record in simulation.buildings:
 		var building_id := int(record.id)
 		if not building_views.has(building_id):
-			var view := BuildingViewScript.new()
+			var view := BuildingViewScene.instantiate()
 			view.name = "Building_%d" % building_id
 			buildings_layer.add_child(view)
 			view.setup(grid, record)

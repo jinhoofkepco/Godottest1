@@ -102,9 +102,13 @@ func tick(delta: float) -> void:
 	time_remaining = maxf(0.0, time_remaining - delta)
 	_tick_accumulator += delta
 	var fixed_delta := 1.0 / float(GameConfig.SIM_TICK_RATE)
-	while _tick_accumulator + 0.000001 >= fixed_delta and result == "":
+	var catch_up_ticks := 0
+	while _tick_accumulator + 0.000001 >= fixed_delta and result == "" and catch_up_ticks < GameConfig.MAX_CATCH_UP_TICKS:
 		_tick_accumulator -= fixed_delta
 		_step(fixed_delta)
+		catch_up_ticks += 1
+	if catch_up_ticks == GameConfig.MAX_CATCH_UP_TICKS and _tick_accumulator >= fixed_delta:
+		_tick_accumulator = fmod(_tick_accumulator, fixed_delta)
 	if result == "":
 		_check_terminal_state()
 
