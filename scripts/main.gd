@@ -70,6 +70,7 @@ func step_simulation(delta: float) -> void:
 	if game_result == "":
 		simulation.tick(delta)
 	_sync_building_views()
+	unit_renderer.advance_visuals(delta)
 	unit_renderer.sync()
 	_consume_events(simulation.drain_events())
 	_update_hud()
@@ -87,7 +88,10 @@ func _consume_events(events: Array) -> void:
 				fx.show_ranged_shot(Vector2(event.origin), Vector2(event.position), int(event.team))
 			"tower_shot":
 				fx.show_ranged_shot(Vector2(event.origin), Vector2(event.position), int(event.team))
+			"hq_shot":
+				fx.show_ranged_shot(Vector2(event.origin), Vector2(event.position), int(event.team))
 			"unit_death":
+				unit_renderer.queue_death(Vector2(event.position), int(event.team), int(event.get("unit_kind", simulation.UNIT_MELEE)), Vector2(event.get("direction", Vector2.ZERO)))
 				fx.show_unit_death(Vector2(event.position), int(event.team))
 			"unit_produced":
 				fx.show_production(Vector2i(event.cell), int(event.team))

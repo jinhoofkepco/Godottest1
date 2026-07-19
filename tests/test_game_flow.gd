@@ -75,11 +75,12 @@ func _test_scene_contract(tree: SceneTree, main_scene: PackedScene) -> void:
 	await tree.process_frame
 	_expect(main.simulation != null and main.simulation is RefCounted, "main owns one data simulation")
 	_expect(main.unit_renderer != null, "main owns batched unit renderer")
-	_expect(main.unit_renderer.get_multimesh_count() == 6, "renderer uses six team-by-kind MultiMesh batches including dragons")
+	_expect(main.unit_renderer.get_multimesh_count() == 3, "renderer uses one globally sorted infantry batch plus two dragon batches")
 	_expect(main.simulation.unit_ids.is_empty(), "units begin as data, not child nodes")
 	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 32.5))
 	main.unit_renderer.sync()
-	_expect(main.unit_renderer.get_child_count() == 6, "spawning data never creates a per-unit child node")
+	_expect(main.unit_renderer.get_child_count() == 4, "spawning data creates only three unit batches plus one shared shadow batch")
+	_expect(main.unit_renderer.get_shadow_batch_count() == 1, "all units share one blob-shadow MultiMesh")
 	_expect(main.buildings_layer.y_sort_enabled, "low-count building layer uses y sorting")
 	_expect(main.fx.z_index > main.unit_renderer.z_index, "FX overlay stays above units and buildings")
 	_expect(main.grid.world_to_cell(main.grid.cell_to_world(Vector2i(3, 35))) == Vector2i(3, 35), "isometric center picking remains exact")
@@ -141,16 +142,17 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 32.5), main.simulation.UNIT_MELEE)
 	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(5.5, 32.5), main.simulation.UNIT_RANGED)
 	main.unit_renderer.sync()
-	var expected_batches := ["EnemyMeleeUnits", "EnemyRangedUnits", "AllyMeleeUnits", "AllyRangedUnits"]
-	for batch_name in expected_batches:
-		var batch = main.unit_renderer.get_node_or_null(NodePath(batch_name))
-		_expect(batch is MultiMeshInstance2D, "%s is a MultiMesh batch" % batch_name)
-		if batch is MultiMeshInstance2D:
-			_expect(batch.multimesh.instance_count == 1, "%s receives only its matching packed unit" % batch_name)
-	var enemy_melee = main.unit_renderer.get_node_or_null("EnemyMeleeUnits")
-	var enemy_ranged = main.unit_renderer.get_node_or_null("EnemyRangedUnits")
-	if enemy_melee is MultiMeshInstance2D and enemy_ranged is MultiMeshInstance2D:
-		_expect(enemy_melee.multimesh.mesh != enemy_ranged.multimesh.mesh, "ranged soldiers use a distinct procedural silhouette")
+	var infantry = main.unit_renderer.get_node_or_null("InfantryUnits")
+	_expect(infantry is MultiMeshInstance2D, "all infantry share one MultiMesh batch")
+	if infantry is MultiMeshInstance2D:
+		_expect(infantry.multimesh.instance_count == 4, "global infantry batch receives both teams and classes")
+		_expect(infantry.multimesh.use_custom_data and infantry.multimesh.use_colors, "atlas selection and team layer use per-instance data")
+		_expect(infantry.material is ShaderMaterial, "infantry batch uses the texture-array atlas shader")
+		var previous_y := -INF
+		for instance_index in infantry.multimesh.instance_count:
+			var instance_y: float = infantry.multimesh.get_instance_transform_2d(instance_index).origin.y
+			_expect(instance_y >= previous_y, "global infantry painter order follows screen Y")
+			previous_y = instance_y
 		_expect(
 			main.unit_renderer.get_unit_color(main.simulation.TEAM_ENEMY, main.simulation.UNIT_MELEE, 1)
 			!= main.unit_renderer.get_unit_color(main.simulation.TEAM_ENEMY, main.simulation.UNIT_RANGED, 1),
@@ -179,7 +181,7 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	}])
 	var after_tracers: int = int(main.fx.get("ranged_shot_feedback_count")) if fx_properties.has("ranged_shot_feedback_count") else -1
 	_expect(before_tracers >= 0 and after_tracers == before_tracers + 1, "ranged shot events route to a distinct tracer effect")
-	_expect(main.unit_renderer.get_child_count() == 6, "mixed ground and dragon armies still create no per-unit nodes")
+	_expect(main.unit_renderer.get_child_count() == 4, "mixed ground and dragon armies still create no per-unit nodes")
 	main.queue_free()
 	await tree.process_frame
 

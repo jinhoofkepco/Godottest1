@@ -8,6 +8,7 @@ const OUTPUTS := [
 	"res://build/smoke_cluster.png",
 	"res://build/smoke_persistent_flank.png",
 	"res://build/smoke_flow_split.png",
+	"res://build/smoke_infantry_closeup.png",
 ]
 
 
@@ -45,7 +46,7 @@ func _run() -> void:
 			return
 		main.queue_free()
 		await process_frame
-	print("SMOKE CAPTURE PASS: opening / blue advantage / blue disadvantage / frontline cluster / persistent flank / flow split (540x960)")
+	print("SMOKE CAPTURE PASS: opening / blue advantage / blue disadvantage / frontline cluster / persistent flank / flow split / infantry closeup (540x960)")
 	quit(0)
 
 
@@ -86,8 +87,10 @@ func _stage_scenario(main: Node, scenario: int) -> bool:
 		_stage_frontline_cluster(main)
 	elif scenario == 4:
 		return _stage_persistent_flank(main)
-	else:
+	elif scenario == 5:
 		return _stage_flow_split(main)
+	else:
+		return _stage_infantry_closeup(main)
 	return true
 
 
@@ -155,6 +158,29 @@ func _stage_flow_split(main: Node) -> bool:
 	main.fx.show_territory_change(Vector2i(16, wall_row), simulation.TEAM_ALLY)
 	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, wall_row), 2.25)
 	return simulation.ally_flow.cost_at(Vector2i(11, wall_row + 4)) < INF
+
+
+func _stage_infantry_closeup(main: Node) -> bool:
+	var simulation = main.simulation
+	var center := Vector2(float(GameConfig.GRID_COLUMNS) * 0.5, float(GameConfig.GRID_ROWS) * 0.5)
+	var directions := [Vector2.UP, Vector2(1, -1).normalized(), Vector2.RIGHT, Vector2(1, 1).normalized(), Vector2.DOWN, Vector2(-1, 1).normalized(), Vector2.LEFT, Vector2(-1, -1).normalized()]
+	for index in directions.size():
+		var team: int = simulation.TEAM_ALLY if index < 4 else simulation.TEAM_ENEMY
+		var kind: int = simulation.UNIT_MELEE if index % 2 == 0 else simulation.UNIT_RANGED
+		var position := center + Vector2(float(index % 4) - 1.5, float(index / 4) * 1.35 - 0.7)
+		var unit_id: int = simulation.spawn_unit(team, position, kind)
+		var unit_index: int = simulation.unit_ids.find(unit_id)
+		simulation.unit_positions[unit_index] = position
+		simulation.unit_velocities[unit_index] = directions[index] * simulation.config.UNIT_SPEED
+		simulation.unit_states[unit_index] = simulation.STATE_ADVANCE
+	var attacker_index := 1
+	simulation.unit_states[attacker_index] = simulation.STATE_ATTACK
+	simulation.unit_lunge_directions[attacker_index] = Vector2(1, -1).normalized()
+	simulation.unit_lunge_timers[attacker_index] = simulation.config.UNIT_LUNGE_DURATION * 0.55
+	main.unit_renderer.queue_death(center + Vector2(2.2, 0.7), simulation.TEAM_ENEMY, simulation.UNIT_MELEE, Vector2.LEFT)
+	main.hud.show_message("KAYKIT INFANTRY // 8 DIR + STATE", GameConfig.COLOR_TEAL)
+	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), 5.2)
+	return simulation.unit_ids.size() == 8
 
 
 func _spawn_if_clear(simulation, team: int, cell: Vector2i, unit_kind: int) -> void:

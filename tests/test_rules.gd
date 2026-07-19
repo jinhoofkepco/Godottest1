@@ -11,6 +11,7 @@ func run() -> Array[String]:
 	_test_initial_territory()
 	_test_build_and_economy()
 	_test_ranged_data_and_combat()
+	_test_air_targeting_and_hq_defense()
 	_test_enemy_ai_kind_funding()
 	_test_combat_and_kill_reward()
 	_test_cross_column_engagement()
@@ -284,6 +285,52 @@ func _test_ranged_data_and_combat() -> void:
 	_expect(shot.get("position", Vector2.ZERO) == Vector2(5.5, 10.0), "ranged shot records its target position")
 	_expect(is_equal_approx(ranged_simulation.unit_hp[1], ranged_simulation.config.UNIT_MAX_HP - ranged_simulation.config.RANGED_UNIT_ATTACK_DAMAGE), "ranged hit applies ranged damage")
 	_expect(is_equal_approx(ranged_simulation.unit_cooldowns[0], ranged_simulation.config.RANGED_UNIT_ATTACK_INTERVAL), "ranged hit applies ranged interval")
+
+
+func _test_air_targeting_and_hq_defense() -> void:
+	var config := load("res://scripts/game_config.gd")
+	_expect(config.HQ_ATTACK_DAMAGE == config.DEFENSE_TOWER_DAMAGE * 3.0, "HQ attack is exactly three defense towers")
+	_expect(config.HQ_ATTACK_RANGE == config.DEFENSE_TOWER_RANGE, "HQ and tower use the same defense range")
+	_expect(config.HQ_ATTACK_INTERVAL == config.DEFENSE_TOWER_ATTACK_INTERVAL, "HQ and tower use the same fire interval")
+
+	var melee_simulation = _new_simulation()
+	if melee_simulation == null:
+		return
+	var melee_id: int = melee_simulation.spawn_unit(melee_simulation.TEAM_ALLY, Vector2(8.5, 22.5), melee_simulation.UNIT_MELEE)
+	var dragon_id: int = melee_simulation.spawn_unit(melee_simulation.TEAM_ENEMY, Vector2(8.5, 22.9), melee_simulation.UNIT_DRAGON)
+	melee_simulation.unit_positions[melee_simulation.unit_ids.find(melee_id)] = Vector2(8.5, 22.5)
+	melee_simulation.unit_positions[melee_simulation.unit_ids.find(dragon_id)] = Vector2(8.5, 22.9)
+	melee_simulation.unit_target_ids[melee_simulation.unit_ids.find(melee_id)] = dragon_id
+	var dragon_hp_before: float = melee_simulation.unit_hp[melee_simulation.unit_ids.find(dragon_id)]
+	melee_simulation.tick(1.0 / float(config.SIM_TICK_RATE))
+	var melee_index: int = melee_simulation.unit_ids.find(melee_id)
+	var dragon_index: int = melee_simulation.unit_ids.find(dragon_id)
+	_expect(melee_index >= 0 and melee_simulation.unit_target_ids[melee_index] != dragon_id, "melee infantry drops even a retained flying dragon target")
+	_expect(dragon_index >= 0 and is_equal_approx(melee_simulation.unit_hp[dragon_index], dragon_hp_before), "melee infantry cannot damage a flying dragon")
+
+	var ranged_simulation = _new_simulation()
+	var ranged_id: int = ranged_simulation.spawn_unit(ranged_simulation.TEAM_ALLY, Vector2(8.5, 22.5), ranged_simulation.UNIT_RANGED)
+	var ranged_dragon_id: int = ranged_simulation.spawn_unit(ranged_simulation.TEAM_ENEMY, Vector2(8.5, 22.9), ranged_simulation.UNIT_DRAGON)
+	ranged_simulation.unit_positions[ranged_simulation.unit_ids.find(ranged_id)] = Vector2(8.5, 22.5)
+	ranged_simulation.unit_positions[ranged_simulation.unit_ids.find(ranged_dragon_id)] = Vector2(8.5, 22.9)
+	var ranged_dragon_hp: float = ranged_simulation.unit_hp[ranged_simulation.unit_ids.find(ranged_dragon_id)]
+	ranged_simulation.tick(1.0 / float(config.SIM_TICK_RATE))
+	var ranged_dragon_index: int = ranged_simulation.unit_ids.find(ranged_dragon_id)
+	_expect(ranged_dragon_index >= 0 and ranged_simulation.unit_hp[ranged_dragon_index] < ranged_dragon_hp, "ranged infantry can attack a flying dragon")
+
+	var hq_simulation = _new_simulation()
+	var attacker_id: int = hq_simulation.spawn_unit(hq_simulation.TEAM_ALLY, Vector2(11.5, 2.5), hq_simulation.UNIT_DRAGON)
+	var attacker_index: int = hq_simulation.unit_ids.find(attacker_id)
+	hq_simulation.unit_positions[attacker_index] = Vector2(11.5, 2.5)
+	var hp_before: float = hq_simulation.unit_hp[attacker_index]
+	hq_simulation.tick(1.0 / float(config.SIM_TICK_RATE))
+	attacker_index = hq_simulation.unit_ids.find(attacker_id)
+	_expect(attacker_index >= 0 and is_equal_approx(hq_simulation.unit_hp[attacker_index], hp_before - config.HQ_ATTACK_DAMAGE), "HQ fires one triple-strength tower shot at air targets")
+	var saw_hq_shot := false
+	for event in hq_simulation.drain_events():
+		if String(event.get("type", "")) == "hq_shot":
+			saw_hq_shot = true
+	_expect(saw_hq_shot, "HQ attack emits a distinct tracer event")
 
 
 func _test_enemy_ai_kind_funding() -> void:

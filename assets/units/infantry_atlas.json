@@ -1,0 +1,81 @@
+{
+	"animations": [
+		{
+			"attack": "1H_Melee_Attack_Chop",
+			"death": "Death_A",
+			"idle": "Idle",
+			"walk": "Walking_A"
+		},
+		{
+			"attack": "2H_Ranged_Shoot",
+			"death": "Death_A",
+			"idle": "Idle",
+			"walk": "Walking_A"
+		}
+	],
+	"atlas_size": [
+		1536,
+		1536
+	],
+	"camera_orthographic_size": 2.75,
+	"camera_pitch_degrees": 30.0,
+	"cell_size": [
+		96,
+		96
+	],
+	"columns": 16,
+	"direction_degrees": [
+		0,
+		45,
+		90,
+		135,
+		180,
+		225,
+		270,
+		315
+	],
+	"directions": 8,
+	"frames_per_direction": 16,
+	"generator": "tools/sprite_baker/bake_sprites.gd",
+	"models": [
+		{
+			"name": "melee",
+			"path": "res://assets/source/kaykit/Knight.glb"
+		},
+		{
+			"name": "ranged",
+			"path": "res://assets/source/kaykit/Rogue_Hooded.glb"
+		}
+	],
+	"rows": 16,
+	"schema": 1,
+	"state_counts": {
+		"attack": 4,
+		"death": 4,
+		"idle": 2,
+		"walk": 6
+	},
+	"state_offsets": {
+		"attack": 8,
+		"death": 12,
+		"idle": 0,
+		"walk": 2
+	},
+	"state_order": [
+		"idle",
+		"walk",
+		"attack",
+		"death"
+	],
+	"teams": [
+		{
+			"color": "62a7ff",
+			"name": "blue"
+		},
+		{
+			"color": "ff6670",
+			"name": "red"
+		}
+	],
+	"transparent_background": true
+}

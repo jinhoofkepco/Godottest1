@@ -102,13 +102,20 @@ func _test_defense_tower_rules_and_attack() -> void:
 	_expect(simulation.ally_gold == gold_after_valid, "rejected tower spends no gold")
 	_expect(not simulation.try_build_spawner(simulation.TEAM_ALLY, invalid_cell, simulation.UNIT_DRAGON), "legacy spawner API rejects non-ground unit kinds")
 	_expect(simulation.ally_gold == gold_after_valid, "invalid legacy spawner kind spends no gold")
-	var target_id: int = simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(valid_cell) + Vector2(0.5, -1.0))
+	var target_id: int = simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(valid_cell) + Vector2(0.5, -1.0), simulation.UNIT_DRAGON)
 	var target_index: int = simulation.unit_ids.find(target_id)
 	simulation.unit_positions[target_index] = Vector2(valid_cell) + Vector2(0.5, -1.0)
 	var hp_before: float = simulation.unit_hp[target_index]
 	for step in 40:
 		simulation.tick(1.0 / 30.0)
-	_expect(simulation.unit_hp[target_index] < hp_before, "defense tower damages a hostile in range")
+	target_index = simulation.unit_ids.find(target_id)
+	var defense_events: Array = simulation.drain_events()
+	var saw_tower_shot := false
+	for event in defense_events:
+		if String(event.get("type", "")) == "tower_shot":
+			saw_tower_shot = true
+	_expect(target_index < 0 or simulation.unit_hp[target_index] < hp_before, "defense tower damages a flying hostile in range")
+	_expect(saw_tower_shot, "defense tower can explicitly target a flying dragon")
 
 
 func _test_dragon_lair_and_flight() -> void:
