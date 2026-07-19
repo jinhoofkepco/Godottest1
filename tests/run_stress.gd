@@ -3,7 +3,7 @@ extends SceneTree
 const UNIT_COUNT := 400
 const WARMUP_TICKS := 30
 const MEASURED_TICKS := 300
-const MAX_CANDIDATE_CHECKS := 30000
+const MAX_CANDIDATE_CHECKS := 12000
 
 
 func _initialize() -> void:
@@ -14,10 +14,28 @@ func _run() -> void:
 	var simulation = load("res://scripts/battle_simulation.gd").new()
 	simulation.reset()
 	for index in UNIT_COUNT / 2:
-		var column := index % 11
-		var rank := (index / 11) % 5
-		simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(float(column) + 0.28 + float(index % 3) * 0.12, 5.5 + float(rank) * 0.42))
-		simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(column) + 0.28 + float((index + 1) % 3) * 0.12, 16.5 - float(rank) * 0.42))
+		var column: int = index % GameConfig.GRID_COLUMNS
+		var rank: int = (index / GameConfig.GRID_COLUMNS) % 10
+		var unit_kind: int = simulation.UNIT_MELEE if index % 2 == 0 else simulation.UNIT_RANGED
+		var lateral_offset := 0.34 + float(index % 3) * 0.16
+		simulation.spawn_unit(
+			simulation.TEAM_ENEMY,
+			Vector2(float(column) + lateral_offset, 11.5 + float(rank) * 0.18),
+			unit_kind
+		)
+		simulation.spawn_unit(
+			simulation.TEAM_ALLY,
+			Vector2(float(column) + 1.0 - lateral_offset, float(GameConfig.GRID_ROWS) - 11.5 - float(rank) * 0.18),
+			unit_kind
+		)
+	if (
+		simulation.unit_ids.size() != UNIT_COUNT
+		or simulation.unit_kinds.count(simulation.UNIT_MELEE) != UNIT_COUNT / 2
+		or simulation.unit_kinds.count(simulation.UNIT_RANGED) != UNIT_COUNT / 2
+	):
+		push_error("STRESS FAILED: expanded fixture did not create 400 evenly mixed units")
+		quit(1)
+		return
 	var samples := PackedFloat64Array()
 	var maximum_candidate_checks := 0
 	for warmup in WARMUP_TICKS:
@@ -35,9 +53,11 @@ func _run() -> void:
 	var average_ms := total_ms / float(samples.size())
 	var p95_ms := float(sorted_samples[int(float(sorted_samples.size() - 1) * 0.95)])
 	var maximum_ms := float(sorted_samples.back())
-	print("STRESS PASS: initial=%d remaining=%d ticks=%d avg_ms=%.3f p95_ms=%.3f max_ms=%.3f max_candidates=%d" % [
+	print("STRESS PASS: initial=%d mixed_kinds=true columns=%d remaining=%d warmup=%d ticks=%d avg_ms=%.3f p95_ms=%.3f max_ms=%.3f max_candidates=%d" % [
 		UNIT_COUNT,
+		GameConfig.GRID_COLUMNS,
 		simulation.unit_ids.size(),
+		WARMUP_TICKS,
 		MEASURED_TICKS,
 		average_ms,
 		p95_ms,

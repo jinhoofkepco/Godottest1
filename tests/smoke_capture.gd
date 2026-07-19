@@ -48,27 +48,33 @@ func _run() -> void:
 func _stage_scenario(main: Node, scenario: int) -> void:
 	var simulation = main.simulation
 	if scenario == 0:
-		simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(5, 18))
-		simulation.add_building(simulation.TEAM_ENEMY, simulation.BUILDING_SPAWNER, Vector2i(5, 7))
-		for column in range(1, 11, 2):
-			simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(float(column) + 0.5, 8.5 + float(column % 3) * 0.25))
-			simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(column) + 0.5, 13.5 - float(column % 3) * 0.25))
-		main.fx.show_production(Vector2i(5, 18), simulation.TEAM_ALLY)
-		main.fx.show_production(Vector2i(5, 7), simulation.TEAM_ENEMY)
+		var ally_spawner := Vector2i(6, GameConfig.GRID_ROWS - 8)
+		var enemy_spawner := Vector2i(GameConfig.GRID_COLUMNS - 7, 7)
+		simulation.try_build_spawner(simulation.TEAM_ALLY, ally_spawner, simulation.UNIT_MELEE)
+		simulation.add_building(simulation.TEAM_ENEMY, simulation.BUILDING_SPAWNER, enemy_spawner, simulation.UNIT_RANGED)
+		for column in range(1, GameConfig.GRID_COLUMNS, 4):
+			_spawn_if_clear(simulation, simulation.TEAM_ENEMY, Vector2i(column, 11), simulation.UNIT_MELEE)
+			_spawn_if_clear(simulation, simulation.TEAM_ALLY, Vector2i(column, GameConfig.GRID_ROWS - 12), simulation.UNIT_RANGED)
+		main.fx.show_production(ally_spawner, simulation.TEAM_ALLY)
+		main.fx.show_production(enemy_spawner, simulation.TEAM_ENEMY)
+		_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), GameConfig.MAP_ZOOM_MIN)
 	elif scenario == 1:
-		for column in 11:
-			simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(column) + 0.5, 4.2 + float(column % 2) * 0.25))
+		for column in GameConfig.GRID_COLUMNS:
+			_spawn_if_clear(simulation, simulation.TEAM_ALLY, Vector2i(column, 8 + column % 2), simulation.UNIT_RANGED if column % 3 == 0 else simulation.UNIT_MELEE)
 			if column % 2 == 0:
-				simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(float(column) + 0.5, 2.0))
+				_spawn_if_clear(simulation, simulation.TEAM_ENEMY, Vector2i(column, 5), simulation.UNIT_MELEE)
 		simulation.recalculate_territory()
-		main.fx.show_territory_change(Vector2i(5, 4), simulation.TEAM_ALLY)
+		main.fx.show_territory_change(Vector2i(GameConfig.GRID_COLUMNS / 2, 8), simulation.TEAM_ALLY)
+		main.fx.show_ranged_shot(Vector2(8.5, 9.5), Vector2(8.5, 5.5), simulation.TEAM_ALLY)
+		_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, 8), 1.85)
 	elif scenario == 2:
-		for column in 11:
-			simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(float(column) + 0.5, 17.4 - float(column % 2) * 0.25))
+		for column in GameConfig.GRID_COLUMNS:
+			_spawn_if_clear(simulation, simulation.TEAM_ENEMY, Vector2i(column, GameConfig.GRID_ROWS - 9 - column % 2), simulation.UNIT_RANGED if column % 3 == 0 else simulation.UNIT_MELEE)
 			if column % 2 == 0:
-				simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(column) + 0.5, 19.5))
+				_spawn_if_clear(simulation, simulation.TEAM_ALLY, Vector2i(column, GameConfig.GRID_ROWS - 6), simulation.UNIT_MELEE)
 		simulation.recalculate_territory()
-		main.fx.show_hq_hit(Vector2i(5, 21), simulation.TEAM_ALLY)
+		main.fx.show_hq_hit(Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 1), simulation.TEAM_ALLY)
+		_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 8), 1.85)
 	else:
 		_stage_frontline_cluster(main)
 
@@ -76,20 +82,32 @@ func _stage_scenario(main: Node, scenario: int) -> void:
 func _stage_frontline_cluster(main: Node) -> void:
 	var simulation = main.simulation
 	for rank in 4:
-		for column in range(1, 10):
-			var lane_shift := 0.42 if column % 2 == 0 else -0.42
-			simulation.spawn_unit(
-				simulation.TEAM_ENEMY,
-				Vector2(float(column) + 0.5 + lane_shift, 9.2 + float(rank) * 0.28)
-			)
-			simulation.spawn_unit(
-				simulation.TEAM_ALLY,
-				Vector2(float(column) + 0.5 - lane_shift, 12.8 - float(rank) * 0.28)
-			)
-	for tick_index in 75:
+		for column in range(3, GameConfig.GRID_COLUMNS - 3):
+			var enemy_cell := Vector2i(column, GameConfig.GRID_ROWS / 2 - 3 - rank % 2)
+			var ally_cell := Vector2i(column, GameConfig.GRID_ROWS / 2 + 2 + rank % 2)
+			_spawn_if_clear(simulation, simulation.TEAM_ENEMY, enemy_cell, simulation.UNIT_RANGED if (column + rank) % 3 == 0 else simulation.UNIT_MELEE)
+			_spawn_if_clear(simulation, simulation.TEAM_ALLY, ally_cell, simulation.UNIT_RANGED if (column + rank) % 3 == 1 else simulation.UNIT_MELEE)
+	for tick_index in 45:
 		simulation.tick(1.0 / float(GameConfig.SIM_TICK_RATE))
 	simulation.recalculate_territory()
-	main.fx.show_hit(Vector2(5.5, 11.0))
+	main.fx.show_hit(Vector2(float(GameConfig.GRID_COLUMNS) * 0.5, float(GameConfig.GRID_ROWS) * 0.5))
+	main.fx.show_ranged_shot(Vector2(8.5, 24.5), Vector2(8.5, 20.5), simulation.TEAM_ALLY)
+	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), 2.15)
+
+
+func _spawn_if_clear(simulation, team: int, cell: Vector2i, unit_kind: int) -> void:
+	if simulation.is_blocked(cell):
+		return
+	var unit_id: int = simulation.spawn_unit(team, Vector2(cell) + Vector2(0.5, 0.5), unit_kind)
+	if unit_id > 0:
+		simulation.unit_positions[simulation.unit_ids.size() - 1] = Vector2(cell) + Vector2(0.5, 0.5)
+
+
+func _focus_map(main: Node, cell: Vector2i, zoom: float) -> void:
+	var center: Vector2 = main.map_view.frame_rect.get_center()
+	main.map_view.set_zoom_at(zoom, center)
+	var target_screen: Vector2 = main.map_view.to_global(main.grid.cell_to_world(cell))
+	main.map_view.pan_by(center - target_screen)
 
 
 func _fail(message: String) -> void:

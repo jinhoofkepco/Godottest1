@@ -32,12 +32,12 @@ func _test_scene_contract(tree: SceneTree, main_scene: PackedScene) -> void:
 	_expect(main.unit_renderer != null, "main owns batched unit renderer")
 	_expect(main.unit_renderer.get_multimesh_count() == 4, "renderer uses four team-by-kind MultiMesh batches")
 	_expect(main.simulation.unit_ids.is_empty(), "units begin as data, not child nodes")
-	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 16.5))
+	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 32.5))
 	main.unit_renderer.sync()
 	_expect(main.unit_renderer.get_child_count() == 4, "spawning data never creates a per-unit child node")
 	_expect(main.buildings_layer.y_sort_enabled, "low-count building layer uses y sorting")
 	_expect(main.fx.z_index > main.unit_renderer.z_index, "FX overlay stays above units and buildings")
-	_expect(main.grid.world_to_cell(main.grid.cell_to_world(Vector2i(3, 17))) == Vector2i(3, 17), "isometric center picking remains exact")
+	_expect(main.grid.world_to_cell(main.grid.cell_to_world(Vector2i(3, 35))) == Vector2i(3, 35), "isometric center picking remains exact")
 	_expect(is_equal_approx(main.hud.last_ally_occupancy, main.simulation.get_occupancy(main.simulation.TEAM_ALLY)), "HUD occupancy mirrors simulation")
 	main.queue_free()
 	await tree.process_frame
@@ -91,10 +91,10 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	var main = main_scene.instantiate()
 	tree.root.add_child(main)
 	await tree.process_frame
-	main.simulation.spawn_unit(main.simulation.TEAM_ENEMY, Vector2(4.5, 8.5), main.simulation.UNIT_MELEE)
-	main.simulation.spawn_unit(main.simulation.TEAM_ENEMY, Vector2(5.5, 8.5), main.simulation.UNIT_RANGED)
-	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 15.5), main.simulation.UNIT_MELEE)
-	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(5.5, 15.5), main.simulation.UNIT_RANGED)
+	main.simulation.spawn_unit(main.simulation.TEAM_ENEMY, Vector2(4.5, 10.5), main.simulation.UNIT_MELEE)
+	main.simulation.spawn_unit(main.simulation.TEAM_ENEMY, Vector2(5.5, 10.5), main.simulation.UNIT_RANGED)
+	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 32.5), main.simulation.UNIT_MELEE)
+	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(5.5, 32.5), main.simulation.UNIT_RANGED)
 	main.unit_renderer.sync()
 	var expected_batches := ["EnemyMeleeUnits", "EnemyRangedUnits", "AllyMeleeUnits", "AllyRangedUnits"]
 	for batch_name in expected_batches:
@@ -129,8 +129,8 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	main._consume_events([{
 		"type": "ranged_shot",
 		"team": main.simulation.TEAM_ALLY,
-		"origin": Vector2(4.5, 15.5),
-		"position": Vector2(4.5, 11.5),
+		"origin": Vector2(4.5, 32.5),
+		"position": Vector2(4.5, 30.5),
 	}])
 	var after_tracers: int = int(main.fx.get("ranged_shot_feedback_count")) if fx_properties.has("ranged_shot_feedback_count") else -1
 	_expect(before_tracers >= 0 and after_tracers == before_tracers + 1, "ranged shot events route to a distinct tracer effect")
@@ -164,7 +164,7 @@ func _test_map_view_transform_and_input(tree: SceneTree, main_scene: PackedScene
 		return
 	_expect(is_equal_approx(float(map_view.zoom_level), 1.35), "map starts at 1.35x zoom")
 	var frame_rect: Rect2 = map_view.frame_rect
-	var focus_cell := Vector2i(11, 22)
+	var focus_cell := Vector2i(11, 30)
 	var focus_screen: Vector2 = map_view.to_global(main.grid.cell_to_world(focus_cell))
 	var focus_local: Vector2 = map_view.to_local(focus_screen)
 	map_view.set_zoom_at(2.0, focus_screen)
@@ -199,7 +199,7 @@ func _test_map_view_transform_and_input(tree: SceneTree, main_scene: PackedScene
 	map_view.pan_by(Vector2(-200000, -200000))
 	_expect(not map_view.position.is_equal_approx(right_limit), "opposite map edge remains reachable through clamped panning")
 	map_view.pan_by(Vector2(-280, 0))
-	var picked_cell := Vector2i(16, 28)
+	var picked_cell := Vector2i(16, 32)
 	var picked_screen: Vector2 = map_view.to_global(main.grid.cell_to_world(picked_cell))
 	_expect(map_view.screen_to_cell(picked_screen) == picked_cell, "picking stays exact after non-default zoom and pan")
 
@@ -475,11 +475,11 @@ func _test_zero_screen_shake(tree: SceneTree, main_scene: PackedScene) -> void:
 	for property_name in fx_properties:
 		_expect("shake" not in property_name.to_lower(), "FX has no shake property: %s" % property_name)
 	for hit_index in 20:
-		main.fx.show_hq_hit(Vector2i(5, 21), main.simulation.TEAM_ALLY)
+		main.fx.show_hq_hit(Vector2i(11, 43), main.simulation.TEAM_ALLY)
 		main.fx._process(0.5)
 		main._process(1.0 / 60.0)
 		_expect(main.world.position.is_equal_approx(base_position), "repeated HQ hits never move the world")
-	main.fx.show_hq_destroyed(Vector2i(5, 21), main.simulation.TEAM_ALLY)
+	main.fx.show_hq_destroyed(Vector2i(11, 43), main.simulation.TEAM_ALLY)
 	for sample in 30:
 		main.fx._process(1.0 / 60.0)
 		main._process(1.0 / 60.0)
