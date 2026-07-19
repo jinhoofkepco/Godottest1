@@ -6,6 +6,11 @@ const GRID_COLUMNS := 9
 const GRID_ROWS := 14
 const CELL_SIZE := 54.0
 const GRID_ORIGIN := Vector2(27, 108)
+const ISO_TILE_WIDTH := 64.0
+const ISO_TILE_HEIGHT := 32.0
+const WORLD_FRAME_MARGIN := 14.0
+const WORLD_FRAME_TOP := 112.0
+const WORLD_FRAME_BOTTOM := 24.0
 const ENEMY_ZONE_ROWS := 3
 const ALLY_BUILD_START_ROW := 5
 const CORE_ROW := 13
@@ -47,4 +52,3 @@ static func wave_enemy_speed(wave: int) -> float:
 
 static func wave_enemy_health(wave: int) -> float:
 	return 28.0 + float(clampi(wave, 1, TOTAL_WAVES) - 1) * 9.0
-
