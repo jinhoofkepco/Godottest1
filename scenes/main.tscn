@@ -1,0 +1,35 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource path="res://scripts/main.gd" type="Script" id="1_main"]
+[ext_resource path="res://scenes/grid.tscn" type="PackedScene" id="2_grid"]
+[ext_resource path="res://scenes/core.tscn" type="PackedScene" id="3_core"]
+[ext_resource path="res://scenes/fx.tscn" type="PackedScene" id="4_fx"]
+[ext_resource path="res://scenes/wave_manager.tscn" type="PackedScene" id="5_wave"]
+[ext_resource path="res://scenes/hud.tscn" type="PackedScene" id="6_hud"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="World" type="Node2D" parent="."]
+
+[node name="Grid" parent="World" instance=ExtResource("2_grid")]
+
+[node name="Core" parent="World" instance=ExtResource("3_core")]
+position = Vector2(270, 890)
+z_index = 8
+
+[node name="Enemies" type="Node2D" parent="World"]
+z_index = 5
+
+[node name="Towers" type="Node2D" parent="World"]
+z_index = 6
+
+[node name="Projectiles" type="Node2D" parent="World"]
+z_index = 10
+
+[node name="Fx" parent="World" instance=ExtResource("4_fx")]
+
+[node name="WaveManager" parent="." instance=ExtResource("5_wave")]
+
+[node name="Hud" parent="." instance=ExtResource("6_hud")]
+

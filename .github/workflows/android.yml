@@ -1,0 +1,68 @@
+name: Android Debug APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ runner.temp }}/godottest1/debug.keystore
+      GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+      GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
+      GODOT_ANDROID_KEYSTORE_RELEASE_PATH: ${{ runner.temp }}/godottest1/debug.keystore
+      GODOT_ANDROID_KEYSTORE_RELEASE_USER: androiddebugkey
+      GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: android
+
+    steps:
+      - name: Check out project
+        uses: actions/checkout@v4
+
+      - name: Create temporary debug keystore
+        run: |
+          mkdir -p "${{ runner.temp }}/godottest1" .godot build
+          keytool -genkeypair -v \
+            -keystore "$GODOT_ANDROID_KEYSTORE_DEBUG_PATH" \
+            -storepass "$GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD" \
+            -alias "$GODOT_ANDROID_KEYSTORE_DEBUG_USER" \
+            -keypass "$GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD" \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=GodotTest1,C=KR"
+          touch .godot/export_credentials.cfg
+
+      # v4.1.0 installs JDK 17, Android SDK, Godot, export templates, and
+      # the Android build template. Its final internal export is release-mode.
+      - name: Set up Godot Android export environment
+        uses: dulvui/godot-android-export@v4.1.0
+        with:
+          godot-version: 4.5
+          godot-channel: stable
+          working-directory: .
+
+      - name: Run headless verification
+        run: |
+          godot --headless --path . --import
+          godot --headless --path . -s tests/run_rules.gd
+          godot --headless --path . -s tests/run_game_flow.gd
+
+      # The requested deliverable is debug, so overwrite the action's
+      # release-mode output using the same installed 4.5 toolchain.
+      - name: Export debug APK
+        run: |
+          godot --headless --path . --export-debug Android build/godottest1.apk
+          test -s build/godottest1.apk
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: godottest1-debug-apk
+          path: build/godottest1.apk
+          if-no-files-found: error
+          retention-days: 14
+

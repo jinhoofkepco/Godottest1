@@ -1,0 +1,15 @@
+# Godot generated state and imports
+.godot/
+.import/
+*.import
+
+# Local and CI exports
+build/
+android/
+export_credentials.cfg
+
+# Platform/editor noise
+.DS_Store
+*.tmp
+*.log
+

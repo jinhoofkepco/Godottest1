@@ -34,9 +34,8 @@ Restart reloads the main scene. The design deliberately has no upgrades, tower s
 
 The Android export preset is named `Android` and exports to `build/godottest1.apk`. The project requests portrait orientation, uses GLES3 compatibility rendering, and enables arm64 plus arm32 APK architectures.
 
-GitHub Actions checks out the repository, creates a temporary standard Android debug keystore with `keytool`, exposes it through Godot's documented `GODOT_ANDROID_KEYSTORE_DEBUG_*` variables, and invokes `dulvui/godot-android-export@v4` with Godot `4.5` on the `stable` channel. `actions/upload-artifact` publishes `build/godottest1.apk` as `godottest1-debug-apk`. No user secret is needed.
+GitHub Actions checks out the repository, creates a temporary standard Android debug keystore with `keytool`, exposes it through Godot's documented keystore environment variables, and invokes `dulvui/godot-android-export@v4.1.0` with Godot `4.5` on the `stable` channel. Because that action hardcodes an internal release export, the workflow then runs an explicit `--export-debug Android` with the installed toolchain and overwrites the final path. `actions/upload-artifact` publishes `build/godottest1.apk` as `godottest1-debug-apk`. No user secret is needed.
 
 ## Verification
 
 Headless tests cover grid build rules, wave scaling, economy, tower placement, five-wave victory, and core-damage defeat. A separate main-scene smoke run catches parser and startup errors. `godot --headless --import` must exit without import errors. The GitHub Actions run must finish successfully and expose the APK artifact before delivery.
-
