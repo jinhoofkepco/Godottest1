@@ -244,20 +244,41 @@ func _test_terminal_results() -> void:
 
 func _test_balance_paths() -> void:
 	var passive_simulation = _new_simulation()
-	_run_complete_match(passive_simulation)
+	var passive_elapsed := _run_complete_match(passive_simulation)
 	_expect(passive_simulation.result == "DEFEAT", "building no blue spawner lets red AI win")
 	var active_simulation = _new_simulation()
-	_expect(active_simulation.try_build_spawner(active_simulation.TEAM_ALLY, Vector2i(5, 18)), "balance fixture builds a central blue spawner")
-	_run_complete_match(active_simulation)
-	_expect(active_simulation.result == "VICTORY", "central blue spawner can push through and win")
+	for column in [3, 5, 7]:
+		_expect(active_simulation.try_build_spawner(active_simulation.TEAM_ALLY, Vector2i(column, 18)), "balance fixture spends starting gold on three blue spawners")
+	var active_elapsed := _run_complete_match(active_simulation)
+	_expect(active_simulation.result == "VICTORY", "three starting blue spawners can push through and win")
+	_expect(passive_elapsed >= 120.0 and passive_elapsed <= 180.1, "unopposed red advance remains a two-to-three minute match (%.1fs)" % passive_elapsed)
+	_expect(active_elapsed >= 120.0 and active_elapsed <= 180.1, "reinforced blue victory remains a two-to-three minute match (%.1fs)" % active_elapsed)
+	print("BALANCE PATHS: no_spawner=%.1fs %s blue_share=%.2f blue_hq=%.0f three_spawners=%.1fs %s blue_share=%.2f red_hq=%.0f" % [
+		passive_elapsed,
+		passive_simulation.result,
+		passive_simulation.get_occupancy(passive_simulation.TEAM_ALLY),
+		_building_hp(passive_simulation, passive_simulation.ally_hq_id),
+		active_elapsed,
+		active_simulation.result,
+		active_simulation.get_occupancy(active_simulation.TEAM_ALLY),
+		_building_hp(active_simulation, active_simulation.enemy_hq_id),
+	])
 
 
-func _run_complete_match(simulation) -> void:
+func _run_complete_match(simulation) -> float:
 	var fixed_delta := 1.0 / 30.0
 	for step in int(181.0 / fixed_delta):
 		if simulation.result != "":
-			return
+			return simulation.config.MATCH_DURATION - simulation.time_remaining
 		simulation.tick(fixed_delta)
+	return simulation.config.MATCH_DURATION - simulation.time_remaining
+
+
+func _building_hp(simulation, building_id: int) -> float:
+	for building in simulation.buildings:
+		if int(building.id) == building_id:
+			return float(building.hp)
+	return 0.0
 
 
 func _test_bucket_search_scale() -> void:
