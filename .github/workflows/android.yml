@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      GODOT_ANDROID_KEYSTORE_DEBUG_PATH: ${{ runner.temp }}/godottest1/debug.keystore
+      GODOT_ANDROID_KEYSTORE_DEBUG_PATH: /tmp/godottest1/debug.keystore
       GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
       GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
-      GODOT_ANDROID_KEYSTORE_RELEASE_PATH: ${{ runner.temp }}/godottest1/debug.keystore
+      GODOT_ANDROID_KEYSTORE_RELEASE_PATH: /tmp/godottest1/debug.keystore
       GODOT_ANDROID_KEYSTORE_RELEASE_USER: androiddebugkey
       GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: android
 
@@ -26,7 +26,7 @@ jobs:
 
       - name: Create temporary debug keystore
         run: |
-          mkdir -p "${{ runner.temp }}/godottest1" .godot build
+          mkdir -p /tmp/godottest1 .godot build
           keytool -genkeypair -v \
             -keystore "$GODOT_ANDROID_KEYSTORE_DEBUG_PATH" \
             -storepass "$GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD" \
@@ -65,4 +65,3 @@ jobs:
           path: build/godottest1.apk
           if-no-files-found: error
           retention-days: 14
-
