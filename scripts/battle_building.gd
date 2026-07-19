@@ -7,6 +7,9 @@ const GameConfig = preload("res://scripts/game_config.gd")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const BUILDING_HQ := 0
+const BUILDING_SPAWNER := 1
+const BUILDING_DEFENSE_TOWER := 2
+const BUILDING_DRAGON_LAIR := 3
 const UNIT_MELEE := 0
 const UNIT_RANGED := 1
 
@@ -70,7 +73,7 @@ func _draw() -> void:
 		draw_colored_polygon(PackedVector2Array([Vector2(-25, -2), Vector2(-18, -38), Vector2(0, -50), Vector2(18, -38), Vector2(25, -2)]), color.darkened(0.18))
 		draw_rect(Rect2(Vector2(-17, -34), Vector2(34, 27)), color)
 		draw_rect(Rect2(Vector2(-4, -50), Vector2(8, 35)), Color("f0f6ff"))
-	else:
+	elif kind == BUILDING_SPAWNER:
 		draw_rect(Rect2(Vector2(-18, -28), Vector2(36, 24)), color.darkened(0.16))
 		draw_rect(Rect2(Vector2(-11, -38), Vector2(22, 15)), color)
 		if unit_kind == UNIT_RANGED:
@@ -80,6 +83,16 @@ func _draw() -> void:
 		else:
 			draw_circle(Vector2(0, -42), 6.0, Color("f0f6ff"))
 			draw_line(Vector2(-7, -42), Vector2(7, -42), color.darkened(0.45), 3.0, true)
+	elif kind == BUILDING_DEFENSE_TOWER:
+		draw_colored_polygon(PackedVector2Array([Vector2(-18, -4), Vector2(-13, -32), Vector2(13, -32), Vector2(18, -4)]), color.darkened(0.18))
+		draw_circle(Vector2(0, -38), 10.0, color.lightened(0.08))
+		draw_line(Vector2(0, -40), Vector2(23, -49), Color("f7fff8"), 6.0, true)
+		draw_circle(Vector2(24, -49), 3.0, GameConfig.COLOR_ORANGE)
+	else:
+		draw_colored_polygon(PackedVector2Array([Vector2(-24, -3), Vector2(-18, -31), Vector2(0, -43), Vector2(18, -31), Vector2(24, -3)]), color.darkened(0.22))
+		draw_colored_polygon(PackedVector2Array([Vector2(-3, -36), Vector2(-23, -50), Vector2(-14, -30), Vector2(0, -24), Vector2(14, -30), Vector2(23, -50), Vector2(3, -36)]), GameConfig.COLOR_ORANGE.lightened(0.08))
+		draw_circle(Vector2(0, -37), 5.0, Color("fff2ba"))
 	var ratio := clampf(hp / maxf(max_hp, 1.0), 0.0, 1.0)
-	draw_rect(Rect2(Vector2(-22, -60 if kind == BUILDING_HQ else -51), Vector2(44, 5)), Color("0b101b"))
-	draw_rect(Rect2(Vector2(-21, -59 if kind == BUILDING_HQ else -50), Vector2(42 * ratio, 3)), color.lightened(0.3))
+	var bar_y := -60.0 if kind == BUILDING_HQ else -57.0
+	draw_rect(Rect2(Vector2(-22, bar_y), Vector2(44, 5)), Color("0b101b"))
+	draw_rect(Rect2(Vector2(-21, bar_y + 1.0), Vector2(42 * ratio, 3)), color.lightened(0.3))

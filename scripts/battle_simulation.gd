@@ -2,6 +2,7 @@ class_name BattleSimulation
 extends RefCounted
 
 const GameConfig = preload("res://scripts/game_config.gd")
+const FlowFieldScript = preload("res://scripts/flow_field.gd")
 const config = GameConfig
 
 const TEAM_NONE := 0
@@ -9,8 +10,18 @@ const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const BUILDING_HQ := 0
 const BUILDING_SPAWNER := 1
+const BUILDING_DEFENSE_TOWER := 2
+const BUILDING_DRAGON_LAIR := 3
 const UNIT_MELEE := 0
 const UNIT_RANGED := 1
+const UNIT_DRAGON := 2
+const BUILD_MELEE_SPAWNER := 0
+const BUILD_RANGED_SPAWNER := 1
+const BUILD_DEFENSE_TOWER := 2
+const BUILD_DRAGON_LAIR := 3
+const STATE_ADVANCE := 0
+const STATE_ATTACK := 1
+const STATE_WAIT := 2
 
 var unit_ids := PackedInt32Array()
 var unit_teams := PackedInt32Array()
@@ -24,6 +35,8 @@ var unit_last_attacker_teams := PackedInt32Array()
 var unit_speed_scales := PackedFloat32Array()
 var unit_lunge_timers := PackedFloat32Array()
 var unit_lunge_directions := PackedVector2Array()
+var unit_velocities := PackedVector2Array()
+var unit_flow_bias_radians := PackedFloat32Array()
 
 var buildings: Array[Dictionary] = []
 var ownership := PackedByteArray()
@@ -35,6 +48,8 @@ var enemy_hq_id := 0
 var time_remaining := GameConfig.MATCH_DURATION
 var result := ""
 var target_candidate_checks := 0
+var enemy_flow: FlowField
+var ally_flow: FlowField
 
 var _next_unit_id := 1
 var _next_building_id := 1
@@ -44,6 +59,8 @@ var _enemy_income_remainder := 0.0
 var _enemy_build_timer := GameConfig.ENEMY_BUILD_INTERVAL
 var _enemy_build_cursor := 0
 var _enemy_next_unit_kind := UNIT_MELEE
+var _congestion_rebuild_timer := 0.0
+var _next_flow_rebuild_team := TEAM_ENEMY
 var _events: Array[Dictionary] = []
 var _enemy_buckets: Array[Array] = []
 var _ally_buckets: Array[Array] = []
@@ -68,6 +85,8 @@ func reset() -> void:
 	unit_speed_scales.clear()
 	unit_lunge_timers.clear()
 	unit_lunge_directions.clear()
+	unit_velocities.clear()
+	unit_flow_bias_radians.clear()
 	buildings.clear()
 	ownership.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	for row in GameConfig.GRID_ROWS:
@@ -90,6 +109,8 @@ func reset() -> void:
 	_enemy_build_timer = GameConfig.ENEMY_BUILD_INTERVAL
 	_enemy_build_cursor = 0
 	_enemy_next_unit_kind = UNIT_MELEE
+	_congestion_rebuild_timer = 0.0
+	_next_flow_rebuild_team = TEAM_ENEMY
 	_rng.seed = 731942
 	_events.clear()
 	_enemy_buckets.clear()
@@ -99,11 +120,14 @@ func reset() -> void:
 	_ally_buckets.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	enemy_hq_id = add_building(TEAM_ENEMY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, 0))
 	ally_hq_id = add_building(TEAM_ALLY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 1))
+	enemy_flow = FlowFieldScript.new(GameConfig.GRID_COLUMNS, GameConfig.GRID_ROWS)
+	ally_flow = FlowFieldScript.new(GameConfig.GRID_COLUMNS, GameConfig.GRID_ROWS)
+	rebuild_flow_fields()
 	recalculate_territory(false)
 
 
 func spawn_unit(team: int, position: Vector2, unit_kind: int = UNIT_MELEE) -> int:
-	if team not in [TEAM_ALLY, TEAM_ENEMY] or unit_kind not in [UNIT_MELEE, UNIT_RANGED]:
+	if team not in [TEAM_ALLY, TEAM_ENEMY] or unit_kind not in [UNIT_MELEE, UNIT_RANGED, UNIT_DRAGON]:
 		return 0
 	var unit_id := _next_unit_id
 	_next_unit_id += 1
@@ -125,14 +149,19 @@ func spawn_unit(team: int, position: Vector2, unit_kind: int = UNIT_MELEE) -> in
 	unit_speed_scales.append(_rng.randf_range(1.0 - GameConfig.UNIT_SPEED_VARIATION, 1.0 + GameConfig.UNIT_SPEED_VARIATION))
 	unit_lunge_timers.append(0.0)
 	unit_lunge_directions.append(Vector2.ZERO)
+	unit_velocities.append(Vector2.ZERO)
+	unit_flow_bias_radians.append(deg_to_rad(_rng.randf_range(-GameConfig.FLOW_NOISE_DEGREES, GameConfig.FLOW_NOISE_DEGREES)))
 	_unit_index_by_id[unit_id] = unit_ids.size() - 1
 	return unit_id
 
 
 func add_building(team: int, kind: int, cell: Vector2i, unit_kind: int = UNIT_MELEE) -> int:
-	if team not in [TEAM_ALLY, TEAM_ENEMY] or kind not in [BUILDING_HQ, BUILDING_SPAWNER] or unit_kind not in [UNIT_MELEE, UNIT_RANGED] or not _cell_is_valid(cell) or is_blocked(cell):
+	if team not in [TEAM_ALLY, TEAM_ENEMY] or kind not in [BUILDING_HQ, BUILDING_SPAWNER, BUILDING_DEFENSE_TOWER, BUILDING_DRAGON_LAIR] or unit_kind not in [UNIT_MELEE, UNIT_RANGED, UNIT_DRAGON] or not _cell_is_valid(cell) or is_blocked(cell):
 		return 0
-	return _add_building(team, kind, cell, unit_kind)
+	var building_id := _add_building(team, kind, cell, unit_kind)
+	if enemy_flow != null and ally_flow != null:
+		rebuild_flow_fields()
+	return building_id
 
 
 func tick(delta: float) -> void:
@@ -152,11 +181,20 @@ func tick(delta: float) -> void:
 
 
 func try_build_spawner(team: int, cell: Vector2i, unit_kind: int = UNIT_MELEE) -> bool:
-	if result != "" or unit_kind not in [UNIT_MELEE, UNIT_RANGED] or not _cell_is_valid(cell) or is_blocked(cell):
+	if unit_kind not in [UNIT_MELEE, UNIT_RANGED]:
+		return false
+	var build_kind := BUILD_RANGED_SPAWNER if unit_kind == UNIT_RANGED else BUILD_MELEE_SPAWNER
+	return try_build(team, cell, build_kind)
+
+
+func try_build(team: int, cell: Vector2i, build_kind: int) -> bool:
+	if result != "" or build_kind not in [BUILD_MELEE_SPAWNER, BUILD_RANGED_SPAWNER, BUILD_DEFENSE_TOWER, BUILD_DRAGON_LAIR] or not _cell_is_valid(cell) or is_blocked(cell):
 		return false
 	if ownership[_cell_index(cell)] != team or _building_at(cell) != -1:
 		return false
-	var cost := _spawner_cost(unit_kind)
+	if build_kind == BUILD_DEFENSE_TOWER and not _inside_hq_build_zone(team, cell):
+		return false
+	var cost := _build_cost(build_kind)
 	if team == TEAM_ALLY:
 		if ally_gold < cost:
 			return false
@@ -167,10 +205,34 @@ func try_build_spawner(team: int, cell: Vector2i, unit_kind: int = UNIT_MELEE) -
 		enemy_gold -= cost
 	else:
 		return false
-	var building_id := add_building(team, BUILDING_SPAWNER, cell, unit_kind)
-	_events.append({"type": "spawner_built", "team": team, "building_id": building_id, "cell": cell})
+	var building_type := BUILDING_SPAWNER
+	var unit_kind := UNIT_MELEE
+	if build_kind == BUILD_RANGED_SPAWNER:
+		unit_kind = UNIT_RANGED
+	elif build_kind == BUILD_DEFENSE_TOWER:
+		building_type = BUILDING_DEFENSE_TOWER
+	elif build_kind == BUILD_DRAGON_LAIR:
+		building_type = BUILDING_DRAGON_LAIR
+		unit_kind = UNIT_DRAGON
+	var building_id := add_building(team, building_type, cell, unit_kind)
+	_events.append({"type": "building_built", "team": team, "building_id": building_id, "cell": cell, "kind": building_type, "unit_kind": unit_kind})
 	recalculate_territory()
 	return true
+
+
+func rebuild_flow_fields() -> void:
+	if enemy_flow == null or ally_flow == null:
+		return
+	_rebuild_buckets()
+	_rebuild_flow_for_team(TEAM_ENEMY)
+	_rebuild_flow_for_team(TEAM_ALLY)
+	_congestion_rebuild_timer = GameConfig.CONGESTION_REBUILD_INTERVAL * 0.5
+	_next_flow_rebuild_team = TEAM_ENEMY
+
+
+func get_flow_direction(team: int, cell: Vector2i) -> Vector2:
+	var flow: FlowField = ally_flow if team == TEAM_ALLY else enemy_flow
+	return flow.direction_at(cell) if flow != null else Vector2.ZERO
 
 
 func get_ownership() -> PackedByteArray:
@@ -265,6 +327,7 @@ func apply_building_damage(building_id: int, damage: float, attacker_team: int) 
 	building.destroyed = true
 	buildings[index] = building
 	_events.append({"type": "building_destroyed", "team": int(building.team), "building_id": building_id, "cell": building.cell, "kind": int(building.kind)})
+	rebuild_flow_fields()
 	if int(building.kind) == BUILDING_HQ:
 		result = "VICTORY" if attacker_team == TEAM_ALLY else "DEFEAT"
 	else:
@@ -283,6 +346,12 @@ func _step(delta: float) -> void:
 	_update_enemy_ai(delta)
 	_update_spawners(delta)
 	_rebuild_buckets()
+	_congestion_rebuild_timer -= delta
+	if _congestion_rebuild_timer <= 0.0:
+		_rebuild_flow_for_team(_next_flow_rebuild_team)
+		_next_flow_rebuild_team = TEAM_ALLY if _next_flow_rebuild_team == TEAM_ENEMY else TEAM_ENEMY
+		_congestion_rebuild_timer += GameConfig.CONGESTION_REBUILD_INTERVAL * 0.5
+	_update_defense_towers(delta)
 	target_candidate_checks = 0
 	for index in unit_ids.size():
 		if unit_hp[index] <= 0.0:
@@ -295,28 +364,33 @@ func _step(delta: float) -> void:
 		var attack_range := _unit_attack_range(unit_kinds[index])
 		var target_in_attack_range := _found_target_id != 0 and position.distance_squared_to(_found_target_position) <= attack_range * attack_range
 		if target_in_attack_range:
-			unit_states[index] = 1
+			unit_states[index] = STATE_ATTACK
 			unit_lunge_directions[index] = position.direction_to(_found_target_position)
+			unit_velocities[index] = unit_velocities[index].move_toward(Vector2.ZERO, _unit_speed(unit_kinds[index]) * GameConfig.UNIT_TURN_RATE * delta)
 			if unit_cooldowns[index] <= 0.0:
 				_attack_target(index, _found_unit_index, _found_building_index)
 		else:
-			unit_states[index] = 0
-			var advance_direction := Vector2(0.0, -1.0 if unit_teams[index] == TEAM_ALLY else 1.0)
+			var advance_direction := _advance_direction(index)
 			var seek_direction := Vector2.ZERO
 			if _found_target_id != 0:
 				seek_direction = position.direction_to(_found_target_position)
 			var separation_direction := _calculate_separation(index)
-			var obstacle_direction := _calculate_obstacle_repulsion(position)
-			var steering := (
-				advance_direction * GameConfig.UNIT_ADVANCE_WEIGHT
-				+ seek_direction * GameConfig.UNIT_SEEK_WEIGHT
-				+ separation_direction * GameConfig.UNIT_SEPARATION_WEIGHT
-				+ obstacle_direction * GameConfig.OBSTACLE_REPULSION_WEIGHT
-			)
-			if steering.length_squared() <= 0.000001:
-				steering = advance_direction
-			var velocity := steering.normalized() * _unit_speed(unit_kinds[index]) * unit_speed_scales[index]
-			unit_positions[index] = _move_without_entering_blocked(position, velocity * delta)
+			var waiting := unit_kinds[index] != UNIT_DRAGON and _should_wait(index, advance_direction)
+			var steering := separation_direction * (GameConfig.WAIT_SEPARATION_WEIGHT if waiting else GameConfig.UNIT_SEPARATION_WEIGHT)
+			if not waiting:
+				steering += advance_direction * GameConfig.UNIT_ADVANCE_WEIGHT + seek_direction * GameConfig.UNIT_SEEK_WEIGHT
+				if unit_kinds[index] != UNIT_DRAGON:
+					steering += _calculate_obstacle_repulsion(position) * GameConfig.OBSTACLE_REPULSION_WEIGHT
+			unit_states[index] = STATE_WAIT if waiting else STATE_ADVANCE
+			var maximum_speed := _unit_speed(unit_kinds[index]) * unit_speed_scales[index]
+			var target_velocity := Vector2.ZERO
+			if steering.length_squared() > 0.000001:
+				target_velocity = steering.normalized() * maximum_speed
+			unit_velocities[index] = unit_velocities[index].move_toward(target_velocity, maximum_speed * GameConfig.UNIT_TURN_RATE * delta)
+			if unit_kinds[index] == UNIT_DRAGON:
+				unit_positions[index] = _move_flying(position, unit_velocities[index] * delta)
+			else:
+				unit_positions[index] = _move_without_entering_blocked(position, unit_velocities[index] * delta)
 	_remove_dead_units()
 	recalculate_territory()
 	_check_terminal_state()
@@ -360,18 +434,45 @@ func _update_enemy_ai(delta: float) -> void:
 func _update_spawners(delta: float) -> void:
 	for index in buildings.size():
 		var building := buildings[index]
-		if bool(building.destroyed) or int(building.kind) != BUILDING_SPAWNER:
+		if bool(building.destroyed) or int(building.kind) not in [BUILDING_SPAWNER, BUILDING_DRAGON_LAIR]:
 			continue
 		building.spawn_timer = float(building.spawn_timer) - delta
 		if float(building.spawn_timer) <= 0.0:
-			building.spawn_timer = float(building.spawn_timer) + GameConfig.SPAWNER_PRODUCTION_INTERVAL
+			var production_interval := GameConfig.DRAGON_PRODUCTION_INTERVAL if int(building.kind) == BUILDING_DRAGON_LAIR else GameConfig.SPAWNER_PRODUCTION_INTERVAL
+			building.spawn_timer = float(building.spawn_timer) + production_interval
 			var cell: Vector2i = building.cell
 			var team := int(building.team)
 			var unit_kind := int(building.unit_kind)
-			var offset_y := -0.2 if team == TEAM_ALLY else 0.2
-			var unit_id := spawn_unit(team, Vector2(cell) + Vector2(0.5, 0.5 + offset_y), unit_kind)
+			var spawn_position := _find_spawn_position(cell, team, unit_kind == UNIT_DRAGON)
+			if spawn_position.x < 0.0:
+				building.spawn_timer = 0.5
+				buildings[index] = building
+				continue
+			var unit_id := spawn_unit(team, spawn_position, unit_kind)
 			_events.append({"type": "unit_produced", "team": team, "unit_id": unit_id, "cell": cell, "unit_kind": unit_kind})
 		buildings[index] = building
+
+
+func _update_defense_towers(delta: float) -> void:
+	for building_index in buildings.size():
+		var building := buildings[building_index]
+		if bool(building.destroyed) or int(building.kind) != BUILDING_DEFENSE_TOWER:
+			continue
+		building.attack_cooldown = maxf(0.0, float(building.attack_cooldown) - delta)
+		if float(building.attack_cooldown) > 0.0:
+			buildings[building_index] = building
+			continue
+		var origin := Vector2(building.cell) + Vector2(0.5, 0.5)
+		var target_index := _nearest_hostile_unit_index(int(building.team), origin, GameConfig.DEFENSE_TOWER_RANGE)
+		if target_index < 0:
+			buildings[building_index] = building
+			continue
+		building.attack_cooldown = GameConfig.DEFENSE_TOWER_ATTACK_INTERVAL
+		unit_hp[target_index] -= GameConfig.DEFENSE_TOWER_DAMAGE
+		unit_last_attacker_teams[target_index] = int(building.team)
+		_events.append({"type": "tower_shot", "team": int(building.team), "origin": origin, "position": unit_positions[target_index]})
+		_events.append({"type": "hit", "team": unit_teams[target_index], "position": unit_positions[target_index]})
+		buildings[building_index] = building
 
 
 func _rebuild_buckets() -> void:
@@ -388,6 +489,50 @@ func _rebuild_buckets() -> void:
 		)
 		var team_buckets := _enemy_buckets if unit_teams[index] == TEAM_ENEMY else _ally_buckets
 		team_buckets[_cell_index(cell)].append(index)
+
+
+func _density_from_buckets(buckets: Array[Array]) -> PackedInt32Array:
+	var density := PackedInt32Array()
+	density.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	if buckets.size() != density.size():
+		return density
+	for index in buckets.size():
+		var ground_count := 0
+		for unit_index in buckets[index]:
+			if unit_index >= 0 and unit_index < unit_kinds.size() and unit_kinds[unit_index] != UNIT_DRAGON and unit_hp[unit_index] > 0.0:
+				ground_count += 1
+		density[index] = ground_count
+	return density
+
+
+func _rebuild_flow_for_team(team: int) -> void:
+	var flow_blocked := blocked.duplicate()
+	for building in buildings:
+		if bool(building.destroyed) or int(building.kind) == BUILDING_HQ:
+			continue
+		flow_blocked[_cell_index(Vector2i(building.cell))] = 1
+	if team == TEAM_ENEMY:
+		enemy_flow.rebuild(_building_cell(ally_hq_id), flow_blocked, _density_from_buckets(_enemy_buckets), GameConfig.CONGESTION_COST_WEIGHT)
+	else:
+		ally_flow.rebuild(_building_cell(enemy_hq_id), flow_blocked, _density_from_buckets(_ally_buckets), GameConfig.CONGESTION_COST_WEIGHT)
+
+
+func _nearest_hostile_unit_index(team: int, position: Vector2, radius: float) -> int:
+	var buckets := _ally_buckets if team == TEAM_ENEMY else _enemy_buckets
+	var cell := Vector2i(floori(position.x), floori(position.y))
+	var bucket_radius := ceili(radius)
+	var best_distance_squared := radius * radius
+	var best_index := -1
+	for row in range(maxi(0, cell.y - bucket_radius), mini(GameConfig.GRID_ROWS - 1, cell.y + bucket_radius) + 1):
+		for column in range(maxi(0, cell.x - bucket_radius), mini(GameConfig.GRID_COLUMNS - 1, cell.x + bucket_radius) + 1):
+			for candidate_index in buckets[_cell_index(Vector2i(column, row))]:
+				if unit_hp[candidate_index] <= 0.0:
+					continue
+				var distance_squared := position.distance_squared_to(unit_positions[candidate_index])
+				if distance_squared <= best_distance_squared:
+					best_distance_squared = distance_squared
+					best_index = candidate_index
+	return best_index
 
 
 func _find_target(unit_index: int) -> void:
@@ -498,7 +643,7 @@ func _calculate_obstacle_repulsion(position: Vector2) -> Vector2:
 	for row in range(maxi(0, cell.y - cell_radius), mini(GameConfig.GRID_ROWS - 1, cell.y + cell_radius) + 1):
 		for column in range(maxi(0, cell.x - cell_radius), mini(GameConfig.GRID_COLUMNS - 1, cell.x + cell_radius) + 1):
 			var obstacle_cell := Vector2i(column, row)
-			if not is_blocked(obstacle_cell):
+			if not _cell_blocks_ground(obstacle_cell):
 				continue
 			var offset := position - (Vector2(obstacle_cell) + Vector2(0.5, 0.5))
 			var distance := offset.length()
@@ -518,9 +663,64 @@ func _move_without_entering_blocked(position: Vector2, motion: Vector2) -> Vecto
 		candidate.x = clampf(candidate.x, 0.2, float(GameConfig.GRID_COLUMNS) - 0.2)
 		candidate.y = clampf(candidate.y, 0.5, float(GameConfig.GRID_ROWS) - 0.5)
 		var cell := Vector2i(floori(candidate.x), floori(candidate.y))
-		if not is_blocked(cell):
+		if not _cell_blocks_ground(cell):
 			return candidate
 	return position
+
+
+func _move_flying(position: Vector2, motion: Vector2) -> Vector2:
+	var candidate := position + motion
+	candidate.x = clampf(candidate.x, 0.2, float(GameConfig.GRID_COLUMNS) - 0.2)
+	candidate.y = clampf(candidate.y, 0.5, float(GameConfig.GRID_ROWS) - 0.5)
+	return candidate
+
+
+func _advance_direction(unit_index: int) -> Vector2:
+	var team := unit_teams[unit_index]
+	var position := unit_positions[unit_index]
+	var direction := Vector2.ZERO
+	if unit_kinds[unit_index] == UNIT_DRAGON:
+		var hq_id := enemy_hq_id if team == TEAM_ALLY else ally_hq_id
+		direction = position.direction_to(Vector2(_building_cell(hq_id)) + Vector2(0.5, 0.5))
+	else:
+		var cell := Vector2i(clampi(floori(position.x), 0, GameConfig.GRID_COLUMNS - 1), clampi(floori(position.y), 0, GameConfig.GRID_ROWS - 1))
+		direction = get_flow_direction(team, cell)
+		if direction == Vector2.ZERO:
+			direction = Vector2(0.0, -1.0 if team == TEAM_ALLY else 1.0)
+	return direction.rotated(unit_flow_bias_radians[unit_index])
+
+
+func _should_wait(unit_index: int, forward: Vector2) -> bool:
+	if forward.length_squared() <= 0.000001:
+		return false
+	var position := unit_positions[unit_index]
+	var probe := position + forward.normalized() * GameConfig.WAIT_CHECK_RADIUS
+	var team := unit_teams[unit_index]
+	var buckets := _enemy_buckets if team == TEAM_ENEMY else _ally_buckets
+	var cell := Vector2i(clampi(floori(probe.x), 0, GameConfig.GRID_COLUMNS - 1), clampi(floori(probe.y), 0, GameConfig.GRID_ROWS - 1))
+	for row in range(maxi(0, cell.y - 1), mini(GameConfig.GRID_ROWS - 1, cell.y + 1) + 1):
+		for column in range(maxi(0, cell.x - 1), mini(GameConfig.GRID_COLUMNS - 1, cell.x + 1) + 1):
+			for candidate_index in buckets[_cell_index(Vector2i(column, row))]:
+				if candidate_index == unit_index or unit_hp[candidate_index] <= 0.0 or unit_kinds[candidate_index] == UNIT_DRAGON:
+					continue
+				var offset := unit_positions[candidate_index] - position
+				if offset.dot(forward) <= 0.0 or probe.distance_to(unit_positions[candidate_index]) > GameConfig.WAIT_CHECK_RADIUS:
+					continue
+				if unit_velocities[candidate_index].length() <= GameConfig.WAIT_SLOW_SPEED:
+					return true
+	return false
+
+
+func _find_spawn_position(cell: Vector2i, team: int, flying: bool) -> Vector2:
+	var forward := -1 if team == TEAM_ALLY else 1
+	var candidates := [
+		cell + Vector2i(0, forward), cell + Vector2i(-1, forward), cell + Vector2i(1, forward),
+		cell + Vector2i(-1, 0), cell + Vector2i(1, 0), cell + Vector2i(0, -forward),
+	]
+	for candidate: Vector2i in candidates:
+		if _cell_is_valid(candidate) and (flying or not _cell_blocks_ground(candidate)):
+			return Vector2(candidate) + Vector2(0.5, 0.5)
+	return Vector2(-1.0, -1.0)
 
 
 func _assign_hq_fallback(team: int, position: Vector2) -> void:
@@ -590,6 +790,8 @@ func _remove_unit_at(index: int) -> void:
 		unit_speed_scales[index] = unit_speed_scales[last]
 		unit_lunge_timers[index] = unit_lunge_timers[last]
 		unit_lunge_directions[index] = unit_lunge_directions[last]
+		unit_velocities[index] = unit_velocities[last]
+		unit_flow_bias_radians[index] = unit_flow_bias_radians[last]
 	unit_ids.resize(last)
 	unit_teams.resize(last)
 	unit_kinds.resize(last)
@@ -602,6 +804,8 @@ func _remove_unit_at(index: int) -> void:
 	unit_speed_scales.resize(last)
 	unit_lunge_timers.resize(last)
 	unit_lunge_directions.resize(last)
+	unit_velocities.resize(last)
+	unit_flow_bias_radians.resize(last)
 
 
 func _rebuild_unit_index() -> void:
@@ -613,7 +817,14 @@ func _rebuild_unit_index() -> void:
 func _add_building(team: int, kind: int, cell: Vector2i, unit_kind: int) -> int:
 	var building_id := _next_building_id
 	_next_building_id += 1
-	var maximum_hp := GameConfig.HQ_MAX_HP if kind == BUILDING_HQ else GameConfig.SPAWNER_MAX_HP
+	var maximum_hp := GameConfig.HQ_MAX_HP
+	if kind == BUILDING_SPAWNER:
+		maximum_hp = GameConfig.SPAWNER_MAX_HP
+	elif kind == BUILDING_DEFENSE_TOWER:
+		maximum_hp = GameConfig.DEFENSE_TOWER_MAX_HP
+	elif kind == BUILDING_DRAGON_LAIR:
+		maximum_hp = GameConfig.DRAGON_LAIR_MAX_HP
+	var spawn_timer := GameConfig.DRAGON_PRODUCTION_INTERVAL if kind == BUILDING_DRAGON_LAIR else GameConfig.SPAWNER_PRODUCTION_INTERVAL
 	buildings.append({
 		"id": building_id,
 		"team": team,
@@ -622,7 +833,8 @@ func _add_building(team: int, kind: int, cell: Vector2i, unit_kind: int) -> int:
 		"cell": cell,
 		"hp": maximum_hp,
 		"max_hp": maximum_hp,
-		"spawn_timer": GameConfig.SPAWNER_PRODUCTION_INTERVAL,
+		"spawn_timer": spawn_timer,
+		"attack_cooldown": 0.0,
 		"destroyed": false,
 	})
 	return building_id
@@ -632,24 +844,60 @@ func _spawner_cost(unit_kind: int) -> int:
 	return GameConfig.RANGED_SPAWNER_COST if unit_kind == UNIT_RANGED else GameConfig.SPAWNER_COST
 
 
+func _build_cost(build_kind: int) -> int:
+	match build_kind:
+		BUILD_RANGED_SPAWNER:
+			return GameConfig.RANGED_SPAWNER_COST
+		BUILD_DEFENSE_TOWER:
+			return GameConfig.DEFENSE_TOWER_COST
+		BUILD_DRAGON_LAIR:
+			return GameConfig.DRAGON_LAIR_COST
+		_:
+			return GameConfig.SPAWNER_COST
+
+
 func _unit_max_hp(unit_kind: int) -> float:
+	if unit_kind == UNIT_DRAGON:
+		return GameConfig.DRAGON_UNIT_MAX_HP
 	return GameConfig.RANGED_UNIT_MAX_HP if unit_kind == UNIT_RANGED else GameConfig.UNIT_MAX_HP
 
 
 func _unit_speed(unit_kind: int) -> float:
+	if unit_kind == UNIT_DRAGON:
+		return GameConfig.DRAGON_UNIT_SPEED
 	return GameConfig.RANGED_UNIT_SPEED if unit_kind == UNIT_RANGED else GameConfig.UNIT_SPEED
 
 
 func _unit_attack_range(unit_kind: int) -> float:
+	if unit_kind == UNIT_DRAGON:
+		return GameConfig.DRAGON_UNIT_ATTACK_RANGE
 	return GameConfig.RANGED_UNIT_ATTACK_RANGE if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_RANGE
 
 
 func _unit_attack_damage(unit_kind: int) -> float:
+	if unit_kind == UNIT_DRAGON:
+		return GameConfig.DRAGON_UNIT_ATTACK_DAMAGE
 	return GameConfig.RANGED_UNIT_ATTACK_DAMAGE if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_DAMAGE
 
 
 func _unit_attack_interval(unit_kind: int) -> float:
+	if unit_kind == UNIT_DRAGON:
+		return GameConfig.DRAGON_UNIT_ATTACK_INTERVAL
 	return GameConfig.RANGED_UNIT_ATTACK_INTERVAL if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_INTERVAL
+
+
+func _inside_hq_build_zone(team: int, cell: Vector2i) -> bool:
+	var hq_cell := _building_cell(ally_hq_id if team == TEAM_ALLY else enemy_hq_id)
+	return absi(cell.x - hq_cell.x) <= 2 and absi(cell.y - hq_cell.y) <= 2
+
+
+func _building_cell(building_id: int) -> Vector2i:
+	var index := _building_index_from_id(building_id)
+	return Vector2i(buildings[index].cell) if index >= 0 else Vector2i(-1, -1)
+
+
+func _cell_blocks_ground(cell: Vector2i) -> bool:
+	return is_blocked(cell) or _building_at(cell) >= 0
 
 
 func _building_at(cell: Vector2i) -> int:

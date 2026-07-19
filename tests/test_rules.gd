@@ -64,7 +64,7 @@ func _test_config_values() -> void:
 	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_MAX_HP", -1.0)), 32.0), "ranged unit has 32 HP")
 	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_SPEED", -1.0)), 1.25), "ranged unit speed is 1.25")
 	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)), 2.40), "ranged unit attack range is 2.40")
-	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_DAMAGE", -1.0)), 1.00), "ranged unit damage is 1.00")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_DAMAGE", -1.0)), 1.20), "ranged unit damage is 1.20")
 	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_INTERVAL", -1.0)), 0.90), "ranged unit attack interval is 0.90 seconds")
 
 
@@ -176,9 +176,10 @@ func _test_simulation_contract() -> void:
 	_expect(fixed_simulation.unit_positions[0].y < 36.5, "two half ticks produce exactly one fixed simulation step")
 	var catch_up_simulation = _new_simulation()
 	catch_up_simulation.spawn_unit(catch_up_simulation.TEAM_ALLY, Vector2(4.5, 36.5))
+	var catch_up_start: Vector2 = catch_up_simulation.unit_positions[0]
 	catch_up_simulation.tick(1.0)
-	var expected_catch_up_y: float = 36.5 - catch_up_simulation.config.UNIT_SPEED * catch_up_simulation.unit_speed_scales[0] * 8.0 / 30.0
-	_expect(is_equal_approx(catch_up_simulation.unit_positions[0].y, expected_catch_up_y), "long frame performs at most eight fixed catch-up ticks")
+	var maximum_catch_up_distance: float = catch_up_simulation.config.UNIT_SPEED * catch_up_simulation.unit_speed_scales[0] * 8.0 / 30.0
+	_expect(catch_up_simulation.unit_positions[0].distance_to(catch_up_start) <= maximum_catch_up_distance + 0.001, "long frame performs at most eight inertial catch-up ticks")
 	_expect(is_equal_approx(catch_up_simulation.time_remaining, 180.0 - 8.0 / 30.0), "clock discards the same excess time as combat")
 
 
@@ -508,14 +509,15 @@ func _test_balance_paths() -> void:
 	var active_simulation = _new_simulation()
 	var build_row: int = active_simulation.config.GRID_ROWS - 8
 	for column in [7, 11, 15]:
-		_expect(active_simulation.try_build_spawner(active_simulation.TEAM_ALLY, Vector2i(column, build_row), active_simulation.UNIT_MELEE), "mixed route opens with three melee spawners")
+		_expect(active_simulation.try_build_spawner(active_simulation.TEAM_ALLY, Vector2i(column, build_row), active_simulation.UNIT_MELEE), "reinforced route opens with three melee spawners")
 	var active_elapsed := _run_complete_match(active_simulation, [
-		{"cell": Vector2i(4, build_row), "unit_kind": active_simulation.UNIT_RANGED},
+		{"cell": Vector2i(18, active_simulation.config.GRID_ROWS - 3), "build_kind": active_simulation.BUILD_RANGED_SPAWNER},
+		{"cell": Vector2i(4, active_simulation.config.GRID_ROWS - 3), "build_kind": active_simulation.BUILD_DRAGON_LAIR},
 	])
-	_expect(active_simulation.result == "VICTORY", "mixed melee/ranged spawners can push through and win")
+	_expect(active_simulation.result == "VICTORY", "reinforced ground spawners plus a dragon lair can push through and win")
 	_expect(passive_elapsed >= 120.0 and passive_elapsed <= 180.1, "unopposed red advance remains a two-to-three minute match (%.1fs)" % passive_elapsed)
 	_expect(active_elapsed >= 120.0 and active_elapsed <= 180.1, "reinforced blue victory remains a two-to-three minute match (%.1fs)" % active_elapsed)
-	print("BALANCE PATHS: no_spawner=%.1fs %s blue_share=%.2f blue_hq=%.0f mixed_spawners=%.1fs %s blue_share=%.2f red_hq=%.0f" % [
+	print("BALANCE PATHS: no_spawner=%.1fs %s blue_share=%.2f blue_hq=%.0f mixed_spawners=%.1fs %s blue_share=%.2f red_hq=%.0f dragons=%d" % [
 		passive_elapsed,
 		passive_simulation.result,
 		passive_simulation.get_occupancy(passive_simulation.TEAM_ALLY),
@@ -524,6 +526,7 @@ func _test_balance_paths() -> void:
 		active_simulation.result,
 		active_simulation.get_occupancy(active_simulation.TEAM_ALLY),
 		_building_hp(active_simulation, active_simulation.enemy_hq_id),
+		active_simulation.unit_kinds.count(active_simulation.UNIT_DRAGON),
 	])
 
 
@@ -536,9 +539,9 @@ func _run_complete_match(simulation, delayed_builds: Array = []) -> float:
 		simulation.tick(fixed_delta)
 		if next_build < delayed_builds.size():
 			var build: Dictionary = delayed_builds[next_build]
-			var unit_kind: int = int(build.unit_kind)
-			var cost: int = simulation.config.RANGED_SPAWNER_COST if unit_kind == simulation.UNIT_RANGED else simulation.config.SPAWNER_COST
-			if simulation.ally_gold >= cost and simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(build.cell), unit_kind):
+			var build_kind: int = int(build.get("build_kind", simulation.BUILD_RANGED_SPAWNER if int(build.get("unit_kind", simulation.UNIT_MELEE)) == simulation.UNIT_RANGED else simulation.BUILD_MELEE_SPAWNER))
+			var cost: int = simulation._build_cost(build_kind)
+			if simulation.ally_gold >= cost and simulation.try_build(simulation.TEAM_ALLY, Vector2i(build.cell), build_kind):
 				next_build += 1
 	return simulation.config.MATCH_DURATION - simulation.time_remaining
 

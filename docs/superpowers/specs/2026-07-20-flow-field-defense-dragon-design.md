@@ -29,7 +29,7 @@ This is preferable to per-unit A* because hundreds of units share the same desti
 
 ## View and feedback
 
-- Raise `MAP_ZOOM_MAX` to 8.0 while retaining pinch, wheel, focus preservation, and pan clamping.
+- Raise `MAP_ZOOM_MAX` to 16.0 while retaining pinch, wheel, focus preservation, and pan clamping. Procedural geometry stays crisp at this extreme close-up.
 - Building silhouettes distinguish HQ, conventional spawner, turret, and winged dragon lair.
 - Dragon batches use the existing MultiMesh renderer; no unit nodes are introduced.
 - Tower shots use a bright tracer event. WAIT units are visually dimmed, and dragons use a brighter gold-accented team color.

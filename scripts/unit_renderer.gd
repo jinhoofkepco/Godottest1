@@ -6,6 +6,8 @@ const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const UNIT_MELEE := 0
 const UNIT_RANGED := 1
+const UNIT_DRAGON := 2
+const STATE_WAIT := 2
 
 var _grid: GridBoard
 var _simulation
@@ -13,6 +15,8 @@ var _enemy_melee_units: MultiMeshInstance2D
 var _enemy_ranged_units: MultiMeshInstance2D
 var _ally_melee_units: MultiMeshInstance2D
 var _ally_ranged_units: MultiMeshInstance2D
+var _enemy_dragons: MultiMeshInstance2D
+var _ally_dragons: MultiMeshInstance2D
 
 
 func _ready() -> void:
@@ -20,10 +24,13 @@ func _ready() -> void:
 	z_index = 40
 	var melee_mesh := _make_melee_mesh()
 	var ranged_mesh := _make_ranged_mesh()
+	var dragon_mesh := _make_dragon_mesh()
 	_enemy_melee_units = _make_batch("EnemyMeleeUnits", melee_mesh)
 	_enemy_ranged_units = _make_batch("EnemyRangedUnits", ranged_mesh)
 	_ally_melee_units = _make_batch("AllyMeleeUnits", melee_mesh)
 	_ally_ranged_units = _make_batch("AllyRangedUnits", ranged_mesh)
+	_enemy_dragons = _make_batch("EnemyDragons", dragon_mesh)
+	_ally_dragons = _make_batch("AllyDragons", dragon_mesh)
 
 
 func setup(board: GridBoard, simulation) -> void:
@@ -38,6 +45,8 @@ func get_multimesh_count() -> int:
 		+ int(_enemy_ranged_units != null)
 		+ int(_ally_melee_units != null)
 		+ int(_ally_ranged_units != null)
+		+ int(_enemy_dragons != null)
+		+ int(_ally_dragons != null)
 	)
 
 
@@ -48,6 +57,8 @@ func sync() -> void:
 	_sync_batch(_enemy_ranged_units, TEAM_ENEMY, UNIT_RANGED)
 	_sync_batch(_ally_melee_units, TEAM_ALLY, UNIT_MELEE)
 	_sync_batch(_ally_ranged_units, TEAM_ALLY, UNIT_RANGED)
+	_sync_batch(_enemy_dragons, TEAM_ENEMY, UNIT_DRAGON)
+	_sync_batch(_ally_dragons, TEAM_ALLY, UNIT_DRAGON)
 	queue_redraw()
 
 
@@ -79,6 +90,15 @@ func _make_ranged_mesh() -> ArrayMesh:
 		Vector2(-6, 8), Vector2(6, 8), Vector2(6, -1), Vector2(13, -4),
 		Vector2(13, -7), Vector2(5, -7), Vector2(4, -12), Vector2(0, -16),
 		Vector2(-4, -12), Vector2(-5, -7), Vector2(-8, -4), Vector2(-6, -1),
+	])
+	return _make_mesh(silhouette)
+
+
+func _make_dragon_mesh() -> ArrayMesh:
+	var silhouette := PackedVector2Array([
+		Vector2(-3, 8), Vector2(3, 8), Vector2(5, 1), Vector2(17, 5),
+		Vector2(10, -4), Vector2(17, -10), Vector2(4, -7), Vector2(0, -17),
+		Vector2(-4, -7), Vector2(-17, -10), Vector2(-10, -4), Vector2(-17, 5), Vector2(-5, 1),
 	])
 	return _make_mesh(silhouette)
 
@@ -121,8 +141,12 @@ func get_unit_color(team: int, unit_kind: int, unit_state: int) -> Color:
 	var color := GameConfig.COLOR_ALLY.lightened(0.28) if team == TEAM_ALLY else GameConfig.COLOR_ENEMY.lightened(0.18)
 	if unit_kind == UNIT_RANGED:
 		color = color.lerp(GameConfig.COLOR_TEAL, 0.38).lightened(0.08)
+	elif unit_kind == UNIT_DRAGON:
+		color = color.lerp(GameConfig.COLOR_ORANGE, 0.48).lightened(0.14)
 	if unit_state == 0:
 		color = color.darkened(0.12)
+	elif unit_state == STATE_WAIT:
+		color = color.darkened(0.34)
 	return color
 
 
@@ -143,7 +167,11 @@ func _draw() -> void:
 	if not is_instance_valid(_grid) or _simulation == null:
 		return
 	for index in _simulation.unit_ids.size():
-		var maximum_hp := GameConfig.RANGED_UNIT_MAX_HP if _simulation.unit_kinds[index] == UNIT_RANGED else GameConfig.UNIT_MAX_HP
+		var maximum_hp := GameConfig.UNIT_MAX_HP
+		if _simulation.unit_kinds[index] == UNIT_RANGED:
+			maximum_hp = GameConfig.RANGED_UNIT_MAX_HP
+		elif _simulation.unit_kinds[index] == UNIT_DRAGON:
+			maximum_hp = GameConfig.DRAGON_UNIT_MAX_HP
 		var ratio := clampf(_simulation.unit_hp[index] / maximum_hp, 0.0, 1.0)
 		if ratio >= 0.995:
 			continue

@@ -75,11 +75,11 @@ func _test_scene_contract(tree: SceneTree, main_scene: PackedScene) -> void:
 	await tree.process_frame
 	_expect(main.simulation != null and main.simulation is RefCounted, "main owns one data simulation")
 	_expect(main.unit_renderer != null, "main owns batched unit renderer")
-	_expect(main.unit_renderer.get_multimesh_count() == 4, "renderer uses four team-by-kind MultiMesh batches")
+	_expect(main.unit_renderer.get_multimesh_count() == 6, "renderer uses six team-by-kind MultiMesh batches including dragons")
 	_expect(main.simulation.unit_ids.is_empty(), "units begin as data, not child nodes")
 	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 32.5))
 	main.unit_renderer.sync()
-	_expect(main.unit_renderer.get_child_count() == 4, "spawning data never creates a per-unit child node")
+	_expect(main.unit_renderer.get_child_count() == 6, "spawning data never creates a per-unit child node")
 	_expect(main.buildings_layer.y_sort_enabled, "low-count building layer uses y sorting")
 	_expect(main.fx.z_index > main.unit_renderer.z_index, "FX overlay stays above units and buildings")
 	_expect(main.grid.world_to_cell(main.grid.cell_to_world(Vector2i(3, 35))) == Vector2i(3, 35), "isometric center picking remains exact")
@@ -179,7 +179,7 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	}])
 	var after_tracers: int = int(main.fx.get("ranged_shot_feedback_count")) if fx_properties.has("ranged_shot_feedback_count") else -1
 	_expect(before_tracers >= 0 and after_tracers == before_tracers + 1, "ranged shot events route to a distinct tracer effect")
-	_expect(main.unit_renderer.get_child_count() == 4, "mixed melee and ranged armies still create no per-unit nodes")
+	_expect(main.unit_renderer.get_child_count() == 6, "mixed ground and dragon armies still create no per-unit nodes")
 	main.queue_free()
 	await tree.process_frame
 
@@ -216,7 +216,7 @@ func _test_map_view_transform_and_input(tree: SceneTree, main_scene: PackedScene
 	_expect(map_view.to_global(focus_local).distance_to(focus_screen) <= 0.25, "zoom preserves the exact transformed focus point within a quarter pixel")
 	_expect(map_view.screen_to_cell(focus_screen) == focus_cell, "zooming around a tile keeps exact transformed picking under the focus")
 	map_view.set_zoom_at(99.0, focus_screen)
-	_expect(is_equal_approx(float(map_view.zoom_level), 2.5), "zoom clamps to 2.5x maximum")
+	_expect(is_equal_approx(float(map_view.zoom_level), GameConfig.MAP_ZOOM_MAX), "zoom clamps to configured deep maximum")
 	map_view.set_zoom_at(0.01, focus_screen)
 	_expect(is_equal_approx(float(map_view.zoom_level), 1.0), "zoom clamps to 1.0x minimum")
 	map_view.set_zoom_at(1.35, frame_rect.get_center())
@@ -427,15 +427,16 @@ func _test_hud_spawner_selection(tree: SceneTree, main_scene: PackedScene) -> vo
 	tree.root.add_child(main)
 	await tree.process_frame
 	var hud_properties := _property_names(main.hud)
-	_expect(hud_properties.has("melee_button") and hud_properties.has("ranged_button"), "HUD exposes clearly labeled melee and ranged selectors")
-	if not hud_properties.has("melee_button") or not hud_properties.has("ranged_button"):
+	_expect(hud_properties.has("melee_button") and hud_properties.has("ranged_button") and hud_properties.has("tower_button") and hud_properties.has("dragon_button"), "HUD exposes all four build selectors")
+	if not hud_properties.has("melee_button") or not hud_properties.has("ranged_button") or not hud_properties.has("tower_button") or not hud_properties.has("dragon_button"):
 		main.queue_free()
 		await tree.process_frame
 		return
-	_expect(main.hud.melee_button.text == "MELEE 60" and main.hud.ranged_button.text == "RANGED 80", "HUD selectors show both spawner costs")
-	_expect(main.selected_unit_kind == main.simulation.UNIT_MELEE, "melee is selected by default")
+	_expect(main.hud.melee_button.text == "MELEE 60" and main.hud.ranged_button.text == "RANGED 80", "HUD selectors show both ground spawner costs")
+	_expect(main.hud.tower_button.text == "TOWER 120" and main.hud.dragon_button.text == "DRAGON 220", "HUD selectors show tower and dragon costs")
+	_expect(main.selected_build_kind == main.simulation.BUILD_MELEE_SPAWNER, "melee is selected by default")
 	main.hud.ranged_button.pressed.emit()
-	_expect(main.selected_unit_kind == main.simulation.UNIT_RANGED, "ranged HUD selection updates only the requested build kind")
+	_expect(main.selected_build_kind == main.simulation.BUILD_RANGED_SPAWNER, "ranged HUD selection updates only the requested build kind")
 	var ranged_cell := Vector2i(6, 36)
 	var tap_screen: Vector2 = main.map_view.to_global(main.grid.cell_to_world(ranged_cell))
 	var press := InputEventMouseButton.new()
@@ -449,6 +450,10 @@ func _test_hud_spawner_selection(tree: SceneTree, main_scene: PackedScene) -> vo
 	_expect(Vector2i(placed.cell) == ranged_cell and int(placed.unit_kind) == main.simulation.UNIT_RANGED, "selected ranged kind routes through the next exact tile tap")
 	_expect(main.simulation.ally_gold == GameConfig.START_GOLD - GameConfig.RANGED_SPAWNER_COST, "ranged placement spends 80 gold")
 	_expect("RANGED" in main.hud.message_label.text, "placement feedback names the selected spawner type")
+	main.hud.tower_button.pressed.emit()
+	_expect(main.selected_build_kind == main.simulation.BUILD_DEFENSE_TOWER, "tower HUD selection routes to the defense build kind")
+	main.hud.dragon_button.pressed.emit()
+	_expect(main.selected_build_kind == main.simulation.BUILD_DRAGON_LAIR, "dragon HUD selection routes to the lair build kind")
 	main.queue_free()
 	await tree.process_frame
 

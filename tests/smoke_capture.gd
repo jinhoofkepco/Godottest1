@@ -7,6 +7,7 @@ const OUTPUTS := [
 	"res://build/smoke_disadvantage.png",
 	"res://build/smoke_cluster.png",
 	"res://build/smoke_persistent_flank.png",
+	"res://build/smoke_flow_split.png",
 ]
 
 
@@ -44,7 +45,7 @@ func _run() -> void:
 			return
 		main.queue_free()
 		await process_frame
-	print("SMOKE CAPTURE PASS: opening / blue advantage / blue disadvantage / frontline cluster / persistent flank (540x960)")
+	print("SMOKE CAPTURE PASS: opening / blue advantage / blue disadvantage / frontline cluster / persistent flank / flow split (540x960)")
 	quit(0)
 
 
@@ -55,6 +56,9 @@ func _stage_scenario(main: Node, scenario: int) -> bool:
 		var enemy_spawner := Vector2i(GameConfig.GRID_COLUMNS - 7, 7)
 		simulation.try_build_spawner(simulation.TEAM_ALLY, ally_spawner, simulation.UNIT_MELEE)
 		simulation.add_building(simulation.TEAM_ENEMY, simulation.BUILDING_SPAWNER, enemy_spawner, simulation.UNIT_RANGED)
+		simulation.add_building(simulation.TEAM_ALLY, simulation.BUILDING_DEFENSE_TOWER, Vector2i(GameConfig.GRID_COLUMNS / 2 - 2, GameConfig.GRID_ROWS - 3))
+		simulation.add_building(simulation.TEAM_ALLY, simulation.BUILDING_DRAGON_LAIR, Vector2i(GameConfig.GRID_COLUMNS / 2 + 4, GameConfig.GRID_ROWS - 7), simulation.UNIT_DRAGON)
+		_spawn_if_clear(simulation, simulation.TEAM_ALLY, Vector2i(GameConfig.GRID_COLUMNS / 2 + 4, GameConfig.GRID_ROWS - 9), simulation.UNIT_DRAGON)
 		for column in range(1, GameConfig.GRID_COLUMNS, 4):
 			_spawn_if_clear(simulation, simulation.TEAM_ENEMY, Vector2i(column, 11), simulation.UNIT_MELEE)
 			_spawn_if_clear(simulation, simulation.TEAM_ALLY, Vector2i(column, GameConfig.GRID_ROWS - 12), simulation.UNIT_RANGED)
@@ -80,8 +84,10 @@ func _stage_scenario(main: Node, scenario: int) -> bool:
 		_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 8), 1.85)
 	elif scenario == 3:
 		_stage_frontline_cluster(main)
-	else:
+	elif scenario == 4:
 		return _stage_persistent_flank(main)
+	else:
+		return _stage_flow_split(main)
 	return true
 
 
@@ -128,6 +134,27 @@ func _stage_persistent_flank(main: Node) -> bool:
 	main.hud.show_message("PERSISTENT FLANK HELD", GameConfig.COLOR_TEAL)
 	_focus_map(main, Vector2i(7, 15), 1.8)
 	return true
+
+
+func _stage_flow_split(main: Node) -> bool:
+	var simulation = main.simulation
+	var wall_row: int = GameConfig.GRID_ROWS / 2
+	for column in GameConfig.GRID_COLUMNS:
+		simulation.blocked[wall_row * GameConfig.GRID_COLUMNS + column] = 0 if column in [5, 16] else 1
+	for rank in 5:
+		for column in range(2, 20, 2):
+			_spawn_if_clear(simulation, simulation.TEAM_ALLY, Vector2i(column, wall_row + 3 + rank), simulation.UNIT_MELEE)
+	for rank in 4:
+		_spawn_if_clear(simulation, simulation.TEAM_ALLY, Vector2i(5, wall_row + 1 + rank), simulation.UNIT_MELEE)
+	for column in range(3, 20, 3):
+		_spawn_if_clear(simulation, simulation.TEAM_ENEMY, Vector2i(column, wall_row - 4), simulation.UNIT_RANGED)
+	simulation.rebuild_flow_fields()
+	for tick_index in 90:
+		simulation.tick(1.0 / float(GameConfig.SIM_TICK_RATE))
+	main.hud.show_message("FLOW SPLIT // CONGESTION REROUTE", GameConfig.COLOR_TEAL)
+	main.fx.show_territory_change(Vector2i(16, wall_row), simulation.TEAM_ALLY)
+	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, wall_row), 2.25)
+	return simulation.ally_flow.cost_at(Vector2i(11, wall_row + 4)) < INF
 
 
 func _spawn_if_clear(simulation, team: int, cell: Vector2i, unit_kind: int) -> void:

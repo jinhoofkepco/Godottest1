@@ -16,7 +16,7 @@ const BuildingViewScene = preload("res://scenes/battle_building.tscn")
 var simulation: BattleSimulation
 var building_views: Dictionary = {}
 var game_result := ""
-var selected_unit_kind := BattleSimulationScript.UNIT_MELEE
+var selected_build_kind := BattleSimulationScript.BUILD_MELEE_SPAWNER
 
 
 func _ready() -> void:
@@ -36,7 +36,7 @@ func _ready() -> void:
 	_update_hud()
 	map_view.tile_tapped.connect(try_build_spawner)
 	hud.restart_pressed.connect(_restart)
-	hud.spawner_kind_selected.connect(_on_spawner_kind_selected)
+	hud.build_kind_selected.connect(_on_build_kind_selected)
 	hud.show_message("FRONTLINE ACTIVE", GameConfig.COLOR_TEXT)
 	queue_redraw()
 
@@ -52,15 +52,15 @@ func _process(delta: float) -> void:
 
 
 func try_build_spawner(cell: Vector2i) -> bool:
-	var valid := game_result == "" and simulation.try_build_spawner(simulation.TEAM_ALLY, cell, selected_unit_kind)
+	var valid := game_result == "" and simulation.try_build(simulation.TEAM_ALLY, cell, selected_build_kind)
 	fx.show_placement(cell, valid)
 	if valid:
 		_sync_building_views()
 		grid.queue_redraw()
 		_update_hud()
-		hud.show_message("BLUE %s SPAWNER DEPLOYED" % _unit_kind_name(selected_unit_kind), GameConfig.COLOR_ALLY)
+		hud.show_message("BLUE %s DEPLOYED" % _build_kind_name(selected_build_kind), GameConfig.COLOR_ALLY)
 	else:
-		hud.show_message("%s BUILD BLOCKED" % _unit_kind_name(selected_unit_kind), GameConfig.COLOR_ENEMY.lightened(0.25))
+		hud.show_message("%s BUILD BLOCKED" % _build_kind_name(selected_build_kind), GameConfig.COLOR_ENEMY.lightened(0.25))
 	return valid
 
 
@@ -85,6 +85,8 @@ func _consume_events(events: Array) -> void:
 				fx.show_hit(Vector2(event.position))
 			"ranged_shot":
 				fx.show_ranged_shot(Vector2(event.origin), Vector2(event.position), int(event.team))
+			"tower_shot":
+				fx.show_ranged_shot(Vector2(event.origin), Vector2(event.position), int(event.team))
 			"unit_death":
 				fx.show_unit_death(Vector2(event.position), int(event.team))
 			"unit_produced":
@@ -104,11 +106,10 @@ func _consume_events(events: Array) -> void:
 			"territory_changed":
 				fx.show_territory_change(Vector2i(event.cell), int(event.team))
 				grid.queue_redraw()
-			"spawner_built":
+			"building_built":
 				var team := int(event.team)
-				var unit_kind := _building_unit_kind(int(event.building_id))
 				hud.show_message(
-					"%s %s SPAWNER ONLINE" % ["BLUE" if team == simulation.TEAM_ALLY else "RED", _unit_kind_name(unit_kind)],
+					"%s %s ONLINE" % ["BLUE" if team == simulation.TEAM_ALLY else "RED", _building_kind_name(int(event.kind), int(event.unit_kind))],
 					GameConfig.COLOR_ALLY if team == simulation.TEAM_ALLY else GameConfig.COLOR_ENEMY
 				)
 
@@ -171,19 +172,34 @@ func _finish_match(value: String) -> void:
 	hud.show_result(value)
 
 
-func _building_unit_kind(building_id: int) -> int:
-	for building in simulation.buildings:
-		if int(building.id) == building_id:
-			return int(building.unit_kind)
-	return simulation.UNIT_MELEE
-
-
 func _unit_kind_name(unit_kind: int) -> String:
+	if unit_kind == simulation.UNIT_DRAGON:
+		return "DRAGON"
 	return "RANGED" if unit_kind == simulation.UNIT_RANGED else "MELEE"
 
 
-func _on_spawner_kind_selected(unit_kind: int) -> void:
-	selected_unit_kind = unit_kind
+func _build_kind_name(build_kind: int) -> String:
+	match build_kind:
+		simulation.BUILD_RANGED_SPAWNER:
+			return "RANGED SPAWNER"
+		simulation.BUILD_DEFENSE_TOWER:
+			return "DEFENSE TOWER"
+		simulation.BUILD_DRAGON_LAIR:
+			return "DRAGON LAIR"
+		_:
+			return "MELEE SPAWNER"
+
+
+func _building_kind_name(kind: int, unit_kind: int) -> String:
+	if kind == simulation.BUILDING_DEFENSE_TOWER:
+		return "DEFENSE TOWER"
+	if kind == simulation.BUILDING_DRAGON_LAIR:
+		return "DRAGON LAIR"
+	return "%s SPAWNER" % _unit_kind_name(unit_kind)
+
+
+func _on_build_kind_selected(build_kind: int) -> void:
+	selected_build_kind = build_kind
 
 
 func _restart() -> void:
