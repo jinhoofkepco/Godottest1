@@ -156,8 +156,11 @@ func _test_trauma_shake(tree: SceneTree) -> void:
 		maximum_normal_offset = maxf(maximum_normal_offset, fx.get_screen_shake_offset().length())
 	_expect(maximum_normal_offset <= 3.001, "continuous HQ hits stay within three screen pixels")
 	_expect(fx.trauma < 0.25, "trauma decays over time")
-	fx.show_hq_hit(Vector2i(5, 21), 2)
-	_expect(fx.trauma <= 1.0, "trauma remains capped at one")
+	for hit_index in 16:
+		fx._process(0.5)
+		fx.show_hq_hit(Vector2i(5, 21), 2)
+		_expect(fx.trauma <= 1.0, "repeated HQ hits keep trauma capped at one")
+		_expect(fx.get_screen_shake_offset().length() <= 3.001, "repeated ordinary hits never exceed three screen pixels")
 	fx.show_hq_destroyed(Vector2i(5, 21), 2)
 	var maximum_major_offset := 0.0
 	for sample in 24:
