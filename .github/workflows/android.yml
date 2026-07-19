@@ -40,6 +40,7 @@ jobs:
       # the Android build template. Its final internal export is release-mode.
       - name: Set up Godot Android export environment
         uses: dulvui/godot-android-export@v4.1.0
+        continue-on-error: true # The archived action hardcodes an unused release export.
         with:
           godot-version: 4.5
           godot-channel: stable
