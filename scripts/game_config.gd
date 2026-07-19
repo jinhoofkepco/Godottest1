@@ -2,8 +2,8 @@ class_name GameConfig
 extends RefCounted
 
 const VIEW_SIZE := Vector2i(540, 960)
-const GRID_COLUMNS := 9
-const GRID_ROWS := 14
+const GRID_COLUMNS := 11
+const GRID_ROWS := 22
 const CELL_SIZE := 54.0
 const GRID_ORIGIN := Vector2(27, 108)
 const ISO_TILE_WIDTH := 64.0
@@ -12,13 +12,33 @@ const WORLD_FRAME_MARGIN := 14.0
 const WORLD_FRAME_TOP := 112.0
 const WORLD_FRAME_BOTTOM := 24.0
 const CORE_ANCHOR_GAP := 28.0
-const ENEMY_ZONE_ROWS := 3
-const ALLY_BUILD_START_ROW := 5
-const CORE_ROW := 13
+const ENEMY_ZONE_ROWS := 11
+const ALLY_BUILD_START_ROW := 11
+const CORE_ROW := 21
 
-const START_GOLD := 150
+const SIM_TICK_RATE := 30
+const MATCH_DURATION := 180.0
+const OCCUPANCY_WIN_RATIO := 0.9
+
+const START_GOLD := 180
+const ENEMY_START_GOLD := 120
+const SPAWNER_COST := 60
+const PASSIVE_INCOME_PER_SECOND := 3.0
+const KILL_REWARD := 6
+const ENEMY_BUILD_INTERVAL := 14.0
+const ENEMY_MAX_SPAWNERS := 4
+
+const UNIT_MAX_HP := 48.0
+const UNIT_SPEED := 1.45
+const UNIT_ATTACK_RANGE := 0.72
+const UNIT_ATTACK_DAMAGE := 10.0
+const UNIT_ATTACK_INTERVAL := 0.65
+const SPAWNER_MAX_HP := 240.0
+const SPAWNER_PRODUCTION_INTERVAL := 2.6
+const HQ_MAX_HP := 1200.0
+
+# Legacy constants remain until the old TD scenes are removed later in the pivot.
 const TOWER_COST := 50
-const KILL_REWARD := 10
 const WAVE_REWARD := 25
 const CORE_MAX_HP := 20
 const TOTAL_WAVES := 5
