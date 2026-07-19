@@ -15,7 +15,6 @@ const BuildingViewScene = preload("res://scenes/battle_building.tscn")
 var simulation: BattleSimulation
 var building_views: Dictionary = {}
 var game_result := ""
-var _world_base_position := Vector2.ZERO
 
 
 func _ready() -> void:
@@ -40,8 +39,6 @@ func _draw() -> void:
 func _process(delta: float) -> void:
 	if simulation != null and game_result == "":
 		step_simulation(delta)
-	if is_instance_valid(fx):
-		world.position = _world_base_position + fx.get_screen_shake_offset()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -87,6 +84,8 @@ func _consume_events(events: Array) -> void:
 		match event_type:
 			"hit":
 				fx.show_hit(Vector2(event.position))
+			"ranged_shot":
+				fx.show_ranged_shot(Vector2(event.origin), Vector2(event.position), int(event.team))
 			"unit_death":
 				fx.show_unit_death(Vector2(event.position), int(event.team))
 			"unit_produced":
@@ -177,11 +176,10 @@ func _frame_world() -> void:
 	)
 	var frame_scale := minf(frame_size.x / board_bounds.size.x, frame_size.y / board_bounds.size.y)
 	world.scale = Vector2.ONE * frame_scale
-	_world_base_position = Vector2(
+	world.position = Vector2(
 		(float(GameConfig.VIEW_SIZE.x) - board_bounds.size.x * frame_scale) * 0.5 - board_bounds.position.x * frame_scale,
 		frame_top + (frame_size.y - board_bounds.size.y * frame_scale) * 0.5 - board_bounds.position.y * frame_scale
 	)
-	world.position = _world_base_position
 
 
 func _restart() -> void:

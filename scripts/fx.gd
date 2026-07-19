@@ -12,6 +12,7 @@ const DARK_DEBRIS := Color("182033")
 
 @export var placement_duration := 0.42
 @export var hit_duration := 0.18
+@export var ranged_shot_duration := 0.12
 @export var death_duration := 0.42
 @export var production_duration := 0.58
 @export var building_hit_duration := 0.28
@@ -19,15 +20,10 @@ const DARK_DEBRIS := Color("182033")
 @export var territory_duration := 0.62
 @export var hq_hit_duration := 0.48
 @export var fragment_count := 7
-@export var hq_hit_trauma := 0.25
-@export var trauma_decay_per_second := 0.35
-@export var hq_retrigger_interval := 0.5
-@export var normal_shake_max_offset := 3.0
-@export var major_shake_max_offset := 6.0
-@export var major_shake_duration := 0.4
 
 var placement_feedback_count := 0
 var hit_feedback_count := 0
+var ranged_shot_feedback_count := 0
 var unit_death_feedback_count := 0
 var production_feedback_count := 0
 var spawner_hit_feedback_count := 0
@@ -38,15 +34,11 @@ var hq_destroyed_feedback_count := 0
 var last_feedback_mode := ""
 var last_placement_cell := Vector2i(-1, -1)
 var last_placement_valid := false
-var trauma := 0.0
 
 var _grid: GridBoard
 var _effects: Array[Dictionary] = []
 var _fragments: Array[Dictionary] = []
 var _rng := RandomNumberGenerator.new()
-var _hq_retrigger_left := 0.0
-var _major_shake_left := 0.0
-var _shake_time := 0.0
 
 
 func _ready() -> void:
@@ -73,6 +65,12 @@ func show_hit(grid_position: Vector2) -> void:
 	_add_effect("hit", grid_position, 0, hit_duration)
 	hit_feedback_count += 1
 	last_feedback_mode = "hit"
+
+
+func show_ranged_shot(origin: Vector2, grid_position: Vector2, team: int) -> void:
+	_add_effect("ranged_shot", grid_position, team, ranged_shot_duration, {"origin": origin})
+	ranged_shot_feedback_count += 1
+	last_feedback_mode = "ranged_shot"
 
 
 func show_unit_death(grid_position: Vector2, team: int) -> void:
@@ -109,33 +107,14 @@ func show_territory_change(cell: Vector2i, team: int) -> void:
 
 func show_hq_hit(cell: Vector2i, team: int) -> void:
 	_add_effect("hq_hit", cell, team, hq_hit_duration)
-	if _hq_retrigger_left <= 0.0:
-		trauma = minf(1.0, trauma + hq_hit_trauma)
-		_hq_retrigger_left = hq_retrigger_interval
 	hq_hit_feedback_count += 1
 	last_feedback_mode = "hq_hit"
 
 
 func show_hq_destroyed(cell: Vector2i, team: int) -> void:
 	_add_effect("hq_hit", cell, team, hq_hit_duration)
-	_major_shake_left = major_shake_duration
-	trauma = minf(1.0, maxf(trauma, 0.6))
 	hq_destroyed_feedback_count += 1
 	last_feedback_mode = "hq_destroyed"
-
-
-func get_screen_shake_offset() -> Vector2:
-	var normal_amplitude := normal_shake_max_offset * trauma * trauma
-	var major_ratio := clampf(_major_shake_left / maxf(major_shake_duration, 0.001), 0.0, 1.0)
-	var major_amplitude := major_shake_max_offset * major_ratio * major_ratio
-	var amplitude := maxf(normal_amplitude, major_amplitude)
-	if amplitude <= 0.001:
-		return Vector2.ZERO
-	var wave := Vector2(
-		sin(_shake_time * TAU * 6.7 + 0.23),
-		sin(_shake_time * TAU * 4.9 + 1.61)
-	)
-	return wave.normalized() * amplitude
 
 
 func _add_effect(kind: String, grid_position: Variant, team: int, duration: float, extras: Dictionary = {}) -> void:
@@ -175,10 +154,6 @@ func _spawn_fragments(
 
 
 func _process(delta: float) -> void:
-	_shake_time += delta
-	_hq_retrigger_left = maxf(0.0, _hq_retrigger_left - delta)
-	_major_shake_left = maxf(0.0, _major_shake_left - delta)
-	trauma = maxf(0.0, trauma - trauma_decay_per_second * delta)
 	for index in range(_effects.size() - 1, -1, -1):
 		var effect := _effects[index]
 		effect["life"] = float(effect.life) - delta
@@ -206,6 +181,8 @@ func _draw() -> void:
 				_draw_placement(effect)
 			"hit":
 				_draw_hit(effect)
+			"ranged_shot":
+				_draw_ranged_shot(effect)
 			"unit_death":
 				_draw_unit_death(effect)
 			"production":
@@ -248,6 +225,16 @@ func _draw_hit(effect: Dictionary) -> void:
 		var outer := at + direction * (10.0 + 13.0 * (1.0 - ratio))
 		draw_line(inner, outer, Color(HIT_WHITE, ratio), 3.0, true)
 	draw_circle(at, 5.0 * ratio, Color(GameConfig.COLOR_ORANGE, ratio))
+
+
+func _draw_ranged_shot(effect: Dictionary) -> void:
+	var origin := _screen_position(Vector2(effect.origin)) + Vector2(0, -17)
+	var target := _screen_position(Vector2(effect.grid_position)) + Vector2(0, -17)
+	var ratio := _life_ratio(effect)
+	var color := _team_color(int(effect.team)).lightened(0.45)
+	draw_line(origin, target, Color(color, ratio * 0.7), 5.0, true)
+	draw_line(origin, target, Color(HIT_WHITE, ratio), 2.0, true)
+	draw_circle(target, 2.5, Color(HIT_WHITE, ratio))
 
 
 func _draw_unit_death(effect: Dictionary) -> void:

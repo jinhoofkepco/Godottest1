@@ -4,19 +4,26 @@ extends Node2D
 const GameConfig = preload("res://scripts/game_config.gd")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
+const UNIT_MELEE := 0
+const UNIT_RANGED := 1
 
 var _grid: GridBoard
 var _simulation
-var _red_units: MultiMeshInstance2D
-var _blue_units: MultiMeshInstance2D
+var _enemy_melee_units: MultiMeshInstance2D
+var _enemy_ranged_units: MultiMeshInstance2D
+var _ally_melee_units: MultiMeshInstance2D
+var _ally_ranged_units: MultiMeshInstance2D
 
 
 func _ready() -> void:
 	z_as_relative = false
 	z_index = 40
-	var soldier_mesh := _make_soldier_mesh()
-	_red_units = _make_team_multimesh("RedUnits", soldier_mesh)
-	_blue_units = _make_team_multimesh("BlueUnits", soldier_mesh)
+	var melee_mesh := _make_melee_mesh()
+	var ranged_mesh := _make_ranged_mesh()
+	_enemy_melee_units = _make_batch("EnemyMeleeUnits", melee_mesh)
+	_enemy_ranged_units = _make_batch("EnemyRangedUnits", ranged_mesh)
+	_ally_melee_units = _make_batch("AllyMeleeUnits", melee_mesh)
+	_ally_ranged_units = _make_batch("AllyRangedUnits", ranged_mesh)
 
 
 func setup(board: GridBoard, simulation) -> void:
@@ -26,18 +33,25 @@ func setup(board: GridBoard, simulation) -> void:
 
 
 func get_multimesh_count() -> int:
-	return int(_red_units != null) + int(_blue_units != null)
+	return (
+		int(_enemy_melee_units != null)
+		+ int(_enemy_ranged_units != null)
+		+ int(_ally_melee_units != null)
+		+ int(_ally_ranged_units != null)
+	)
 
 
 func sync() -> void:
-	if not is_instance_valid(_grid) or _simulation == null or _red_units == null:
+	if not is_instance_valid(_grid) or _simulation == null or _enemy_melee_units == null:
 		return
-	_sync_team(_red_units, TEAM_ENEMY, 0.0)
-	_sync_team(_blue_units, TEAM_ALLY, 0.0)
+	_sync_batch(_enemy_melee_units, TEAM_ENEMY, UNIT_MELEE)
+	_sync_batch(_enemy_ranged_units, TEAM_ENEMY, UNIT_RANGED)
+	_sync_batch(_ally_melee_units, TEAM_ALLY, UNIT_MELEE)
+	_sync_batch(_ally_ranged_units, TEAM_ALLY, UNIT_RANGED)
 	queue_redraw()
 
 
-func _make_team_multimesh(node_name: String, soldier_mesh: ArrayMesh) -> MultiMeshInstance2D:
+func _make_batch(node_name: String, soldier_mesh: ArrayMesh) -> MultiMeshInstance2D:
 	var instance := MultiMeshInstance2D.new()
 	instance.name = node_name
 	instance.z_as_relative = false
@@ -52,11 +66,24 @@ func _make_team_multimesh(node_name: String, soldier_mesh: ArrayMesh) -> MultiMe
 	return instance
 
 
-func _make_soldier_mesh() -> ArrayMesh:
+func _make_melee_mesh() -> ArrayMesh:
 	var silhouette := PackedVector2Array([
 		Vector2(-7, 8), Vector2(7, 8), Vector2(7, -3), Vector2(4, -6),
 		Vector2(4, -11), Vector2(0, -16), Vector2(-4, -11), Vector2(-4, -6), Vector2(-7, -3),
 	])
+	return _make_mesh(silhouette)
+
+
+func _make_ranged_mesh() -> ArrayMesh:
+	var silhouette := PackedVector2Array([
+		Vector2(-6, 8), Vector2(6, 8), Vector2(6, -1), Vector2(13, -4),
+		Vector2(13, -7), Vector2(5, -7), Vector2(4, -12), Vector2(0, -16),
+		Vector2(-4, -12), Vector2(-5, -7), Vector2(-8, -4), Vector2(-6, -1),
+	])
+	return _make_mesh(silhouette)
+
+
+func _make_mesh(silhouette: PackedVector2Array) -> ArrayMesh:
 	var vertices := PackedVector3Array()
 	for point in silhouette:
 		vertices.append(Vector3(point.x, point.y, 0.0))
@@ -69,10 +96,14 @@ func _make_soldier_mesh() -> ArrayMesh:
 	return mesh
 
 
-func _sync_team(instance: MultiMeshInstance2D, team: int, body_rotation: float) -> void:
+func _sync_batch(instance: MultiMeshInstance2D, team: int, unit_kind: int) -> void:
 	var indices: Array[int] = []
 	for index in _simulation.unit_ids.size():
-		if _simulation.unit_teams[index] == team and _simulation.unit_hp[index] > 0.0:
+		if (
+			_simulation.unit_teams[index] == team
+			and _simulation.unit_kinds[index] == unit_kind
+			and _simulation.unit_hp[index] > 0.0
+		):
 			indices.append(index)
 	indices.sort_custom(func(a: int, b: int) -> bool:
 		return _grid.grid_to_screen(_simulation.unit_positions[a]).y < _grid.grid_to_screen(_simulation.unit_positions[b]).y
@@ -81,12 +112,18 @@ func _sync_team(instance: MultiMeshInstance2D, team: int, body_rotation: float) 
 	for draw_index in indices.size():
 		var unit_index := indices[draw_index]
 		var screen_position := get_unit_render_position(unit_index)
-		var transform := Transform2D(body_rotation, screen_position)
+		var transform := Transform2D(0.0, screen_position)
 		instance.multimesh.set_instance_transform_2d(draw_index, transform)
-		var base_color := GameConfig.COLOR_ALLY.lightened(0.28) if team == TEAM_ALLY else GameConfig.COLOR_ENEMY.lightened(0.18)
-		if _simulation.unit_states[unit_index] == 0:
-			base_color = base_color.darkened(0.12)
-		instance.multimesh.set_instance_color(draw_index, base_color)
+		instance.multimesh.set_instance_color(draw_index, get_unit_color(team, unit_kind, _simulation.unit_states[unit_index]))
+
+
+func get_unit_color(team: int, unit_kind: int, unit_state: int) -> Color:
+	var color := GameConfig.COLOR_ALLY.lightened(0.28) if team == TEAM_ALLY else GameConfig.COLOR_ENEMY.lightened(0.18)
+	if unit_kind == UNIT_RANGED:
+		color = color.lerp(GameConfig.COLOR_TEAL, 0.38).lightened(0.08)
+	if unit_state == 0:
+		color = color.darkened(0.12)
+	return color
 
 
 func get_unit_render_position(unit_index: int) -> Vector2:
@@ -106,7 +143,8 @@ func _draw() -> void:
 	if not is_instance_valid(_grid) or _simulation == null:
 		return
 	for index in _simulation.unit_ids.size():
-		var ratio := clampf(_simulation.unit_hp[index] / GameConfig.UNIT_MAX_HP, 0.0, 1.0)
+		var maximum_hp := GameConfig.RANGED_UNIT_MAX_HP if _simulation.unit_kinds[index] == UNIT_RANGED else GameConfig.UNIT_MAX_HP
+		var ratio := clampf(_simulation.unit_hp[index] / maximum_hp, 0.0, 1.0)
 		if ratio >= 0.995:
 			continue
 		var at := _grid.grid_to_screen(_simulation.unit_positions[index]) + Vector2(-9, -26)

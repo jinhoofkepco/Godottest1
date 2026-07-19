@@ -7,10 +7,13 @@ const GameConfig = preload("res://scripts/game_config.gd")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const BUILDING_HQ := 0
+const UNIT_MELEE := 0
+const UNIT_RANGED := 1
 
 var building_id := 0
 var team := TEAM_ALLY
 var kind := BUILDING_HQ
+var unit_kind := UNIT_MELEE
 var cell := Vector2i.ZERO
 var hp := 1.0
 var max_hp := 1.0
@@ -22,6 +25,7 @@ func setup(board: GridBoard, record: Dictionary) -> void:
 	building_id = int(record.id)
 	team = int(record.team)
 	kind = int(record.kind)
+	unit_kind = int(record.get("unit_kind", UNIT_MELEE))
 	cell = Vector2i(record.cell)
 	position = board.cell_to_world(cell)
 	update_from_data(record)
@@ -69,7 +73,13 @@ func _draw() -> void:
 	else:
 		draw_rect(Rect2(Vector2(-18, -28), Vector2(36, 24)), color.darkened(0.16))
 		draw_rect(Rect2(Vector2(-11, -38), Vector2(22, 15)), color)
-		draw_circle(Vector2(0, -42), 6.0, Color("f0f6ff"))
+		if unit_kind == UNIT_RANGED:
+			draw_circle(Vector2(-4, -42), 5.0, Color("d8fff8"))
+			draw_line(Vector2(0, -42), Vector2(15, -47), Color("54f5d2"), 5.0, true)
+			draw_circle(Vector2(15, -47), 2.5, Color.WHITE)
+		else:
+			draw_circle(Vector2(0, -42), 6.0, Color("f0f6ff"))
+			draw_line(Vector2(-7, -42), Vector2(7, -42), color.darkened(0.45), 3.0, true)
 	var ratio := clampf(hp / maxf(max_hp, 1.0), 0.0, 1.0)
 	draw_rect(Rect2(Vector2(-22, -60 if kind == BUILDING_HQ else -51), Vector2(44, 5)), Color("0b101b"))
 	draw_rect(Rect2(Vector2(-21, -59 if kind == BUILDING_HQ else -50), Vector2(42 * ratio, 3)), color.lightened(0.3))
