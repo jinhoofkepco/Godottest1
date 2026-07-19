@@ -53,6 +53,6 @@ Signals carry logical coordinates where event location matters. View-only effect
 
 ## Verification and Delivery
 
-Headless rule tests assert exact projection examples, round-trip picking, logical enemy/projectile movement, unchanged balance values, and scene depth configuration. Flow tests continue to prove both five-wave victory and core-damage defeat. A timed scene smoke run checks runtime errors, and a captured headless frame is inspected for portrait framing and visual presence.
+Headless rule tests assert exact projection examples, round-trip picking, logical enemy/projectile movement, unchanged balance values, and scene depth configuration. Flow tests continue to prove both five-wave victory and core-damage defeat. A true-headless timed scene smoke checks parser and runtime errors. Godot's headless display driver supports only the dummy renderer and cannot provide Viewport pixels, so portrait framing and visual presence are verified separately by an unattended render-capable capture: Xvfb with `gl_compatibility` in Linux CI and the native OpenGL display driver locally.
 
 GitHub Actions remains the authoritative Godot 4.5 Android builder. After a successful run, the signed debug APK artifact is downloaded, signature-verified, and committed to `apk/godottest1.apk`. The workflow ignores APK-only pushes and the Android export excludes the `apk` directory so a published APK is never embedded inside the next APK.

@@ -58,6 +58,21 @@ jobs:
           godot --headless --path . --import
           godot --headless --path . -s tests/run_rules.gd
           godot --headless --path . -s tests/run_game_flow.gd
+          godot --headless --path . --scene res://scenes/main.tscn --quit-after 180
+
+      - name: Run unattended visual QA
+        run: |
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xvfb
+          fi
+          xvfb-run -a -s "-screen 0 540x960x24" \
+            godot --display-driver x11 --rendering-method gl_compatibility \
+            --audio-driver Dummy --path . -s tests/smoke_capture.gd
+          test -s build/smoke_capture.png
+          capture_info="$(file build/smoke_capture.png)"
+          printf '%s\n' "$capture_info"
+          printf '%s\n' "$capture_info" | grep -Fq 'PNG image data, 540 x 960'
 
       # The requested deliverable is debug, so overwrite the action's
       # release-mode output using the same installed 4.5 toolchain.

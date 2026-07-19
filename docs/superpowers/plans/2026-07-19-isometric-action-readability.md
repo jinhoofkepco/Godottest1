@@ -112,7 +112,8 @@
 - [ ] Document controls, unchanged rules, projection boundary, the six required feedback events, Actions artifact steps, and the stable APK link.
 - [ ] Add APK-only push filtering and export exclusion without changing the working Godot 4.5 debug export path.
 - [ ] Add a deterministic smoke capture that places towers, starts a wave, and writes a portrait PNG after enough frames for entities to be visible.
-- [ ] Run capture headlessly, inspect the PNG for full-board framing and distinct silhouettes, and fix only readability defects.
+- [ ] Keep parser/runtime smoke truly headless, but run pixel capture unattended through a render-capable display because Godot's headless dummy renderer cannot expose Viewport pixels.
+- [ ] Run the Linux CI capture under Xvfb with `gl_compatibility`, assert the PNG is 540 x 960 before export, inspect it for full-board framing and distinct silhouettes, and fix only readability defects.
 - [ ] Run `actionlint`, config inspections, `git diff --check`, and confirm no external asset file types were introduced.
 
 ### Task 5: Godot 4.5 Verification and APK Publication
