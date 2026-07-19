@@ -5,6 +5,7 @@ var failures: Array[String] = []
 
 func run() -> Array[String]:
 	_test_config_values()
+	_test_expanded_grid_and_obstacles()
 	_test_grid_projection_and_dynamic_building()
 	_test_simulation_contract()
 	_test_initial_territory()
@@ -15,6 +16,7 @@ func run() -> Array[String]:
 	_test_ally_separation()
 	_test_lunge_state_contract()
 	_test_frontline_ownership()
+	_test_hq_fallback_and_obstacle_sliding()
 	_test_terminal_results()
 	_test_balance_paths()
 	_test_bucket_search_scale()
@@ -28,14 +30,14 @@ func _test_grid_projection_and_dynamic_building() -> void:
 		return
 	var grid = grid_script.new()
 	grid.set_simulation(simulation)
-	for cell in [Vector2i(0, 0), Vector2i(5, 11), Vector2i(10, 21), Vector2i(3, 17)]:
+	for cell in [Vector2i(0, 0), Vector2i(11, 22), Vector2i(21, 43), Vector2i(3, 35)]:
 		_expect(grid.world_to_cell(grid.cell_to_world(cell)) == cell, "isometric picking round trips %s" % cell)
-	_expect(grid.can_build(Vector2i(3, 17), simulation.TEAM_ALLY), "dynamic blue territory is buildable")
+	_expect(grid.can_build(Vector2i(3, 35), simulation.TEAM_ALLY), "dynamic blue territory is buildable")
 	_expect(not grid.can_build(Vector2i(3, 3), simulation.TEAM_ALLY), "dynamic red territory rejects blue build")
-	_expect(not grid.can_build(Vector2i(5, 21), simulation.TEAM_ALLY), "blue HQ tile rejects building")
-	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(3.5, 18.5))
+	_expect(not grid.can_build(Vector2i(11, 43), simulation.TEAM_ALLY), "blue HQ tile rejects building")
+	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(3.5, 36.5))
 	simulation.recalculate_territory()
-	_expect(not grid.can_build(Vector2i(3, 17), simulation.TEAM_ALLY), "frontline capture immediately revokes blue build permission")
+	_expect(not grid.can_build(Vector2i(3, 35), simulation.TEAM_ALLY), "frontline capture immediately revokes blue build permission")
 	grid.free()
 
 
@@ -44,8 +46,7 @@ func _test_config_values() -> void:
 	_expect(config != null and config.can_instantiate(), "game config parses")
 	if config == null or not config.can_instantiate():
 		return
-	_expect(config.GRID_COLUMNS == 11, "frontline grid has 11 columns")
-	_expect(config.GRID_ROWS == 22, "frontline grid has 22 rows")
+	_expect(config.GRID_COLUMNS == 22 and config.GRID_ROWS == 44, "expanded grid has four times the tiles")
 	_expect(config.SIM_TICK_RATE == 30, "simulation runs at fixed 30 Hz")
 	_expect(is_equal_approx(config.MATCH_DURATION, 180.0), "match lasts at most 180 seconds")
 	_expect(config.SPAWNER_COST == 60, "spawner cost is 60 gold")
@@ -57,6 +58,64 @@ func _test_config_values() -> void:
 	_expect(constants.has("UNIT_SEPARATION_RADIUS"), "config exposes ally separation radius")
 	_expect(constants.has("UNIT_SEEK_WEIGHT"), "config exposes seek steering weight")
 	_expect(constants.has("UNIT_LUNGE_DURATION"), "config exposes attack lunge duration")
+
+
+func _test_expanded_grid_and_obstacles() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	_expect(simulation.get_ownership().size() == 968, "expanded ownership has 968 entries")
+	_expect(simulation.has_method("get_blocked_cells"), "simulation exposes packed blocked terrain")
+	_expect(simulation.has_method("is_blocked"), "simulation exposes blocked-cell lookup")
+	if not simulation.has_method("get_blocked_cells") or not simulation.has_method("is_blocked"):
+		return
+	var blocked: PackedByteArray = simulation.get_blocked_cells()
+	_expect(blocked.size() == 968, "blocked terrain has one entry per tile")
+	_expect(blocked.count(1) == 32, "central terrain has sixteen mirrored obstacle pairs")
+	var comparison = _new_simulation()
+	_expect(comparison != null and comparison.get_blocked_cells() == blocked, "obstacle generation is deterministic")
+	var row_counts := PackedInt32Array()
+	row_counts.resize(simulation.config.GRID_ROWS)
+	for row in simulation.config.GRID_ROWS:
+		for column in simulation.config.GRID_COLUMNS:
+			var cell := Vector2i(column, row)
+			if not simulation.is_blocked(cell):
+				continue
+			row_counts[row] += 1
+			_expect(row >= 14 and row <= 29, "obstacles stay in the central terrain band")
+			var mirrored := Vector2i(simulation.config.GRID_COLUMNS - 1 - column, simulation.config.GRID_ROWS - 1 - row)
+			_expect(simulation.is_blocked(mirrored), "every obstacle has a center-mirrored partner")
+	for count in row_counts:
+		_expect(count <= 4, "no terrain row contains more than four blockers")
+	for cell in [Vector2i(11, 0), Vector2i(11, 43), Vector2i(4, 36)]:
+		_expect(not simulation.is_blocked(cell), "reserved deployment cells stay clear")
+	var blocked_index := blocked.find(1)
+	if blocked_index >= 0:
+		var blocked_cell := Vector2i(blocked_index % simulation.config.GRID_COLUMNS, blocked_index / simulation.config.GRID_COLUMNS)
+		var owner: int = simulation.get_ownership()[blocked_index]
+		var gold_before: int = simulation.ally_gold if owner == simulation.TEAM_ALLY else simulation.enemy_gold
+		_expect(not simulation.try_build_spawner(owner, blocked_cell), "blocked terrain rejects simulation builds")
+		var gold_after: int = simulation.ally_gold if owner == simulation.TEAM_ALLY else simulation.enemy_gold
+		_expect(gold_after == gold_before, "blocked build rejection never spends gold")
+		var grid_script := load("res://scripts/grid.gd")
+		var grid = grid_script.new()
+		grid.set_simulation(simulation)
+		_expect(not grid.can_build(blocked_cell, owner), "blocked terrain rejects grid builds")
+		grid.free()
+	for row in range(14, 29):
+		for column in simulation.config.GRID_COLUMNS:
+			var blocker := Vector2i(column, row)
+			var approach := Vector2i(column, row + 1)
+			if not simulation.is_blocked(blocker) or simulation.is_blocked(approach):
+				continue
+			simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(column) + 0.5, float(row) + 1.01))
+			var unit_index: int = simulation.unit_ids.size() - 1
+			simulation.unit_positions[unit_index] = Vector2(float(column) + 0.5, float(row) + 1.01)
+			simulation.tick(1.0 / 30.0)
+			var final_cell := Vector2i(floori(simulation.unit_positions[unit_index].x), floori(simulation.unit_positions[unit_index].y))
+			_expect(not simulation.is_blocked(final_cell), "movement never leaves a unit inside blocked terrain")
+			return
+	_expect(false, "deterministic terrain includes a blocker with an open approach")
 
 
 func _new_simulation():
@@ -83,26 +142,26 @@ func _test_simulation_contract() -> void:
 	_expect(property_names.has("unit_speed_scales"), "unit speed variation uses one packed array")
 	_expect(property_names.has("unit_lunge_timers"), "unit lunge timers use one packed array")
 	_expect(property_names.has("unit_lunge_directions"), "unit lunge directions use one packed array")
-	var unit_id: int = simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(4.5, 18.5))
+	var unit_id: int = simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(4.5, 36.5))
 	_expect(unit_id > 0 and simulation.unit_ids.size() == 1, "spawn inserts one packed unit")
-	_expect(absf(simulation.unit_positions[0].x - 4.5) <= 0.3001 and is_equal_approx(simulation.unit_positions[0].y, 18.5), "spawn applies only bounded lateral variation")
+	_expect(absf(simulation.unit_positions[0].x - 4.5) <= 0.3001 and is_equal_approx(simulation.unit_positions[0].y, 36.5), "spawn applies only bounded lateral variation")
 	if property_names.has("unit_speed_scales"):
 		_expect(simulation.unit_speed_scales.size() == 1, "speed variation stays index-aligned")
 		_expect(simulation.unit_speed_scales[0] >= 0.9 and simulation.unit_speed_scales[0] <= 1.1, "speed variation stays within ten percent")
 	simulation.tick(1.0 / 30.0)
-	_expect(simulation.unit_positions[0].y < 18.5, "blue unit advances toward red HQ")
-	var building_id: int = simulation.add_building(simulation.TEAM_ALLY, simulation.BUILDING_SPAWNER, Vector2i(1, 18))
+	_expect(simulation.unit_positions[0].y < 36.5, "blue unit advances toward red HQ")
+	var building_id: int = simulation.add_building(simulation.TEAM_ALLY, simulation.BUILDING_SPAWNER, Vector2i(1, 36))
 	_expect(building_id > 0, "public building insertion API returns an ID")
 	var fixed_simulation = _new_simulation()
-	fixed_simulation.spawn_unit(fixed_simulation.TEAM_ALLY, Vector2(4.5, 18.5))
+	fixed_simulation.spawn_unit(fixed_simulation.TEAM_ALLY, Vector2(4.5, 36.5))
 	fixed_simulation.tick(1.0 / 60.0)
-	_expect(is_equal_approx(fixed_simulation.unit_positions[0].y, 18.5), "sub-tick delta accumulates without partial simulation")
+	_expect(is_equal_approx(fixed_simulation.unit_positions[0].y, 36.5), "sub-tick delta accumulates without partial simulation")
 	fixed_simulation.tick(1.0 / 60.0)
-	_expect(fixed_simulation.unit_positions[0].y < 18.5, "two half ticks produce exactly one fixed simulation step")
+	_expect(fixed_simulation.unit_positions[0].y < 36.5, "two half ticks produce exactly one fixed simulation step")
 	var catch_up_simulation = _new_simulation()
-	catch_up_simulation.spawn_unit(catch_up_simulation.TEAM_ALLY, Vector2(4.5, 18.5))
+	catch_up_simulation.spawn_unit(catch_up_simulation.TEAM_ALLY, Vector2(4.5, 36.5))
 	catch_up_simulation.tick(1.0)
-	var expected_catch_up_y: float = 18.5 - catch_up_simulation.config.UNIT_SPEED * catch_up_simulation.unit_speed_scales[0] * 8.0 / 30.0
+	var expected_catch_up_y: float = 36.5 - catch_up_simulation.config.UNIT_SPEED * catch_up_simulation.unit_speed_scales[0] * 8.0 / 30.0
 	_expect(is_equal_approx(catch_up_simulation.unit_positions[0].y, expected_catch_up_y), "long frame performs at most eight fixed catch-up ticks")
 	_expect(is_equal_approx(catch_up_simulation.time_remaining, 180.0 - 8.0 / 30.0), "clock discards the same excess time as combat")
 
@@ -112,11 +171,13 @@ func _test_initial_territory() -> void:
 	if simulation == null:
 		return
 	var ownership: PackedByteArray = simulation.get_ownership()
-	_expect(ownership.size() == 11 * 22, "ownership has one entry per tile")
+	_expect(ownership.size() == 22 * 44, "ownership has one entry per tile")
+	if ownership.size() != 22 * 44:
+		return
 	_expect(ownership[0] == simulation.TEAM_ENEMY, "top tile starts red")
-	_expect(ownership[10 * 11 + 5] == simulation.TEAM_ENEMY, "upper half ends red")
-	_expect(ownership[11 * 11 + 5] == simulation.TEAM_ALLY, "lower half starts blue")
-	_expect(ownership[21 * 11 + 10] == simulation.TEAM_ALLY, "bottom tile starts blue")
+	_expect(ownership[21 * 22 + 11] == simulation.TEAM_ENEMY, "upper half ends red")
+	_expect(ownership[22 * 22 + 11] == simulation.TEAM_ALLY, "lower half starts blue")
+	_expect(ownership[43 * 22 + 21] == simulation.TEAM_ALLY, "bottom tile starts blue")
 	_expect(is_equal_approx(simulation.get_occupancy(simulation.TEAM_ALLY), 0.5), "initial blue occupancy is 50 percent")
 
 
@@ -124,12 +185,12 @@ func _test_build_and_economy() -> void:
 	var simulation = _new_simulation()
 	if simulation == null:
 		return
-	_expect(simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(5, 18)), "blue builds on blue territory")
+	_expect(simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(5, 36)), "blue builds on blue territory")
 	_expect(simulation.ally_gold == 120, "building spends exactly 60 blue gold")
 	var gold_after_build: int = simulation.ally_gold
-	_expect(not simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(5, 18)), "occupied tile rejects another building")
+	_expect(not simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(5, 36)), "occupied tile rejects another building")
 	_expect(not simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(5, 3)), "blue cannot build on red territory")
-	_expect(not simulation.try_build_spawner(simulation.TEAM_ENEMY, Vector2i(5, 18)), "red cannot build on blue territory")
+	_expect(not simulation.try_build_spawner(simulation.TEAM_ENEMY, Vector2i(5, 36)), "red cannot build on blue territory")
 	_expect(simulation.ally_gold == gold_after_build, "invalid build attempts never spend blue gold")
 	var before_income: int = simulation.ally_gold
 	for tick_index in 30:
@@ -238,16 +299,52 @@ func _test_frontline_ownership() -> void:
 	var simulation = _new_simulation()
 	if simulation == null:
 		return
-	var before: float = simulation.get_occupancy(simulation.TEAM_ALLY)
-	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(2.5, 16.5))
+	simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(4.5, 10.5))
+	simulation.unit_positions[0] = Vector2(4.5, 10.5)
 	simulation.recalculate_territory()
 	var ownership: PackedByteArray = simulation.get_ownership()
-	_expect(ownership[17 * 11 + 2] == simulation.TEAM_ENEMY, "forward red unit moves its column boundary downward")
-	_expect(simulation.get_occupancy(simulation.TEAM_ALLY) < before, "red advance reduces actual blue occupancy")
-	simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(8.5, 3.5))
+	var claimed_index: int = 10 * simulation.config.GRID_COLUMNS + 4
+	_expect(ownership[claimed_index] == simulation.TEAM_ALLY, "forward blue unit claims its supply line")
+	simulation.unit_positions[0] = Vector2(5.5, 10.5)
 	simulation.recalculate_territory()
 	ownership = simulation.get_ownership()
-	_expect(ownership[4 * 11 + 8] == simulation.TEAM_ALLY, "forward blue unit moves its column boundary upward")
+	_expect(ownership[claimed_index] == simulation.TEAM_ALLY, "captured supply line persists after its unit changes columns")
+	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(4.5, 10.5))
+	simulation.unit_positions[1] = Vector2(4.5, 10.5)
+	simulation.recalculate_territory()
+	ownership = simulation.get_ownership()
+	_expect(ownership[claimed_index] == simulation.TEAM_ENEMY, "enemy advance recaptures a persistent supply cell")
+
+
+func _test_hq_fallback_and_obstacle_sliding() -> void:
+	var edge_simulation = _new_simulation()
+	if edge_simulation == null:
+		return
+	edge_simulation.spawn_unit(edge_simulation.TEAM_ALLY, Vector2(0.5, 0.5))
+	edge_simulation.unit_positions[0] = Vector2(0.5, 0.5)
+	edge_simulation.tick(1.0 / 30.0)
+	_expect(edge_simulation.unit_target_ids[0] == -edge_simulation.enemy_hq_id, "edge breakthrough targets the opposing HQ")
+	_expect(edge_simulation.unit_positions[0].x > 0.5, "edge breakthrough steers laterally toward the opposing HQ")
+
+	var slide_simulation = _new_simulation()
+	for row in range(slide_simulation.config.OBSTACLE_MIN_ROW, slide_simulation.config.OBSTACLE_MAX_ROW):
+		for column in range(0, slide_simulation.config.GRID_COLUMNS - 2):
+			var blocker := Vector2i(column, row)
+			var approach := Vector2i(column, row + 1)
+			if not slide_simulation.is_blocked(blocker) or slide_simulation.is_blocked(approach):
+				continue
+			slide_simulation.spawn_unit(slide_simulation.TEAM_ALLY, Vector2(float(column) + 0.5, float(row) + 1.01))
+			slide_simulation.spawn_unit(slide_simulation.TEAM_ENEMY, Vector2(float(column) + 2.0, float(row) - 0.5))
+			slide_simulation.unit_positions[0] = Vector2(float(column) + 0.5, float(row) + 1.01)
+			slide_simulation.unit_positions[1] = Vector2(float(column) + 2.0, float(row) - 0.5)
+		var before_x: float = slide_simulation.unit_positions[0].x
+		slide_simulation.tick(1.0 / 30.0)
+		var final_position: Vector2 = slide_simulation.unit_positions[0]
+		var final_cell := Vector2i(floori(final_position.x), floori(final_position.y))
+		_expect(not slide_simulation.is_blocked(final_cell), "obstacle slide keeps the final logical cell clear")
+		_expect(final_position.x > before_x, "blocked diagonal movement slides along an open axis")
+		return
+	_expect(false, "deterministic terrain includes a slide fixture")
 
 
 func _test_terminal_results() -> void:
@@ -258,15 +355,15 @@ func _test_terminal_results() -> void:
 	_expect(hq_sim.result == "VICTORY", "destroying red HQ wins immediately")
 
 	var territory_sim = _new_simulation()
-	for column in 11:
+	for column in territory_sim.config.GRID_COLUMNS:
 		territory_sim.spawn_unit(territory_sim.TEAM_ALLY, Vector2(float(column) + 0.5, 1.2))
 	territory_sim.tick(1.0 / 30.0)
 	_expect(territory_sim.get_occupancy(territory_sim.TEAM_ALLY) >= 0.9, "blue formation can reach 90 percent territory")
 	_expect(territory_sim.result == "VICTORY", "90 percent blue territory wins immediately")
 
 	var timeout_sim = _new_simulation()
-	for column in 11:
-		timeout_sim.spawn_unit(timeout_sim.TEAM_ENEMY, Vector2(float(column) + 0.5, 17.5))
+	for column in timeout_sim.config.GRID_COLUMNS:
+		timeout_sim.spawn_unit(timeout_sim.TEAM_ENEMY, Vector2(float(column) + 0.5, 35.5))
 	timeout_sim.time_remaining = 0.01
 	timeout_sim.tick(1.0 / 30.0)
 	_expect(timeout_sim.result == "DEFEAT", "timeout awards the match to the territory leader")
@@ -277,8 +374,8 @@ func _test_balance_paths() -> void:
 	var passive_elapsed := _run_complete_match(passive_simulation)
 	_expect(passive_simulation.result == "DEFEAT", "building no blue spawner lets red AI win")
 	var active_simulation = _new_simulation()
-	for column in [3, 5, 7]:
-		_expect(active_simulation.try_build_spawner(active_simulation.TEAM_ALLY, Vector2i(column, 18)), "balance fixture spends starting gold on three blue spawners")
+	for column in [7, 11, 15]:
+		_expect(active_simulation.try_build_spawner(active_simulation.TEAM_ALLY, Vector2i(column, 36)), "balance fixture spends starting gold on three blue spawners")
 	var active_elapsed := _run_complete_match(active_simulation)
 	_expect(active_simulation.result == "VICTORY", "three starting blue spawners can push through and win")
 	_expect(passive_elapsed >= 120.0 and passive_elapsed <= 180.1, "unopposed red advance remains a two-to-three minute match (%.1fs)" % passive_elapsed)
@@ -321,8 +418,8 @@ func _test_bucket_search_scale() -> void:
 	if simulation == null:
 		return
 	for index in 180:
-		simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(float(index % 11) + 0.5, 2.0 + float(index % 3) * 0.1))
-		simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(index % 11) + 0.5, 19.0 - float(index % 3) * 0.1))
+		simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(float(index % simulation.config.GRID_COLUMNS) + 0.5, 4.0 + float(index % 3) * 0.1))
+		simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(index % simulation.config.GRID_COLUMNS) + 0.5, 40.0 - float(index % 3) * 0.1))
 	simulation.tick(1.0 / 30.0)
 	_expect(simulation.unit_ids.size() == 360, "stress fixture keeps 360 data-only units")
 	_expect(simulation.target_candidate_checks < 50000, "bucket target checks stay far below all-pairs work")

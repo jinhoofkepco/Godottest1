@@ -24,6 +24,7 @@ var unit_lunge_directions := PackedVector2Array()
 
 var buildings: Array[Dictionary] = []
 var ownership := PackedByteArray()
+var blocked := PackedByteArray()
 var ally_gold := GameConfig.START_GOLD
 var enemy_gold := GameConfig.ENEMY_START_GOLD
 var ally_hq_id := 0
@@ -64,7 +65,13 @@ func reset() -> void:
 	unit_lunge_directions.clear()
 	buildings.clear()
 	ownership.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
-	ownership.fill(TEAM_NONE)
+	for row in GameConfig.GRID_ROWS:
+		var owner := TEAM_ENEMY if row < GameConfig.GRID_ROWS / 2 else TEAM_ALLY
+		for column in GameConfig.GRID_COLUMNS:
+			ownership[row * GameConfig.GRID_COLUMNS + column] = owner
+	blocked.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	blocked.fill(0)
+	_generate_blocked_cells()
 	ally_gold = GameConfig.START_GOLD
 	enemy_gold = GameConfig.ENEMY_START_GOLD
 	time_remaining = GameConfig.MATCH_DURATION
@@ -114,7 +121,7 @@ func spawn_unit(team: int, position: Vector2) -> int:
 
 
 func add_building(team: int, kind: int, cell: Vector2i) -> int:
-	if team not in [TEAM_ALLY, TEAM_ENEMY] or kind not in [BUILDING_HQ, BUILDING_SPAWNER] or not _cell_is_valid(cell):
+	if team not in [TEAM_ALLY, TEAM_ENEMY] or kind not in [BUILDING_HQ, BUILDING_SPAWNER] or not _cell_is_valid(cell) or is_blocked(cell):
 		return 0
 	return _add_building(team, kind, cell)
 
@@ -136,7 +143,7 @@ func tick(delta: float) -> void:
 
 
 func try_build_spawner(team: int, cell: Vector2i) -> bool:
-	if result != "" or not _cell_is_valid(cell):
+	if result != "" or not _cell_is_valid(cell) or is_blocked(cell):
 		return false
 	if ownership[_cell_index(cell)] != team or _building_at(cell) != -1:
 		return false
@@ -160,6 +167,14 @@ func get_ownership() -> PackedByteArray:
 	return ownership.duplicate()
 
 
+func is_blocked(cell: Vector2i) -> bool:
+	return _cell_is_valid(cell) and blocked[_cell_index(cell)] == 1
+
+
+func get_blocked_cells() -> PackedByteArray:
+	return blocked.duplicate()
+
+
 func get_occupancy(team: int) -> float:
 	if ownership.is_empty():
 		return 0.0
@@ -173,16 +188,16 @@ func get_occupancy(team: int) -> float:
 func recalculate_territory(emit_changes: bool = true) -> void:
 	var previous := ownership.duplicate()
 	for column in GameConfig.GRID_COLUMNS:
-		var red_front := 0.0
-		var blue_front := float(GameConfig.GRID_ROWS - 1)
+		var red_front := -1
+		var blue_front := GameConfig.GRID_ROWS
 		for index in unit_ids.size():
 			var position := unit_positions[index]
 			if floori(position.x) != column or unit_hp[index] <= 0.0:
 				continue
 			if unit_teams[index] == TEAM_ENEMY:
-				red_front = maxf(red_front, position.y)
+				red_front = maxi(red_front, floori(position.y))
 			elif unit_teams[index] == TEAM_ALLY:
-				blue_front = minf(blue_front, position.y)
+				blue_front = mini(blue_front, floori(position.y))
 		for building in buildings:
 			if bool(building.get("destroyed", false)):
 				continue
@@ -190,16 +205,33 @@ func recalculate_territory(emit_changes: bool = true) -> void:
 			if cell.x != column:
 				continue
 			if int(building.team) == TEAM_ENEMY:
-				red_front = maxf(red_front, float(cell.y))
+				red_front = maxi(red_front, cell.y)
 			elif int(building.team) == TEAM_ALLY:
-				blue_front = minf(blue_front, float(cell.y))
-		var boundary := (red_front + blue_front) * 0.5
+				blue_front = mini(blue_front, cell.y)
+		var has_red := red_front >= 0
+		var has_blue := blue_front < GameConfig.GRID_ROWS
+		var overlap_midpoint := float(red_front + blue_front) * 0.5
 		for row in GameConfig.GRID_ROWS:
-			var owner := TEAM_ENEMY if float(row) + 0.5 <= boundary else TEAM_ALLY
-			var index := row * GameConfig.GRID_COLUMNS + column
-			ownership[index] = owner
-			if emit_changes and previous.size() == ownership.size() and previous[index] != owner:
-				_events.append({"type": "territory_changed", "cell": Vector2i(column, row), "team": owner})
+			var red_claims := has_red and row <= red_front
+			var blue_claims := has_blue and row >= blue_front
+			var owner := TEAM_NONE
+			if red_claims and blue_claims:
+				owner = TEAM_ENEMY if float(row) <= overlap_midpoint else TEAM_ALLY
+			elif red_claims:
+				owner = TEAM_ENEMY
+			elif blue_claims:
+				owner = TEAM_ALLY
+			if owner != TEAM_NONE:
+				ownership[row * GameConfig.GRID_COLUMNS + column] = owner
+	if emit_changes:
+		for index in ownership.size():
+			if previous[index] == ownership[index]:
+				continue
+			_events.append({
+				"type": "territory_changed",
+				"cell": Vector2i(index % GameConfig.GRID_COLUMNS, index / GameConfig.GRID_COLUMNS),
+				"team": ownership[index],
+			})
 
 
 func apply_building_damage(building_id: int, damage: float, attacker_team: int) -> void:
@@ -256,18 +288,17 @@ func _step(delta: float) -> void:
 			if _found_target_id != 0:
 				seek_direction = position.direction_to(_found_target_position)
 			var separation_direction := _calculate_separation(index)
+			var obstacle_direction := _calculate_obstacle_repulsion(position)
 			var steering := (
 				advance_direction * GameConfig.UNIT_ADVANCE_WEIGHT
 				+ seek_direction * GameConfig.UNIT_SEEK_WEIGHT
 				+ separation_direction * GameConfig.UNIT_SEPARATION_WEIGHT
+				+ obstacle_direction * GameConfig.OBSTACLE_REPULSION_WEIGHT
 			)
 			if steering.length_squared() <= 0.000001:
 				steering = advance_direction
 			var velocity := steering.normalized() * GameConfig.UNIT_SPEED * unit_speed_scales[index]
-			position += velocity * delta
-			position.x = clampf(position.x, 0.2, float(GameConfig.GRID_COLUMNS) - 0.2)
-			position.y = clampf(position.y, 0.5, float(GameConfig.GRID_ROWS) - 0.5)
-			unit_positions[index] = position
+			unit_positions[index] = _move_without_entering_blocked(position, velocity * delta)
 	_remove_dead_units()
 	recalculate_territory()
 	_check_terminal_state()
@@ -370,6 +401,8 @@ func _find_target(unit_index: int) -> void:
 			_found_unit_index = -1
 			_found_building_index = building_index
 			_found_target_position = building_position
+	if _found_target_id == 0:
+		_assign_hq_fallback(team, position)
 
 
 func _seed_retained_target(target_id: int, team: int, position: Vector2) -> float:
@@ -432,6 +465,56 @@ func _calculate_separation(unit_index: int) -> Vector2:
 					var distance := sqrt(distance_squared)
 					separation += offset / distance * (1.0 - distance / GameConfig.UNIT_SEPARATION_RADIUS)
 	return separation.normalized() if separation.length_squared() > 0.000001 else Vector2.ZERO
+
+
+func _calculate_obstacle_repulsion(position: Vector2) -> Vector2:
+	var cell := Vector2i(floori(position.x), floori(position.y))
+	var radius := GameConfig.OBSTACLE_REPULSION_RADIUS
+	var cell_radius := ceili(radius)
+	var repulsion := Vector2.ZERO
+	for row in range(maxi(0, cell.y - cell_radius), mini(GameConfig.GRID_ROWS - 1, cell.y + cell_radius) + 1):
+		for column in range(maxi(0, cell.x - cell_radius), mini(GameConfig.GRID_COLUMNS - 1, cell.x + cell_radius) + 1):
+			var obstacle_cell := Vector2i(column, row)
+			if not is_blocked(obstacle_cell):
+				continue
+			var offset := position - (Vector2(obstacle_cell) + Vector2(0.5, 0.5))
+			var distance := offset.length()
+			if distance >= radius:
+				continue
+			if distance <= 0.000001:
+				repulsion += Vector2.RIGHT
+			else:
+				repulsion += offset / distance * (1.0 - distance / radius)
+	return repulsion.normalized() if repulsion.length_squared() > 0.000001 else Vector2.ZERO
+
+
+func _move_without_entering_blocked(position: Vector2, motion: Vector2) -> Vector2:
+	var candidate_motions: Array[Vector2] = [motion, Vector2(motion.x, 0.0), Vector2(0.0, motion.y)]
+	for candidate_motion in candidate_motions:
+		var candidate: Vector2 = position + candidate_motion
+		candidate.x = clampf(candidate.x, 0.2, float(GameConfig.GRID_COLUMNS) - 0.2)
+		candidate.y = clampf(candidate.y, 0.5, float(GameConfig.GRID_ROWS) - 0.5)
+		var cell := Vector2i(floori(candidate.x), floori(candidate.y))
+		if not is_blocked(cell):
+			return candidate
+	return position
+
+
+func _assign_hq_fallback(team: int, position: Vector2) -> void:
+	var reached_terminal_band := (
+		team == TEAM_ALLY and position.y <= GameConfig.HQ_FALLBACK_BAND
+		or team == TEAM_ENEMY and position.y >= float(GameConfig.GRID_ROWS) - GameConfig.HQ_FALLBACK_BAND
+	)
+	if not reached_terminal_band:
+		return
+	var hq_id := enemy_hq_id if team == TEAM_ALLY else ally_hq_id
+	var building_index := _building_index_from_id(hq_id)
+	if building_index < 0 or bool(buildings[building_index].destroyed):
+		return
+	_found_target_id = -hq_id
+	_found_unit_index = -1
+	_found_building_index = building_index
+	_found_target_position = Vector2(buildings[building_index].cell) + Vector2(0.5, 0.5)
 
 
 func _attack_target(attacker_index: int, target_unit_index: int, building_index: int) -> void:
@@ -587,3 +670,26 @@ func _cell_is_valid(cell: Vector2i) -> bool:
 
 func _cell_index(cell: Vector2i) -> int:
 	return cell.y * GameConfig.GRID_COLUMNS + cell.x
+
+
+func _generate_blocked_cells() -> void:
+	var obstacle_rng := RandomNumberGenerator.new()
+	obstacle_rng.seed = GameConfig.OBSTACLE_SEED
+	var row_counts := PackedInt32Array()
+	row_counts.resize(GameConfig.GRID_ROWS)
+	var pairs_added := 0
+	while pairs_added < GameConfig.OBSTACLE_PAIR_COUNT:
+		var cell := Vector2i(
+			obstacle_rng.randi_range(0, GameConfig.GRID_COLUMNS - 1),
+			obstacle_rng.randi_range(GameConfig.OBSTACLE_MIN_ROW, GameConfig.OBSTACLE_MAX_ROW)
+		)
+		var mirrored := Vector2i(GameConfig.GRID_COLUMNS - 1 - cell.x, GameConfig.GRID_ROWS - 1 - cell.y)
+		if is_blocked(cell) or is_blocked(mirrored):
+			continue
+		if row_counts[cell.y] >= GameConfig.OBSTACLE_MAX_PER_ROW or row_counts[mirrored.y] >= GameConfig.OBSTACLE_MAX_PER_ROW:
+			continue
+		blocked[_cell_index(cell)] = 1
+		blocked[_cell_index(mirrored)] = 1
+		row_counts[cell.y] += 1
+		row_counts[mirrored.y] += 1
+		pairs_added += 1

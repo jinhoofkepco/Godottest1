@@ -18,6 +18,8 @@ func set_simulation(value) -> void:
 func can_build(cell: Vector2i, team: int = 2) -> bool:
 	if not _cell_is_valid(cell) or simulation == null:
 		return false
+	if simulation.is_blocked(cell):
+		return false
 	var current_ownership: PackedByteArray = simulation.get_ownership()
 	if current_ownership[cell.y * GameConfig.GRID_COLUMNS + cell.x] != team:
 		return false
@@ -92,8 +94,23 @@ func _draw() -> void:
 			draw_colored_polygon(diamond, color)
 			diamond.append(diamond[0])
 			draw_polyline(diamond, GameConfig.COLOR_GRID_LINE, 1.4, true)
+			if simulation != null and simulation.is_blocked(cell):
+				_draw_blocker(diamond)
 			if can_build(cell):
 				draw_circle(cell_to_world(cell), 1.8, Color(GameConfig.COLOR_TEAL, 0.38))
+
+
+func _draw_blocker(base_diamond: PackedVector2Array) -> void:
+	var top := base_diamond.slice(0, 4)
+	for index in top.size():
+		top[index] += Vector2(0.0, -6.0)
+	var lower_side := PackedVector2Array([base_diamond[1], base_diamond[2], top[2], top[1]])
+	var left_side := PackedVector2Array([base_diamond[2], base_diamond[3], top[3], top[2]])
+	draw_colored_polygon(lower_side, GameConfig.COLOR_OBSTACLE_SIDE)
+	draw_colored_polygon(left_side, GameConfig.COLOR_NEUTRAL)
+	draw_colored_polygon(top, GameConfig.COLOR_OBSTACLE)
+	top.append(top[0])
+	draw_polyline(top, GameConfig.COLOR_OBSTACLE_EDGE, 1.6, true)
 
 
 func _cell_color(cell: Vector2i) -> Color:

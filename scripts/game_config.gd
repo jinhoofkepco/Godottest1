@@ -2,8 +2,8 @@ class_name GameConfig
 extends RefCounted
 
 const VIEW_SIZE := Vector2i(540, 960)
-const GRID_COLUMNS := 11
-const GRID_ROWS := 22
+const GRID_COLUMNS := 22
+const GRID_ROWS := 44
 const ISO_TILE_WIDTH := 64.0
 const ISO_TILE_HEIGHT := 32.0
 const WORLD_FRAME_MARGIN := 14.0
@@ -37,6 +37,14 @@ const UNIT_SPEED_VARIATION := 0.10
 const UNIT_SPAWN_X_VARIATION := 0.30
 const UNIT_LUNGE_DURATION := 0.14
 const UNIT_LUNGE_DISTANCE := 0.18
+const OBSTACLE_SEED := 42517
+const OBSTACLE_PAIR_COUNT := 16
+const OBSTACLE_MIN_ROW := 14
+const OBSTACLE_MAX_ROW := 29
+const OBSTACLE_MAX_PER_ROW := 4
+const OBSTACLE_REPULSION_RADIUS := 1.15
+const OBSTACLE_REPULSION_WEIGHT := 2.40
+const HQ_FALLBACK_BAND := 1.25
 const SPAWNER_MAX_HP := 240.0
 const SPAWNER_PRODUCTION_INTERVAL := 11.5
 const HQ_MAX_HP := 1200.0
@@ -49,6 +57,9 @@ const COLOR_ALLY_DARK := Color("174982")
 const COLOR_ENEMY := Color("e24a57")
 const COLOR_ENEMY_DARK := Color("7c2935")
 const COLOR_NEUTRAL := Color("202a3a")
+const COLOR_OBSTACLE := Color("2b3443")
+const COLOR_OBSTACLE_SIDE := Color("151c28")
+const COLOR_OBSTACLE_EDGE := Color("638b8b")
 const COLOR_TEAL := Color("31d6c8")
 const COLOR_ORANGE := Color("ff9e4a")
 const COLOR_TEXT := Color("edf7f4")
