@@ -283,10 +283,13 @@ func _test_enemy_ai_kind_funding() -> void:
 	if constants.get("UNIT_MELEE", -1) != 0 or constants.get("UNIT_RANGED", -1) != 1 or not _property_names(simulation).has("unit_kinds"):
 		_expect(false, "enemy kind funding fixture requires ranged interfaces")
 		return
+	for row in simulation.config.GRID_ROWS:
+		simulation.ownership[row * simulation.config.GRID_COLUMNS] = simulation.TEAM_ALLY
 	simulation._enemy_build_timer = 0.0
 	simulation.tick(1.0 / 30.0)
 	var enemy_spawners := _spawners_for_team(simulation, simulation.TEAM_ENEMY)
-	_expect(enemy_spawners.size() == 1 and int(enemy_spawners[0].unit_kind) == simulation.UNIT_MELEE, "enemy AI first builds melee from an even cursor")
+	_expect(enemy_spawners.size() == 1 and Vector2i(enemy_spawners[0].cell).x == 1, "enemy AI skips a starting cursor column without owned placement cells")
+	_expect(enemy_spawners.size() == 1 and int(enemy_spawners[0].unit_kind) == simulation.UNIT_MELEE, "enemy AI first successful build is melee")
 	_expect(simulation.enemy_gold == simulation.config.ENEMY_START_GOLD - simulation.config.SPAWNER_COST, "enemy melee build charges melee cost")
 
 	simulation.enemy_gold = simulation.config.RANGED_SPAWNER_COST - 1
@@ -299,7 +302,7 @@ func _test_enemy_ai_kind_funding() -> void:
 	simulation._enemy_build_timer = 0.0
 	simulation.tick(1.0 / 30.0)
 	enemy_spawners = _spawners_for_team(simulation, simulation.TEAM_ENEMY)
-	_expect(enemy_spawners.size() == 2 and int(enemy_spawners[1].unit_kind) == simulation.UNIT_RANGED, "enemy AI alternates to ranged from an odd cursor")
+	_expect(enemy_spawners.size() == 2 and int(enemy_spawners[1].unit_kind) == simulation.UNIT_RANGED, "enemy AI alternates successful builds independently from skipped placement columns")
 	_expect(simulation.enemy_gold == 0, "enemy ranged build charges ranged cost")
 
 

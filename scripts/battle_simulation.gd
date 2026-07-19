@@ -43,6 +43,7 @@ var _ally_income_remainder := 0.0
 var _enemy_income_remainder := 0.0
 var _enemy_build_timer := GameConfig.ENEMY_BUILD_INTERVAL
 var _enemy_build_cursor := 0
+var _enemy_next_unit_kind := UNIT_MELEE
 var _events: Array[Dictionary] = []
 var _enemy_buckets: Array[Array] = []
 var _ally_buckets: Array[Array] = []
@@ -88,6 +89,7 @@ func reset() -> void:
 	_enemy_income_remainder = 0.0
 	_enemy_build_timer = GameConfig.ENEMY_BUILD_INTERVAL
 	_enemy_build_cursor = 0
+	_enemy_next_unit_kind = UNIT_MELEE
 	_rng.seed = 731942
 	_events.clear()
 	_enemy_buckets.clear()
@@ -331,7 +333,7 @@ func _update_enemy_ai(delta: float) -> void:
 	if _enemy_build_timer > 0.0 or _count_spawners(TEAM_ENEMY) >= GameConfig.ENEMY_MAX_SPAWNERS:
 		return
 	_enemy_build_timer += GameConfig.ENEMY_BUILD_INTERVAL
-	var unit_kind := UNIT_RANGED if _enemy_build_cursor % 2 == 1 else UNIT_MELEE
+	var unit_kind := _enemy_next_unit_kind
 	if enemy_gold < _spawner_cost(unit_kind):
 		return
 	for offset in GameConfig.GRID_COLUMNS:
@@ -344,6 +346,7 @@ func _update_enemy_ai(delta: float) -> void:
 			var cell := Vector2i(column, row)
 			if try_build_spawner(TEAM_ENEMY, cell, unit_kind):
 				_enemy_build_cursor = (column + 3) % GameConfig.GRID_COLUMNS
+				_enemy_next_unit_kind = UNIT_RANGED if unit_kind == UNIT_MELEE else UNIT_MELEE
 				return
 
 
