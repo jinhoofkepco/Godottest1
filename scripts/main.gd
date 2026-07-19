@@ -5,16 +5,18 @@ const GameConfig = preload("res://scripts/game_config.gd")
 const BattleSimulationScript = preload("res://scripts/battle_simulation.gd")
 const BuildingViewScene = preload("res://scenes/battle_building.tscn")
 
-@onready var world: Node2D = $World
-@onready var grid: GridBoard = $World/Grid
-@onready var buildings_layer: Node2D = $World/Buildings
-@onready var unit_renderer: UnitRenderer = $World/UnitRenderer
-@onready var fx: DefenseFx = $World/Fx
+@onready var map_view: MapView = $MapView
+@onready var world: Node2D = $MapView
+@onready var grid: GridBoard = $MapView/Grid
+@onready var buildings_layer: Node2D = $MapView/Buildings
+@onready var unit_renderer: UnitRenderer = $MapView/UnitRenderer
+@onready var fx: DefenseFx = $MapView/Fx
 @onready var hud: DefenseHud = $Hud
 
 var simulation: BattleSimulation
 var building_views: Dictionary = {}
 var game_result := ""
+var selected_unit_kind := BattleSimulationScript.UNIT_MELEE
 
 
 func _ready() -> void:
@@ -23,10 +25,18 @@ func _ready() -> void:
 	grid.set_simulation(simulation)
 	unit_renderer.setup(grid, simulation)
 	fx.setup(grid)
-	_frame_world()
+	map_view.setup(grid, Rect2(
+		Vector2(GameConfig.WORLD_FRAME_MARGIN, GameConfig.WORLD_FRAME_TOP),
+		Vector2(
+			GameConfig.VIEW_SIZE.x - GameConfig.WORLD_FRAME_MARGIN * 2.0,
+			GameConfig.VIEW_SIZE.y - GameConfig.WORLD_FRAME_TOP - GameConfig.WORLD_FRAME_BOTTOM
+		)
+	))
 	_sync_building_views()
 	_update_hud()
+	map_view.tile_tapped.connect(try_build_spawner)
 	hud.restart_pressed.connect(_restart)
+	hud.spawner_kind_selected.connect(_on_spawner_kind_selected)
 	hud.show_message("FRONTLINE ACTIVE", GameConfig.COLOR_TEXT)
 	queue_redraw()
 
@@ -41,27 +51,16 @@ func _process(delta: float) -> void:
 		step_simulation(delta)
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if game_result != "":
-		return
-	var tap_position := Vector2(-1, -1)
-	if event is InputEventScreenTouch and event.pressed:
-		tap_position = event.position
-	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		tap_position = event.position
-	if tap_position.x >= 0.0:
-		try_build_spawner(grid.world_to_cell(world.to_local(tap_position)))
-
-
 func try_build_spawner(cell: Vector2i) -> bool:
-	var valid := game_result == "" and simulation.try_build_spawner(simulation.TEAM_ALLY, cell)
+	var valid := game_result == "" and simulation.try_build_spawner(simulation.TEAM_ALLY, cell, selected_unit_kind)
 	fx.show_placement(cell, valid)
 	if valid:
 		_sync_building_views()
 		grid.queue_redraw()
 		_update_hud()
+		hud.show_message("BLUE %s SPAWNER DEPLOYED" % _unit_kind_name(selected_unit_kind), GameConfig.COLOR_ALLY)
 	else:
-		hud.show_message("BUILD BLOCKED", GameConfig.COLOR_ENEMY.lightened(0.25))
+		hud.show_message("%s BUILD BLOCKED" % _unit_kind_name(selected_unit_kind), GameConfig.COLOR_ENEMY.lightened(0.25))
 	return valid
 
 
@@ -106,7 +105,12 @@ func _consume_events(events: Array) -> void:
 				fx.show_territory_change(Vector2i(event.cell), int(event.team))
 				grid.queue_redraw()
 			"spawner_built":
-				hud.show_message("BLUE SPAWNER ONLINE" if int(event.team) == simulation.TEAM_ALLY else "RED SPAWNER ONLINE", GameConfig.COLOR_ALLY if int(event.team) == simulation.TEAM_ALLY else GameConfig.COLOR_ENEMY)
+				var team := int(event.team)
+				var unit_kind := _building_unit_kind(int(event.building_id))
+				hud.show_message(
+					"%s %s SPAWNER ONLINE" % ["BLUE" if team == simulation.TEAM_ALLY else "RED", _unit_kind_name(unit_kind)],
+					GameConfig.COLOR_ALLY if team == simulation.TEAM_ALLY else GameConfig.COLOR_ENEMY
+				)
 
 
 func _sync_building_views() -> void:
@@ -166,20 +170,19 @@ func _finish_match(value: String) -> void:
 	hud.show_result(value)
 
 
-func _frame_world() -> void:
-	var board_bounds := grid.get_board_bounds()
-	var frame_top := 154.0
-	var frame_bottom := 78.0
-	var frame_size := Vector2(
-		GameConfig.VIEW_SIZE.x - GameConfig.WORLD_FRAME_MARGIN * 2.0,
-		GameConfig.VIEW_SIZE.y - frame_top - frame_bottom
-	)
-	var frame_scale := minf(frame_size.x / board_bounds.size.x, frame_size.y / board_bounds.size.y)
-	world.scale = Vector2.ONE * frame_scale
-	world.position = Vector2(
-		(float(GameConfig.VIEW_SIZE.x) - board_bounds.size.x * frame_scale) * 0.5 - board_bounds.position.x * frame_scale,
-		frame_top + (frame_size.y - board_bounds.size.y * frame_scale) * 0.5 - board_bounds.position.y * frame_scale
-	)
+func _building_unit_kind(building_id: int) -> int:
+	for building in simulation.buildings:
+		if int(building.id) == building_id:
+			return int(building.unit_kind)
+	return simulation.UNIT_MELEE
+
+
+func _unit_kind_name(unit_kind: int) -> String:
+	return "RANGED" if unit_kind == simulation.UNIT_RANGED else "MELEE"
+
+
+func _on_spawner_kind_selected(unit_kind: int) -> void:
+	selected_unit_kind = unit_kind
 
 
 func _restart() -> void:

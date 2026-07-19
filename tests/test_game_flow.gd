@@ -1,5 +1,7 @@
 extends RefCounted
 
+const GameConfig = preload("res://scripts/game_config.gd")
+
 var failures: Array[String] = []
 
 
@@ -12,6 +14,8 @@ func run(tree: SceneTree) -> Array[String]:
 	await _test_dynamic_building(tree, main_scene)
 	await _test_production_and_feedback(tree, main_scene)
 	await _test_ranged_presentation(tree, main_scene)
+	await _test_map_view_transform_and_input(tree, main_scene)
+	await _test_hud_spawner_selection(tree, main_scene)
 	await _test_batched_lunge(tree, main_scene)
 	await _test_zero_screen_shake(tree, main_scene)
 	await _test_terminal_routes(tree, main_scene)
@@ -45,8 +49,10 @@ func _test_dynamic_building(tree: SceneTree, main_scene: PackedScene) -> void:
 	var tap := InputEventMouseButton.new()
 	tap.button_index = MOUSE_BUTTON_LEFT
 	tap.pressed = true
-	tap.position = main.world.to_global(main.grid.cell_to_world(build_cell))
-	main._unhandled_input(tap)
+	tap.position = main.map_view.to_global(main.grid.cell_to_world(build_cell))
+	main.map_view._unhandled_input(tap)
+	tap.pressed = false
+	main.map_view._unhandled_input(tap)
 	var placed_cell := Vector2i(main.simulation.buildings.back().cell)
 	_expect(placed_cell == build_cell, "screen tap picks and builds the exact isometric tile")
 	_expect(main.simulation.ally_gold == 120, "spawner spends 60 from 180 gold")
@@ -127,6 +133,181 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	var after_tracers: int = int(main.fx.get("ranged_shot_feedback_count")) if fx_properties.has("ranged_shot_feedback_count") else -1
 	_expect(before_tracers >= 0 and after_tracers == before_tracers + 1, "ranged shot events route to a distinct tracer effect")
 	_expect(main.unit_renderer.get_child_count() == 4, "mixed melee and ranged armies still create no per-unit nodes")
+	main.queue_free()
+	await tree.process_frame
+
+
+func _test_map_view_transform_and_input(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	var map_view = main.get_node_or_null("MapView")
+	_expect(map_view != null, "main owns the MapView transform controller")
+	if map_view == null:
+		main.queue_free()
+		await tree.process_frame
+		return
+	_expect(map_view.get_child_count() == 4, "MapView contains grid, buildings, four-batch units, and FX only")
+	_expect(map_view.has_method("set_zoom_at") and map_view.has_method("pan_by") and map_view.has_method("screen_to_cell"), "MapView exposes the narrow view and picking API")
+	if not map_view.has_method("set_zoom_at") or not map_view.has_method("pan_by") or not map_view.has_method("screen_to_cell"):
+		main.queue_free()
+		await tree.process_frame
+		return
+
+	var map_properties := _property_names(map_view)
+	_expect(map_properties.has("zoom_level"), "MapView exposes its relative zoom for controls and tests")
+	if not map_properties.has("zoom_level"):
+		main.queue_free()
+		await tree.process_frame
+		return
+	_expect(is_equal_approx(float(map_view.zoom_level), 1.35), "map starts at 1.35x zoom")
+	var frame_rect: Rect2 = map_view.frame_rect
+	var focus_cell := Vector2i(11, 22)
+	var focus_screen: Vector2 = map_view.to_global(main.grid.cell_to_world(focus_cell))
+	map_view.set_zoom_at(2.0, focus_screen)
+	_expect(map_view.screen_to_cell(focus_screen) == focus_cell, "zooming around a tile keeps exact transformed picking under the focus")
+	map_view.set_zoom_at(99.0, focus_screen)
+	_expect(is_equal_approx(float(map_view.zoom_level), 2.5), "zoom clamps to 2.5x maximum")
+	map_view.set_zoom_at(0.01, focus_screen)
+	_expect(is_equal_approx(float(map_view.zoom_level), 1.0), "zoom clamps to 1.0x minimum")
+	map_view.set_zoom_at(1.35, frame_rect.get_center())
+	var wheel_up := InputEventMouseButton.new()
+	wheel_up.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel_up.pressed = true
+	wheel_up.position = frame_rect.get_center()
+	map_view._unhandled_input(wheel_up)
+	_expect(float(map_view.zoom_level) > 1.35, "mouse wheel zooms around the cursor")
+
+	map_view.set_zoom_at(2.5, focus_screen)
+	var before_pan: Vector2 = map_view.position
+	map_view.pan_by(Vector2(80, 0))
+	_expect(not map_view.position.is_equal_approx(before_pan), "pan moves a zoomed map")
+	map_view.pan_by(Vector2(100000, 100000))
+	var board_bounds: Rect2 = main.grid.get_board_bounds()
+	var first_corner: Vector2 = map_view.to_global(board_bounds.position)
+	var last_corner: Vector2 = map_view.to_global(board_bounds.end)
+	var transformed_bounds := Rect2(
+		Vector2(minf(first_corner.x, last_corner.x), minf(first_corner.y, last_corner.y)),
+		Vector2(absf(last_corner.x - first_corner.x), absf(last_corner.y - first_corner.y))
+	)
+	_expect(frame_rect.intersects(transformed_bounds, true), "pan clamp keeps the board intersecting the play frame")
+	var right_limit: Vector2 = map_view.position
+	map_view.pan_by(Vector2(-200000, -200000))
+	_expect(not map_view.position.is_equal_approx(right_limit), "opposite map edge remains reachable through clamped panning")
+	map_view.pan_by(Vector2(-280, 0))
+	var picked_cell := Vector2i(16, 28)
+	var picked_screen: Vector2 = map_view.to_global(main.grid.cell_to_world(picked_cell))
+	_expect(map_view.screen_to_cell(picked_screen) == picked_cell, "picking stays exact after non-default zoom and pan")
+
+	var tapped_cells: Array[Vector2i] = []
+	map_view.tile_tapped.connect(func(cell: Vector2i) -> void: tapped_cells.append(cell))
+	var drag_origin := Vector2(250, 470)
+	var mouse_press := InputEventMouseButton.new()
+	mouse_press.button_index = MOUSE_BUTTON_LEFT
+	mouse_press.pressed = true
+	mouse_press.position = drag_origin
+	map_view._unhandled_input(mouse_press)
+	var mouse_drag := InputEventMouseMotion.new()
+	mouse_drag.button_mask = MOUSE_BUTTON_MASK_LEFT
+	mouse_drag.position = drag_origin + Vector2(32, 0)
+	mouse_drag.relative = Vector2(32, 0)
+	map_view._unhandled_input(mouse_drag)
+	var mouse_release := InputEventMouseButton.new()
+	mouse_release.button_index = MOUSE_BUTTON_LEFT
+	mouse_release.pressed = false
+	mouse_release.position = mouse_drag.position
+	map_view._unhandled_input(mouse_release)
+	_expect(tapped_cells.is_empty(), "mouse drag suppresses the build click")
+
+	map_view.set_zoom_at(1.35, frame_rect.get_center())
+	var touch_a := InputEventScreenTouch.new()
+	touch_a.index = 0
+	touch_a.pressed = true
+	touch_a.position = Vector2(210, 470)
+	map_view._unhandled_input(touch_a)
+	var touch_b := InputEventScreenTouch.new()
+	touch_b.index = 1
+	touch_b.pressed = true
+	touch_b.position = Vector2(310, 470)
+	map_view._unhandled_input(touch_b)
+	var zoom_before_pinch: float = map_view.zoom_level
+	var pinch_drag := InputEventScreenDrag.new()
+	pinch_drag.index = 1
+	pinch_drag.position = Vector2(350, 470)
+	pinch_drag.relative = Vector2(40, 0)
+	map_view._unhandled_input(pinch_drag)
+	touch_b.pressed = false
+	touch_b.position = pinch_drag.position
+	map_view._unhandled_input(touch_b)
+	touch_a.pressed = false
+	map_view._unhandled_input(touch_a)
+	_expect(float(map_view.zoom_level) > zoom_before_pinch, "two-finger pinch zooms around the gesture midpoint")
+	_expect(tapped_cells.is_empty(), "pinch suppresses tap building")
+
+	var touch_drag_start: Vector2 = frame_rect.get_center()
+	touch_a.pressed = true
+	touch_a.position = touch_drag_start
+	map_view._unhandled_input(touch_a)
+	var one_finger_drag := InputEventScreenDrag.new()
+	one_finger_drag.index = 0
+	one_finger_drag.position = touch_drag_start + Vector2(30, 0)
+	one_finger_drag.relative = Vector2(30, 0)
+	var before_touch_pan: Vector2 = map_view.position
+	map_view._unhandled_input(one_finger_drag)
+	touch_a.pressed = false
+	touch_a.position = one_finger_drag.position
+	map_view._unhandled_input(touch_a)
+	_expect(not map_view.position.is_equal_approx(before_touch_pan), "one-finger drag pans the map")
+	_expect(tapped_cells.is_empty(), "one-finger drag suppresses tap building")
+
+	map_view.setup(main.grid, frame_rect)
+	var touch_tap_cell := Vector2i(5, 36)
+	var touch_tap_screen: Vector2 = map_view.to_global(main.grid.cell_to_world(touch_tap_cell))
+	touch_a.pressed = true
+	touch_a.position = touch_tap_screen
+	map_view._unhandled_input(touch_a)
+	touch_a.pressed = false
+	map_view._unhandled_input(touch_a)
+	_expect(tapped_cells == [touch_tap_cell], "stationary single touch emits the exact tapped tile")
+
+	var tap_cell := Vector2i(4, 36)
+	var tap_screen: Vector2 = map_view.to_global(main.grid.cell_to_world(tap_cell))
+	mouse_press.position = tap_screen
+	map_view._unhandled_input(mouse_press)
+	mouse_release.position = tap_screen
+	map_view._unhandled_input(mouse_release)
+	_expect(tapped_cells == [touch_tap_cell, tap_cell], "stationary mouse click emits the exact tapped tile")
+	main.queue_free()
+	await tree.process_frame
+
+
+func _test_hud_spawner_selection(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	var hud_properties := _property_names(main.hud)
+	_expect(hud_properties.has("melee_button") and hud_properties.has("ranged_button"), "HUD exposes clearly labeled melee and ranged selectors")
+	if not hud_properties.has("melee_button") or not hud_properties.has("ranged_button"):
+		main.queue_free()
+		await tree.process_frame
+		return
+	_expect(main.hud.melee_button.text == "MELEE 60" and main.hud.ranged_button.text == "RANGED 80", "HUD selectors show both spawner costs")
+	_expect(main.selected_unit_kind == main.simulation.UNIT_MELEE, "melee is selected by default")
+	main.hud.ranged_button.pressed.emit()
+	_expect(main.selected_unit_kind == main.simulation.UNIT_RANGED, "ranged HUD selection updates only the requested build kind")
+	var ranged_cell := Vector2i(6, 36)
+	var tap_screen: Vector2 = main.map_view.to_global(main.grid.cell_to_world(ranged_cell))
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = tap_screen
+	main.map_view._unhandled_input(press)
+	press.pressed = false
+	main.map_view._unhandled_input(press)
+	var placed = main.simulation.buildings.back()
+	_expect(Vector2i(placed.cell) == ranged_cell and int(placed.unit_kind) == main.simulation.UNIT_RANGED, "selected ranged kind routes through the next exact tile tap")
+	_expect(main.simulation.ally_gold == GameConfig.START_GOLD - GameConfig.RANGED_SPAWNER_COST, "ranged placement spends 80 gold")
+	_expect("RANGED" in main.hud.message_label.text, "placement feedback names the selected spawner type")
 	main.queue_free()
 	await tree.process_frame
 

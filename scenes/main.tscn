@@ -1,24 +1,26 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource path="res://scripts/main.gd" type="Script" id="1_main"]
 [ext_resource path="res://scenes/grid.tscn" type="PackedScene" id="2_grid"]
 [ext_resource path="res://scenes/unit_renderer.tscn" type="PackedScene" id="3_units"]
 [ext_resource path="res://scenes/fx.tscn" type="PackedScene" id="4_fx"]
 [ext_resource path="res://scenes/hud.tscn" type="PackedScene" id="5_hud"]
+[ext_resource path="res://scripts/map_view.gd" type="Script" id="6_map_view"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
 
-[node name="World" type="Node2D" parent="."]
+[node name="MapView" type="Node2D" parent="."]
+script = ExtResource("6_map_view")
 
-[node name="Grid" parent="World" instance=ExtResource("2_grid")]
+[node name="Grid" parent="MapView" instance=ExtResource("2_grid")]
 
-[node name="Buildings" type="Node2D" parent="World"]
+[node name="Buildings" type="Node2D" parent="MapView"]
 y_sort_enabled = true
 z_index = 5
 
-[node name="UnitRenderer" parent="World" instance=ExtResource("3_units")]
+[node name="UnitRenderer" parent="MapView" instance=ExtResource("3_units")]
 
-[node name="Fx" parent="World" instance=ExtResource("4_fx")]
+[node name="Fx" parent="MapView" instance=ExtResource("4_fx")]
 
 [node name="Hud" parent="." instance=ExtResource("5_hud")]
