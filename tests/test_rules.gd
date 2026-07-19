@@ -13,6 +13,7 @@ func run() -> Array[String]:
 	_test_enemy_damage_and_defeat()
 	_test_tower_logical_range()
 	_test_projectile_delivery()
+	_test_semantic_feedback_state()
 	return failures
 
 
@@ -136,7 +137,18 @@ func _test_entity_sort_scene() -> void:
 	_expect(entity_sort != null, "world has one entity sort layer")
 	_expect(entity_sort != null and entity_sort.y_sort_enabled, "entity sort layer enables y sorting")
 	for container_name in ["Enemies", "Towers", "Projectiles"]:
-		_expect(entity_sort != null and entity_sort.get_node_or_null(container_name) != null, "%s live under entity sort" % container_name)
+		var container = entity_sort.get_node_or_null(container_name) if entity_sort != null else null
+		_expect(container != null, "%s live under entity sort" % container_name)
+		_expect(container is Node2D, "%s is a CanvasItem container" % container_name)
+		_expect(container is Node2D and container.y_sort_enabled, "%s propagates y sorting to its children" % container_name)
+	var fx = main.get_node_or_null("World/Fx")
+	_expect(fx != null and fx.get_parent() != entity_sort, "FX overlay lives outside entity sorting")
+	_expect(fx != null and fx.z_index >= 20, "FX overlay has a high world z index")
+	var projectile_scene := load("res://scenes/projectile.tscn")
+	var projectile = projectile_scene.instantiate() if projectile_scene != null else null
+	_expect(projectile != null and projectile.z_index > 0, "projectile tracer keeps positive relative z")
+	if projectile != null:
+		projectile.free()
 	main.free()
 
 
@@ -263,6 +275,113 @@ func _test_projectile_delivery() -> void:
 	moving_projectile.free()
 	moving_enemy.free()
 	enemy.free()
+	grid.free()
+
+
+func _test_semantic_feedback_state() -> void:
+	var config := load("res://scripts/game_config.gd")
+	var grid_script := load("res://scripts/grid.gd")
+	var fx_script := load("res://scripts/fx.gd")
+	var enemy_script := load("res://scripts/enemy.gd")
+	var tower_script := load("res://scripts/tower.gd")
+	var core_script := load("res://scripts/core.gd")
+	if (
+		grid_script == null
+		or not grid_script.can_instantiate()
+		or fx_script == null
+		or not fx_script.can_instantiate()
+		or enemy_script == null
+		or not enemy_script.can_instantiate()
+		or tower_script == null
+		or not tower_script.can_instantiate()
+		or core_script == null
+		or not core_script.can_instantiate()
+	):
+		return
+	var grid = grid_script.new()
+	var enemies := Node2D.new()
+	var fx = fx_script.new()
+	fx.hit_stop_duration = 0.0
+	_expect(fx.has_method("setup"), "FX accepts projection and enemy overlay sources")
+	_expect(fx.has_method("show_placement"), "FX exposes placement feedback")
+	_expect(fx.has_method("show_damage"), "FX exposes damage feedback")
+	_expect(fx.has_method("spawn_kill_burst"), "FX exposes kill feedback")
+	_expect(fx.has_method("show_leak"), "FX exposes leak feedback")
+	if not fx.has_method("setup") or not fx.has_method("show_placement") or not fx.has_method("spawn_kill_burst") or not fx.has_method("show_leak"):
+		fx.free()
+		enemies.free()
+		grid.free()
+		return
+	fx.setup(grid, enemies)
+	fx.show_placement(Vector2i(4, 8), true, config.TOWER_RANGE / config.CELL_SIZE)
+	_expect(fx.last_placement_valid, "valid placement records teal placement mode")
+	_expect(fx.placement_feedback_count == 1 and fx.placement_time_left > 0.0, "valid placement exposes active timer and counter")
+	fx.show_placement(Vector2i(4, 2), false, config.TOWER_RANGE / config.CELL_SIZE)
+	_expect(not fx.last_placement_valid, "invalid placement records red X mode")
+	_expect(fx.placement_feedback_count == 2, "invalid placement is visible instead of silently rejected")
+	fx.show_damage(Vector2(2.5, 4.5), 18.0)
+	_expect(fx.damage_feedback_count == 1, "damage number feedback is observable")
+	fx.spawn_kill_burst(Vector2(2.5, 4.5))
+	_expect(fx.kill_burst_count == 1 and fx.leak_feedback_count == 0, "kill uses its own orange burst counter")
+	_expect(fx.last_feedback_mode == "kill", "kill feedback records a distinct semantic mode")
+	fx.show_leak(Vector2(2.5, 13.0), grid.get_core_anchor())
+	_expect(fx.kill_burst_count == 1 and fx.leak_feedback_count == 1, "leak does not reuse the kill counter")
+	_expect(fx.last_feedback_mode == "leak" and fx.leak_time_left > 0.0, "leak records a distinct red slash mode and timer")
+
+	var enemy = enemy_script.new()
+	enemy.setup(grid, 2, 0.0, 18.0)
+	enemy.take_damage(5.0, enemy.grid_position - Vector2.RIGHT)
+	_expect(enemy.hit_feedback_count == 1 and enemy.hit_flash_left > 0.0, "enemy hit starts white flash state")
+	_expect(enemy.knockback_offset.length() > 0.0, "enemy hit starts view-only knockback")
+	enemy.take_damage(13.0, enemy.grid_position - Vector2.RIGHT)
+	_expect(enemy.death_shrink_left > 0.0 and not enemy.is_queued_for_deletion(), "lethal hit leaves a shrink interval before removal")
+
+	var projectiles := Node2D.new()
+	var tower = tower_script.new()
+	tower.grid_position = Vector2(2.5, 5.5)
+	tower.setup(grid, enemies, projectiles)
+	var live_enemy = enemy_script.new()
+	enemies.add_child(live_enemy)
+	live_enemy.setup(grid, 2, 0.0, 18.0)
+	live_enemy.grid_position = tower.grid_position + Vector2.RIGHT
+	tower._physics_process(0.01)
+	_expect(tower.is_aiming, "tower exposes active aim while a target is in range")
+	_expect(tower.has_method("get_aim_direction"), "tower exposes view-only aim direction for behavior tests")
+	tower._fire(live_enemy)
+	var shot_direction: Vector2 = tower.get_aim_direction() if tower.has_method("get_aim_direction") else Vector2.ZERO
+	_expect(tower.shot_feedback_count == 1, "tower fire feedback has a public shot counter")
+	_expect(tower.recoil_time_left > 0.0 and tower.muzzle_flash_left > 0.0, "recoil and muzzle flash start together")
+	_expect(projectiles.get_child_count() == 1 and projectiles.get_child(0).tracer_time_left > 0.0, "projectile starts a bright tracer interval with the shot")
+	var projectile = projectiles.get_child(0)
+	_expect(projectile.has_method("get_tracer_direction"), "projectile exposes tracer direction for launch synchronization tests")
+	if tower.has_method("get_aim_direction") and projectile.has_method("get_tracer_direction"):
+		_expect(projectile.get_tracer_direction().is_equal_approx(tower.get_aim_direction()), "first tracer frame aligns with the muzzle direction")
+	live_enemy.is_dead = true
+	tower._physics_process(0.01)
+	_expect(not tower.is_aiming, "tower returns to idle after losing its target")
+	_expect(tower.recoil_time_left > 0.0 and tower.muzzle_flash_left > 0.0, "target loss occurs while shot transients remain active")
+	_expect(tower.has_method("get_barrel_recoil_offset"), "tower exposes barrel recoil state independently from shot transients")
+	_expect(tower.has_method("get_muzzle_flash_direction"), "tower exposes preserved muzzle flash direction")
+	if tower.has_method("get_aim_direction"):
+		_expect(tower.get_aim_direction().is_equal_approx(Vector2.UP), "idle barrel recenters instead of retaining its last target")
+	if tower.has_method("get_barrel_recoil_offset"):
+		_expect(tower.get_barrel_recoil_offset().is_zero_approx(), "idle barrel stays centered while recoil timer finishes")
+	if tower.has_method("get_muzzle_flash_direction"):
+		_expect(tower.get_muzzle_flash_direction().is_equal_approx(shot_direction), "active muzzle flash preserves the last shot direction after target loss")
+		_expect(not tower.get_muzzle_flash_direction().is_equal_approx(Vector2.UP), "non-upward muzzle flash does not jump upward on target loss")
+
+	var core = core_script.new()
+	_expect(core.has_method("flash_damage"), "core exposes red damage flash")
+	if core.has_method("flash_damage"):
+		core.flash_damage()
+		_expect(core.damage_flash_count == 1 and core.damage_flash_left > 0.0, "core damage flash exposes counter and timer")
+
+	core.free()
+	tower.free()
+	projectiles.free()
+	enemy.free()
+	fx.free()
+	enemies.free()
 	grid.free()
 
 

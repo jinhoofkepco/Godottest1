@@ -41,6 +41,7 @@ func _ready() -> void:
 	)
 	world.position = _world_base_position
 	core.position = grid.get_core_anchor()
+	fx.setup(grid, enemies)
 	wave_manager.spawn_enemy.connect(_on_spawn_enemy)
 	wave_manager.wave_started.connect(_on_wave_started)
 	wave_manager.wave_cleared.connect(_on_wave_cleared)
@@ -78,7 +79,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func try_place_tower(cell: Vector2i) -> bool:
-	if game_result != "" or gold < GameConfig.TOWER_COST or not grid.can_build(cell):
+	var is_valid: bool = game_result == "" and gold >= GameConfig.TOWER_COST and grid.can_build(cell)
+	fx.show_placement(cell, is_valid, GameConfig.TOWER_RANGE / GameConfig.CELL_SIZE)
+	if not is_valid:
 		return false
 	var tower = TowerScene.instantiate()
 	towers.add_child(tower)
@@ -102,6 +105,7 @@ func damage_core(amount: int) -> void:
 		return
 	core_hp = maxi(0, core_hp - amount)
 	core.set_hp(core_hp)
+	core.flash_damage()
 	_shake_left = shake_duration
 	hud.update_stats(gold, core_hp, wave_manager.current_wave)
 	if core_hp <= 0:
@@ -116,6 +120,7 @@ func _on_spawn_enemy(_wave: int, column: int, speed: float, health: float) -> vo
 	enemy.setup(grid, column, speed, health)
 	enemy.defeated.connect(_on_enemy_defeated)
 	enemy.reached_core.connect(_on_enemy_reached_core)
+	enemy.damaged.connect(_on_enemy_damaged)
 
 
 func _on_enemy_defeated(at_grid: Vector2) -> void:
@@ -123,20 +128,26 @@ func _on_enemy_defeated(at_grid: Vector2) -> void:
 		return
 	gold += GameConfig.KILL_REWARD
 	wave_manager.notify_enemy_removed()
-	fx.spawn_burst(grid.grid_to_screen(at_grid))
+	fx.spawn_kill_burst(at_grid)
 	hud.update_stats(gold, core_hp, wave_manager.current_wave)
 
 
-func _on_enemy_reached_core(_at: Vector2) -> void:
+func _on_enemy_damaged(at_grid: Vector2, amount: float) -> void:
+	fx.show_damage(at_grid, amount)
+
+
+func _on_enemy_reached_core(at_grid: Vector2) -> void:
 	if game_result != "":
 		return
 	damage_core(1)
+	fx.show_leak(at_grid, grid.get_core_anchor())
 	if game_result == "":
 		wave_manager.notify_enemy_removed()
 
 
 func _on_wave_started(wave: int) -> void:
 	hud.update_stats(gold, core_hp, wave)
+	hud.show_wave_banner(wave)
 
 
 func _on_wave_cleared(wave: int) -> void:

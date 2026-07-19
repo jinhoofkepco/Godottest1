@@ -22,11 +22,14 @@ z_index = 8
 y_sort_enabled = true
 z_index = 5
 
-[node name="Enemies" type="Node" parent="World/EntitySort"]
+[node name="Enemies" type="Node2D" parent="World/EntitySort"]
+y_sort_enabled = true
 
-[node name="Towers" type="Node" parent="World/EntitySort"]
+[node name="Towers" type="Node2D" parent="World/EntitySort"]
+y_sort_enabled = true
 
-[node name="Projectiles" type="Node" parent="World/EntitySort"]
+[node name="Projectiles" type="Node2D" parent="World/EntitySort"]
+y_sort_enabled = true
 
 [node name="Fx" parent="World" instance=ExtResource("4_fx")]
 

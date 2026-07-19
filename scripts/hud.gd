@@ -13,12 +13,19 @@ var next_button: Button
 var result_overlay: ColorRect
 var result_label: Label
 var restart_button: Button
+var banner_label: Label
+var banner_wave := 0
+var banner_time_left := 0.0
+var banner_feedback_count := 0
+
+@export var banner_duration := 0.82
 
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build_top_bar()
+	_build_wave_banner()
 	_build_result_overlay()
 
 
@@ -37,6 +44,27 @@ func show_result(result: String) -> void:
 	result_label.text = result
 	result_label.modulate = GameConfig.COLOR_TEAL if result == "VICTORY" else GameConfig.COLOR_ORANGE
 	result_overlay.visible = true
+
+
+func show_wave_banner(wave: int) -> void:
+	banner_wave = wave
+	banner_time_left = banner_duration
+	banner_feedback_count += 1
+	banner_label.text = "WAVE %d" % wave
+	banner_label.visible = true
+	banner_label.modulate = Color.WHITE
+
+
+func _process(delta: float) -> void:
+	if banner_time_left <= 0.0 or not is_instance_valid(banner_label):
+		return
+	banner_time_left = maxf(0.0, banner_time_left - delta)
+	var progress := 1.0 - banner_time_left / banner_duration
+	banner_label.position.y = lerpf(168.0, 194.0, minf(1.0, progress * 2.2))
+	var fade := minf(1.0, banner_time_left / 0.22)
+	banner_label.modulate = Color(GameConfig.COLOR_TEXT, fade)
+	if banner_time_left <= 0.0:
+		banner_label.visible = false
 
 
 func _build_top_bar() -> void:
@@ -112,6 +140,19 @@ func _build_result_overlay() -> void:
 	card.add_child(restart_button)
 
 
+func _build_wave_banner() -> void:
+	banner_label = Label.new()
+	banner_label.position = Vector2(120, 168)
+	banner_label.size = Vector2(300, 64)
+	banner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	banner_label.add_theme_font_size_override("font_size", 36)
+	banner_label.add_theme_color_override("font_color", GameConfig.COLOR_TEXT)
+	banner_label.visible = false
+	banner_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(banner_label)
+
+
 func _stat_label(at: Vector2, width: float) -> Label:
 	var label := Label.new()
 	label.position = at
@@ -141,4 +182,3 @@ func _style_button(button: Button, accent: Color) -> void:
 	button.add_theme_stylebox_override("disabled", disabled)
 	button.add_theme_color_override("font_color", GameConfig.COLOR_TEXT)
 	button.add_theme_color_override("font_disabled_color", Color(GameConfig.COLOR_TEXT, 0.35))
-
