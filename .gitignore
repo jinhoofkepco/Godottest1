@@ -2,6 +2,7 @@
 .godot/
 .import/
 *.import
+.worktrees/
 
 # Local and CI exports
 build/
@@ -12,4 +13,3 @@ export_credentials.cfg
 .DS_Store
 *.tmp
 *.log
-
