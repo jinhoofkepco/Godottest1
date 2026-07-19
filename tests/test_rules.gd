@@ -28,6 +28,7 @@ func _test_grid_projection_and_dynamic_building() -> void:
 		_expect(grid.world_to_cell(grid.cell_to_world(cell)) == cell, "isometric picking round trips %s" % cell)
 	_expect(grid.can_build(Vector2i(3, 17), simulation.TEAM_ALLY), "dynamic blue territory is buildable")
 	_expect(not grid.can_build(Vector2i(3, 3), simulation.TEAM_ALLY), "dynamic red territory rejects blue build")
+	_expect(not grid.can_build(Vector2i(5, 21), simulation.TEAM_ALLY), "blue HQ tile rejects building")
 	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(3.5, 18.5))
 	simulation.recalculate_territory()
 	_expect(not grid.can_build(Vector2i(3, 17), simulation.TEAM_ALLY), "frontline capture immediately revokes blue build permission")
@@ -82,6 +83,11 @@ func _test_simulation_contract() -> void:
 	_expect(is_equal_approx(fixed_simulation.unit_positions[0].y, 18.5), "sub-tick delta accumulates without partial simulation")
 	fixed_simulation.tick(1.0 / 60.0)
 	_expect(fixed_simulation.unit_positions[0].y < 18.5, "two half ticks produce exactly one fixed simulation step")
+	var catch_up_simulation = _new_simulation()
+	catch_up_simulation.spawn_unit(catch_up_simulation.TEAM_ALLY, Vector2(4.5, 18.5))
+	catch_up_simulation.tick(1.0)
+	var expected_catch_up_y: float = 18.5 - catch_up_simulation.config.UNIT_SPEED * 8.0 / 30.0
+	_expect(is_equal_approx(catch_up_simulation.unit_positions[0].y, expected_catch_up_y), "long frame performs at most eight fixed catch-up ticks")
 
 
 func _test_initial_territory() -> void:
@@ -103,9 +109,11 @@ func _test_build_and_economy() -> void:
 		return
 	_expect(simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(5, 18)), "blue builds on blue territory")
 	_expect(simulation.ally_gold == 120, "building spends exactly 60 blue gold")
+	var gold_after_build: int = simulation.ally_gold
 	_expect(not simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(5, 18)), "occupied tile rejects another building")
 	_expect(not simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(5, 3)), "blue cannot build on red territory")
 	_expect(not simulation.try_build_spawner(simulation.TEAM_ENEMY, Vector2i(5, 18)), "red cannot build on blue territory")
+	_expect(simulation.ally_gold == gold_after_build, "invalid build attempts never spend blue gold")
 	var before_income: int = simulation.ally_gold
 	simulation.tick(1.0)
 	_expect(simulation.ally_gold == before_income + 3, "one second grants exact passive income")
