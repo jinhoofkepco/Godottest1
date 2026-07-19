@@ -64,7 +64,8 @@ func get_board_bounds() -> Rect2:
 
 
 func get_core_anchor() -> Vector2:
-	return grid_to_screen(Vector2(float(GameConfig.GRID_COLUMNS) * 0.5, GameConfig.GRID_ROWS))
+	var bounds := get_board_bounds()
+	return Vector2(bounds.get_center().x, bounds.end.y + GameConfig.CORE_ANCHOR_GAP)
 
 
 func _draw() -> void:

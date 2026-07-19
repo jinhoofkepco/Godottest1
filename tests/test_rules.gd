@@ -8,6 +8,7 @@ func run() -> Array[String]:
 	_test_wave_scaling()
 	_test_grid_build_rules()
 	_test_grid_projection()
+	_test_world_framing()
 	_test_entity_sort_scene()
 	_test_enemy_logical_movement()
 	_test_enemy_damage_and_defeat()
@@ -79,7 +80,7 @@ func _test_grid_projection() -> void:
 		grid.free()
 		return
 	_expect(grid.get_board_bounds().is_equal_approx(Rect2(-448, 0, 736, 368)), "projected board bounds include every diamond")
-	_expect(grid.get_core_anchor().is_equal_approx(Vector2(-304, 296)), "core anchor is centered under the final board edge")
+	_expect(grid.get_core_anchor().is_equal_approx(Vector2(-80, 396)), "core anchor is centered below the projected board bounds")
 
 	var logical_points: Array[Vector2] = [
 		Vector2.ZERO,
@@ -125,6 +126,26 @@ func _test_grid_projection() -> void:
 		var picked_cell = grid.world_to_cell(grid.cell_to_world(cell))
 		_expect(not grid.can_build(picked_cell), "projected out-of-board cell is rejected: %s" % cell)
 	grid.free()
+
+
+func _test_world_framing() -> void:
+	var config := load("res://scripts/game_config.gd")
+	var main_scene := load("res://scenes/main.tscn")
+	if config == null or main_scene == null:
+		return
+	var main = main_scene.instantiate()
+	var tree := Engine.get_main_loop() as SceneTree
+	tree.root.add_child(main)
+	var board_bounds: Rect2 = main.grid.get_board_bounds()
+	var frame_height: float = config.VIEW_SIZE.y - config.WORLD_FRAME_TOP - config.WORLD_FRAME_BOTTOM
+	var board_center_y: float = main.world.position.y + board_bounds.get_center().y * main.world.scale.y
+	var frame_center_y: float = config.WORLD_FRAME_TOP + frame_height * 0.5
+	_expect(is_equal_approx(board_center_y, frame_center_y), "projected board is vertically centered inside the post-HUD frame")
+	var core_screen_position: Vector2 = main.world.position + main.core.position * main.world.scale
+	var board_screen_bottom: float = main.world.position.y + board_bounds.end.y * main.world.scale.y
+	_expect(is_equal_approx(core_screen_position.x, config.VIEW_SIZE.x * 0.5), "shared core is horizontally centered on screen")
+	_expect(core_screen_position.y > board_screen_bottom, "shared core is drawn below the projected board")
+	main.free()
 
 
 func _test_entity_sort_scene() -> void:

@@ -37,7 +37,9 @@ func _ready() -> void:
 	world.scale = Vector2.ONE * frame_scale
 	_world_base_position = Vector2(
 		(float(GameConfig.VIEW_SIZE.x) - board_bounds.size.x * frame_scale) * 0.5 - board_bounds.position.x * frame_scale,
-		GameConfig.WORLD_FRAME_TOP - board_bounds.position.y * frame_scale
+		GameConfig.WORLD_FRAME_TOP
+		+ (frame_size.y - board_bounds.size.y * frame_scale) * 0.5
+		- board_bounds.position.y * frame_scale
 	)
 	world.position = _world_base_position
 	core.position = grid.get_core_anchor()
