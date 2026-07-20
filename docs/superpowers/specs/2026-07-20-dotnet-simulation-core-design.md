@@ -53,7 +53,7 @@ Rule tests are rewritten against bulk snapshots/debug commands. Stress tests run
 
 ## .NET and Android build
 
-The project gains a Godot C# project targeting .NET 9 because Godot 4.5 Android C# export requires .NET 9 or newer. Local verification uses the official Godot 4.5 .NET editor and .NET export templates. The existing archived `dulvui/godot-android-export` action has no Mono option, so CI keeps it only for JDK/Android SDK setup, then explicitly installs .NET 9, the Godot 4.5 .NET editor, and matching .NET export templates before import, tests, smoke capture, and debug export.
+The project targets `net9.0`, which the official Godot 4.5 Mono Android export template requires, and the build machine installs the .NET 9 SDK. Local verification uses the official Godot 4.5 .NET editor and .NET export templates. The existing archived `dulvui/godot-android-export` action has no Mono option, so CI keeps it only for JDK/Android SDK setup, then explicitly installs the .NET 9 SDK, the Godot 4.5 .NET editor, and matching .NET export templates before import, tests, smoke capture, and debug export.
 
 Official references:
 

@@ -2,8 +2,21 @@ class_name DefenseMain
 extends Node2D
 
 const GameConfig = preload("res://scripts/game_config.gd")
-const BattleSimulationScript = preload("res://scripts/battle_simulation.gd")
 const BuildingViewScene = preload("res://scenes/battle_building.tscn")
+const TEAM_ENEMY := 1
+const TEAM_ALLY := 2
+const BUILDING_HQ := 0
+const BUILDING_DEFENSE_TOWER := 2
+const BUILDING_DRAGON_LAIR := 3
+const UNIT_MELEE := 0
+const UNIT_RANGED := 1
+const UNIT_DRAGON := 2
+const UNIT_SIEGE := 3
+const BUILD_MELEE_SPAWNER := 0
+const BUILD_RANGED_SPAWNER := 1
+const BUILD_DEFENSE_TOWER := 2
+const BUILD_DRAGON_LAIR := 3
+const BUILD_SIEGE_SPAWNER := 4
 
 @onready var map_view: MapView = $MapView
 @onready var world: Node2D = $MapView
@@ -12,16 +25,17 @@ const BuildingViewScene = preload("res://scenes/battle_building.tscn")
 @onready var unit_renderer: UnitRenderer = $MapView/UnitRenderer
 @onready var fx: DefenseFx = $MapView/Fx
 @onready var hud: DefenseHud = $Hud
+@onready var simulation = $BattleSimulation
 
-var simulation: BattleSimulation
 var building_views: Dictionary = {}
 var game_result := ""
-var selected_build_kind := BattleSimulationScript.BUILD_MELEE_SPAWNER
+var selected_build_kind := BUILD_MELEE_SPAWNER
+var _last_board_version := -1
+var _hud_snapshot: Dictionary = {}
 
 
 func _ready() -> void:
-	simulation = BattleSimulationScript.new()
-	simulation.reset()
+	simulation.call("Reset")
 	grid.set_simulation(simulation)
 	unit_renderer.setup(grid, simulation)
 	fx.setup(grid)
@@ -32,7 +46,7 @@ func _ready() -> void:
 			GameConfig.VIEW_SIZE.y - GameConfig.WORLD_FRAME_TOP - GameConfig.WORLD_FRAME_BOTTOM
 		)
 	))
-	_sync_building_views()
+	_sync_board_and_buildings(true)
 	_update_hud()
 	map_view.tile_tapped.connect(try_build_spawner)
 	hud.restart_pressed.connect(_restart)
@@ -52,10 +66,10 @@ func _process(delta: float) -> void:
 
 
 func try_build_spawner(cell: Vector2i) -> bool:
-	var valid := game_result == "" and simulation.try_build(simulation.TEAM_ALLY, cell, selected_build_kind)
+	var valid: bool = game_result == "" and simulation.call("TryBuild", TEAM_ALLY, cell, selected_build_kind)
 	fx.show_placement(cell, valid)
 	if valid:
-		_sync_building_views()
+		_sync_board_and_buildings(true)
 		grid.queue_redraw()
 		_update_hud()
 		hud.show_message("BLUE %s DEPLOYED" % _build_kind_name(selected_build_kind), GameConfig.COLOR_ALLY)
@@ -69,14 +83,15 @@ func step_simulation(delta: float) -> void:
 		return
 	fx.begin_frame()
 	if game_result == "":
-		simulation.tick(delta)
-	_sync_building_views()
+		simulation.call("Step", delta)
+	_sync_board_and_buildings()
 	unit_renderer.advance_visuals(delta)
 	unit_renderer.sync()
-	_consume_event_channels(simulation.drain_event_channels())
+	_consume_event_channels(simulation.call("DrainEvents"))
 	_update_hud()
-	if game_result == "" and simulation.result != "":
-		_finish_match(simulation.result)
+	var result := String(_hud_snapshot.get("result", ""))
+	if game_result == "" and result != "":
+		_finish_match(result)
 
 
 func _consume_event_channels(channels: Dictionary) -> void:
@@ -118,7 +133,7 @@ func _consume_events(events: Array) -> void:
 			"siege_impact":
 				fx.show_siege_impact(Vector2(event.position), int(event.team), float(event.get("radius", GameConfig.SIEGE_BLAST_RADIUS)))
 			"unit_death":
-				unit_renderer.queue_death(Vector2(event.position), int(event.team), int(event.get("unit_kind", simulation.UNIT_MELEE)), Vector2(event.get("direction", Vector2.ZERO)))
+				unit_renderer.queue_death(Vector2(event.position), int(event.team), int(event.get("unit_kind", UNIT_MELEE)), Vector2(event.get("direction", Vector2.ZERO)))
 				fx.show_unit_death(Vector2(event.position), int(event.team))
 			"unit_produced":
 				fx.show_production(Vector2i(event.cell), int(event.team))
@@ -129,7 +144,7 @@ func _consume_events(events: Array) -> void:
 				fx.show_hq_hit(Vector2i(event.cell), int(event.team))
 				_flash_building(int(event.building_id))
 			"building_destroyed":
-				if int(event.kind) == simulation.BUILDING_HQ:
+				if int(event.kind) == BUILDING_HQ:
 					fx.show_hq_destroyed(Vector2i(event.cell), int(event.team))
 				else:
 					fx.show_spawner_destroyed(Vector2i(event.cell), int(event.team))
@@ -140,15 +155,22 @@ func _consume_events(events: Array) -> void:
 			"building_built":
 				var team := int(event.team)
 				hud.show_message(
-					"%s %s ONLINE" % ["BLUE" if team == simulation.TEAM_ALLY else "RED", _building_kind_name(int(event.kind), int(event.unit_kind))],
-					GameConfig.COLOR_ALLY if team == simulation.TEAM_ALLY else GameConfig.COLOR_ENEMY
+					"%s %s ONLINE" % ["BLUE" if team == TEAM_ALLY else "RED", _building_kind_name(int(event.kind), int(event.unit_kind))],
+					GameConfig.COLOR_ALLY if team == TEAM_ALLY else GameConfig.COLOR_ENEMY
 				)
 
 
-func _sync_building_views() -> void:
+func _sync_board_and_buildings(force := false) -> void:
 	if simulation == null:
 		return
-	for record in simulation.buildings:
+	_hud_snapshot = simulation.call("GetHudSnapshot")
+	var version := int(_hud_snapshot.get("board_version", -1))
+	if not force and version == _last_board_version:
+		return
+	var board: Dictionary = simulation.call("GetBoardSnapshot")
+	_last_board_version = version
+	grid.sync_board(board)
+	for record in board.get("buildings", []):
 		var building_id := int(record.id)
 		if bool(record.destroyed):
 			continue
@@ -181,20 +203,14 @@ func _on_building_view_collapsed(building_id: int) -> void:
 func _update_hud() -> void:
 	if simulation == null or not is_instance_valid(hud):
 		return
+	_hud_snapshot = simulation.call("GetHudSnapshot")
 	hud.update_stats(
-		simulation.ally_gold,
-		_building_hp(simulation.ally_hq_id),
-		_building_hp(simulation.enemy_hq_id),
-		simulation.time_remaining,
-		simulation.get_occupancy(simulation.TEAM_ALLY)
+		int(_hud_snapshot.get("ally_gold", 0)),
+		float(_hud_snapshot.get("ally_hq_hp", 0.0)),
+		float(_hud_snapshot.get("enemy_hq_hp", 0.0)),
+		float(_hud_snapshot.get("time_remaining", 0.0)),
+		float(_hud_snapshot.get("occupancy", 0.5))
 	)
-
-
-func _building_hp(building_id: int) -> float:
-	for building in simulation.buildings:
-		if int(building.id) == building_id:
-			return float(building.hp)
-	return 0.0
 
 
 func _finish_match(value: String) -> void:
@@ -204,31 +220,31 @@ func _finish_match(value: String) -> void:
 
 
 func _unit_kind_name(unit_kind: int) -> String:
-	if unit_kind == simulation.UNIT_DRAGON:
+	if unit_kind == UNIT_DRAGON:
 		return "DRAGON"
-	if unit_kind == simulation.UNIT_SIEGE:
+	if unit_kind == UNIT_SIEGE:
 		return "SIEGE"
-	return "RANGED" if unit_kind == simulation.UNIT_RANGED else "MELEE"
+	return "RANGED" if unit_kind == UNIT_RANGED else "MELEE"
 
 
 func _build_kind_name(build_kind: int) -> String:
 	match build_kind:
-		simulation.BUILD_RANGED_SPAWNER:
+		BUILD_RANGED_SPAWNER:
 			return "RANGED SPAWNER"
-		simulation.BUILD_DEFENSE_TOWER:
+		BUILD_DEFENSE_TOWER:
 			return "DEFENSE TOWER"
-		simulation.BUILD_DRAGON_LAIR:
+		BUILD_DRAGON_LAIR:
 			return "DRAGON LAIR"
-		simulation.BUILD_SIEGE_SPAWNER:
+		BUILD_SIEGE_SPAWNER:
 			return "SIEGE SPAWNER"
 		_:
 			return "MELEE SPAWNER"
 
 
 func _building_kind_name(kind: int, unit_kind: int) -> String:
-	if kind == simulation.BUILDING_DEFENSE_TOWER:
+	if kind == BUILDING_DEFENSE_TOWER:
 		return "DEFENSE TOWER"
-	if kind == simulation.BUILDING_DRAGON_LAIR:
+	if kind == BUILDING_DRAGON_LAIR:
 		return "DRAGON LAIR"
 	return "%s SPAWNER" % _unit_kind_name(unit_kind)
 

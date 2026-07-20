@@ -13,7 +13,7 @@ permissions:
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       GODOT_ANDROID_KEYSTORE_DEBUG_PATH: /tmp/godottest1/debug.keystore
       GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
@@ -48,6 +48,31 @@ jobs:
           godot-channel: stable
           working-directory: .
 
+      - name: Set up .NET 9 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install official Godot 4.5 .NET editor and Mono templates
+        env:
+          GODOT_RELEASE: 4.5-stable
+        run: |
+          curl -fL --retry 5 --retry-delay 3 \
+            -o "$RUNNER_TEMP/godot-mono.zip" \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_RELEASE}/Godot_v4.5-stable_mono_linux_x86_64.zip"
+          unzip -q "$RUNNER_TEMP/godot-mono.zip" -d "$RUNNER_TEMP/godot-mono"
+          sudo mkdir -p /opt/godot-4.5-mono
+          sudo cp -R "$RUNNER_TEMP/godot-mono/Godot_v4.5-stable_mono_linux_x86_64/." /opt/godot-4.5-mono/
+          sudo ln -sf /opt/godot-4.5-mono/Godot_v4.5-stable_mono_linux.x86_64 /usr/local/bin/godot
+          curl -fL --retry 5 --retry-delay 3 \
+            -o "$RUNNER_TEMP/godot-mono-templates.tpz" \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_RELEASE}/Godot_v4.5-stable_mono_export_templates.tpz"
+          mkdir -p "$RUNNER_TEMP/godot-mono-templates" "$HOME/.local/share/godot/export_templates/4.5.stable.mono"
+          unzip -q "$RUNNER_TEMP/godot-mono-templates.tpz" -d "$RUNNER_TEMP/godot-mono-templates"
+          cp -R "$RUNNER_TEMP/godot-mono-templates/templates/." "$HOME/.local/share/godot/export_templates/4.5.stable.mono/"
+          godot --version | grep -F '4.5.stable.mono'
+          dotnet --version
+
       - name: Configure Godot Java SDK path
         run: |
           sed -i '/export\/android\/java_sdk_path/d' ~/.config/godot/editor_settings-4.tres
@@ -55,11 +80,14 @@ jobs:
 
       - name: Run headless verification
         run: |
+          dotnet build --nologo
           godot --headless --path . --import
+          godot --headless --path . -s tests/run_dotnet_port.gd
           godot --headless --path . -s tests/run_rules.gd
           godot --headless --path . -s tests/run_game_flow.gd
           godot --headless --path . -s tests/validate_unit_atlas.gd
-          STRESS_TICK_BUDGET_MS=30.0 STRESS_P95_BUDGET_MS=55.0 STRESS_RENDER_BUDGET_MS=10.0 godot --headless --path . -s tests/run_stress.gd
+          godot --headless --path . -s tests/run_balance.gd
+          STRESS_600_BUDGET_MS=4.0 STRESS_3000_BUDGET_MS=20.0 godot --headless --path . -s tests/run_stress.gd
           godot --headless --path . --scene res://scenes/main.tscn --quit-after 180
 
       - name: Run unattended visual QA
@@ -84,6 +112,10 @@ jobs:
         run: |
           godot --headless --path . --export-debug Android build/godottest1.apk
           test -s build/godottest1.apk
+          unzip -l build/godottest1.apk | grep -Fq 'assets/.godot/mono/publish/arm64/godottest1.dll'
+          apk_signer_bin="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -n "$apk_signer_bin"
+          "$apk_signer_bin" verify --verbose build/godottest1.apk
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

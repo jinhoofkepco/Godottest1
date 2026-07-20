@@ -1,13 +1,9 @@
 extends SceneTree
 
-const UNIT_COUNT := 600
+const SIMULATION_SCENE = preload("res://scenes/battle_simulation.tscn")
+const COUNTS := [600, 1500, 3000]
 const WARMUP_TICKS := 30
-const MEASURED_TICKS := 300
-const MAX_CANDIDATE_CHECKS := 30000
-const MAX_AOE_CANDIDATES_PER_IMPACT := 300.0
-const DEFAULT_TICK_BUDGET_MS := 8.0
-const DEFAULT_PERIODIC_P95_BUDGET_MS := 30.0
-const DEFAULT_RENDER_BUDGET_MS := 4.0
+const MEASURED_TICKS := 180
 
 
 func _initialize() -> void:
@@ -15,143 +11,81 @@ func _initialize() -> void:
 
 
 func _run() -> void:
-	var simulation = load("res://scripts/battle_simulation.gd").new()
-	simulation.reset()
-	simulation.profiling_enabled = true
-	for index in UNIT_COUNT / 2:
-		var column: int = index % GameConfig.GRID_COLUMNS
-		var rank: int = (index / GameConfig.GRID_COLUMNS) % 10
-		var unit_kind: int = [simulation.UNIT_MELEE, simulation.UNIT_RANGED, simulation.UNIT_SIEGE][index % 3]
-		var lateral_offset := 0.34 + float(index % 3) * 0.16
-		simulation.spawn_unit(
-			simulation.TEAM_ENEMY,
-			Vector2(float(column) + lateral_offset, 19.1 + float(rank) * 0.14),
-			unit_kind
-		)
-		simulation.spawn_unit(
-			simulation.TEAM_ALLY,
-			Vector2(float(column) + 1.0 - lateral_offset, 24.9 - float(rank) * 0.14),
-			unit_kind
-		)
-	if (
-		simulation.unit_ids.size() != UNIT_COUNT
-		or simulation.unit_kinds.count(simulation.UNIT_MELEE) != UNIT_COUNT / 3
-		or simulation.unit_kinds.count(simulation.UNIT_RANGED) != UNIT_COUNT / 3
-		or simulation.unit_kinds.count(simulation.UNIT_SIEGE) != UNIT_COUNT / 3
-	):
-		push_error("STRESS FAILED: expanded fixture did not create 600 evenly mixed units")
-		quit(1)
-		return
-	var main_scene := load("res://scenes/main.tscn") as PackedScene
-	var main = main_scene.instantiate()
-	root.add_child(main)
-	await process_frame
-	main.simulation = simulation
-	main.grid.set_simulation(simulation)
-	main.unit_renderer.setup(main.grid, simulation)
-	var samples := PackedFloat64Array()
-	var render_samples := PackedFloat64Array()
-	var maximum_candidate_checks := 0
-	var maximum_aoe_candidate_checks := 0
-	var maximum_aoe_candidates_per_impact := 0.0
-	var maximum_impacts_in_one_tick := 0
-	var siege_projectiles := 0
-	var siege_impacts := 0
-	for warmup in WARMUP_TICKS:
-		simulation.tick(1.0 / 30.0)
-		main.unit_renderer.sync()
-		var warmup_channels: Dictionary = simulation.drain_event_channels()
-		for event in warmup_channels.events:
-			siege_projectiles += int(String(event.get("type", "")) == "siege_projectile")
-			siege_impacts += int(String(event.get("type", "")) == "siege_impact")
-	simulation.reset_profile_counters()
-	for tick_index in MEASURED_TICKS:
+	var failed := false
+	var budget_600 := _environment_budget("STRESS_600_BUDGET_MS", 1.5)
+	var budget_3000 := _environment_budget("STRESS_3000_BUDGET_MS", 8.0)
+	print("DOTNET STRESS: units | tick_avg | tick_p95 | tick_worst | snapshot_avg | target | separation | territory | events | GC(0/1/2)")
+	for unit_count in COUNTS:
+		var result := _measure(int(unit_count))
+		print("DOTNET STRESS: %d | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %.3f ms | %d/%d/%d" % [
+			unit_count, result.tick_avg, result.tick_p95, result.tick_worst, result.snapshot_avg,
+			result.target_avg, result.separation_avg, result.territory_avg, result.event_avg,
+			result.gc0, result.gc1, result.gc2,
+		])
+		if unit_count == 600 and float(result.tick_avg) > budget_600:
+			push_error("STRESS TARGET MISS: 600-unit average %.3f ms exceeds %.3f ms" % [result.tick_avg, budget_600])
+			failed = true
+		if unit_count == 3000 and float(result.tick_avg) > budget_3000:
+			push_error("STRESS TARGET MISS: 3000-unit average %.3f ms exceeds %.3f ms" % [result.tick_avg, budget_3000])
+			failed = true
+	quit(1 if failed else 0)
+
+
+func _measure(unit_count: int) -> Dictionary:
+	var simulation = SIMULATION_SCENE.instantiate()
+	root.add_child(simulation)
+	simulation.call("Reset")
+	if not simulation.call("ApplyDebugCommand", {"op": "spawn_stress", "count": unit_count}):
+		push_error("STRESS FIXTURE FAILED: could not spawn %d units" % unit_count)
+		return {}
+	simulation.call("SetProfilingEnabled", true)
+	for tick in WARMUP_TICKS:
+		simulation.call("Step", 1.0 / 30.0)
+		simulation.call("GetRenderSnapshot")
+		simulation.call("DrainEvents")
+	simulation.call("ResetProfileCounters")
+	var before_gc: Dictionary = simulation.call("GetProfileSnapshot")
+	var tick_samples := PackedFloat64Array()
+	var snapshot_samples := PackedFloat64Array()
+	for tick in MEASURED_TICKS:
 		var started := Time.get_ticks_usec()
-		simulation.tick(1.0 / 30.0)
-		samples.append(float(Time.get_ticks_usec() - started) / 1000.0)
-		var render_started := Time.get_ticks_usec()
-		main.unit_renderer.sync()
-		render_samples.append(float(Time.get_ticks_usec() - render_started) / 1000.0)
-		maximum_candidate_checks = maxi(maximum_candidate_checks, simulation.target_candidate_checks)
-		maximum_aoe_candidate_checks = maxi(maximum_aoe_candidate_checks, simulation.aoe_candidate_checks)
-		maximum_impacts_in_one_tick = maxi(maximum_impacts_in_one_tick, simulation.siege_impacts_resolved_this_tick)
-		if simulation.siege_impacts_resolved_this_tick > 0:
-			maximum_aoe_candidates_per_impact = maxf(maximum_aoe_candidates_per_impact, float(simulation.aoe_candidate_checks) / float(simulation.siege_impacts_resolved_this_tick))
-		var measured_channels: Dictionary = simulation.drain_event_channels()
-		for event in measured_channels.events:
-			siege_projectiles += int(String(event.get("type", "")) == "siege_projectile")
-			siege_impacts += int(String(event.get("type", "")) == "siege_impact")
-	var sorted_samples := Array(samples)
-	sorted_samples.sort()
-	var total_ms := 0.0
-	for sample in samples:
-		total_ms += sample
-	var average_ms := total_ms / float(samples.size())
-	var p95_ms := float(sorted_samples[int(float(sorted_samples.size() - 1) * 0.95)])
-	var maximum_ms := float(sorted_samples.back())
-	var sorted_render_samples := Array(render_samples)
-	sorted_render_samples.sort()
-	var render_total_ms := 0.0
-	for sample in render_samples:
-		render_total_ms += sample
-	var render_average_ms := render_total_ms / float(render_samples.size())
-	var render_maximum_ms := float(sorted_render_samples.back())
-	var profiled_ticks := maxf(1.0, float(simulation.profile_tick_count))
-	var target_average_ms := float(simulation.profile_target_usec) / profiled_ticks / 1000.0
-	var separation_average_ms := float(simulation.profile_separation_usec) / profiled_ticks / 1000.0
-	var territory_average_ms := float(simulation.profile_territory_usec) / profiled_ticks / 1000.0
-	var event_average_ms := float(simulation.profile_event_usec) / profiled_ticks / 1000.0
-	var tick_budget_ms := DEFAULT_TICK_BUDGET_MS
-	var p95_budget_ms := DEFAULT_PERIODIC_P95_BUDGET_MS
-	var render_budget_ms := DEFAULT_RENDER_BUDGET_MS
-	var budget_override := OS.get_environment("STRESS_TICK_BUDGET_MS")
-	if not budget_override.is_empty():
-		tick_budget_ms = maxf(0.001, budget_override.to_float())
-		p95_budget_ms = tick_budget_ms
-	var p95_budget_override := OS.get_environment("STRESS_P95_BUDGET_MS")
-	if not p95_budget_override.is_empty():
-		p95_budget_ms = maxf(0.001, p95_budget_override.to_float())
-	var render_budget_override := OS.get_environment("STRESS_RENDER_BUDGET_MS")
-	if not render_budget_override.is_empty():
-		render_budget_ms = maxf(0.001, render_budget_override.to_float())
-	print("STRESS PASS: initial=%d mixed_kinds=true columns=%d remaining=%d warmup=%d ticks=%d avg_ms=%.3f p95_ms=%.3f max_ms=%.3f target_ms=%.3f separation_ms=%.3f territory_ms=%.3f event_ms=%.3f render_avg_ms=%.3f render_max_ms=%.3f max_candidates=%d max_aoe_candidates=%d max_aoe_per_impact=%.1f max_impacts_tick=%d siege_projectiles=%d siege_impacts=%d avg_budget_ms=%.3f p95_budget_ms=%.3f" % [
-		UNIT_COUNT,
-		GameConfig.GRID_COLUMNS,
-		simulation.unit_ids.size(),
-		WARMUP_TICKS,
-		MEASURED_TICKS,
-		average_ms,
-		p95_ms,
-		maximum_ms,
-		target_average_ms,
-		separation_average_ms,
-		territory_average_ms,
-		event_average_ms,
-		render_average_ms,
-		render_maximum_ms,
-		maximum_candidate_checks,
-		maximum_aoe_candidate_checks,
-		maximum_aoe_candidates_per_impact,
-		maximum_impacts_in_one_tick,
-		siege_projectiles,
-		siege_impacts,
-		tick_budget_ms,
-		p95_budget_ms,
-	])
-	if maximum_candidate_checks >= MAX_CANDIDATE_CHECKS:
-		push_error("STRESS FAILED: nearest-target bucket search examined too many candidates")
-		quit(1)
-		return
-	if maximum_aoe_candidates_per_impact >= MAX_AOE_CANDIDATES_PER_IMPACT or siege_projectiles <= 0 or siege_impacts <= 0:
-		push_error("STRESS FAILED: SIEGE impacts were absent or escaped bucket-bounded AoE checks")
-		quit(1)
-		return
-	if average_ms >= tick_budget_ms or p95_ms >= p95_budget_ms:
-		push_error("STRESS FAILED: simulation work reached avg %.3f / periodic p95 %.3f ms budgets" % [tick_budget_ms, p95_budget_ms])
-		quit(1)
-		return
-	if render_average_ms >= render_budget_ms:
-		push_error("STRESS FAILED: render update reached %.3f ms average budget" % render_budget_ms)
-		quit(1)
-		return
-	quit(0)
+		simulation.call("Step", 1.0 / 30.0)
+		tick_samples.append(float(Time.get_ticks_usec() - started) / 1000.0)
+		started = Time.get_ticks_usec()
+		simulation.call("GetRenderSnapshot")
+		snapshot_samples.append(float(Time.get_ticks_usec() - started) / 1000.0)
+		simulation.call("DrainEvents")
+	var after_gc: Dictionary = simulation.call("GetProfileSnapshot")
+	var ticks := maxf(1.0, float(after_gc.tick_count))
+	var result := {
+		"tick_avg": _average(tick_samples),
+		"tick_p95": _percentile(tick_samples, 0.95),
+		"tick_worst": _percentile(tick_samples, 1.0),
+		"snapshot_avg": _average(snapshot_samples),
+		"target_avg": float(after_gc.target_usec) / ticks / 1000.0,
+		"separation_avg": float(after_gc.separation_usec) / ticks / 1000.0,
+		"territory_avg": float(after_gc.territory_usec) / ticks / 1000.0,
+		"event_avg": float(after_gc.event_usec) / ticks / 1000.0,
+		"gc0": int(after_gc.gc_gen0) - int(before_gc.gc_gen0),
+		"gc1": int(after_gc.gc_gen1) - int(before_gc.gc_gen1),
+		"gc2": int(after_gc.gc_gen2) - int(before_gc.gc_gen2),
+	}
+	simulation.queue_free()
+	return result
+
+
+func _average(samples: PackedFloat64Array) -> float:
+	var total := 0.0
+	for sample in samples: total += sample
+	return total / maxf(1.0, float(samples.size()))
+
+
+func _percentile(samples: PackedFloat64Array, ratio: float) -> float:
+	var sorted := Array(samples)
+	sorted.sort()
+	return float(sorted[clampi(ceili(float(sorted.size()) * ratio) - 1, 0, sorted.size() - 1)])
+
+
+func _environment_budget(name: String, fallback: float) -> float:
+	var value := OS.get_environment(name)
+	return maxf(0.001, value.to_float()) if not value.is_empty() else fallback

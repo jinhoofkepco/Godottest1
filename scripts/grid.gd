@@ -4,6 +4,11 @@ extends Node2D
 const GameConfig = preload("res://scripts/game_config.gd")
 
 var simulation
+var _board_version := -1
+var _ownership := PackedByteArray()
+var _blocked := PackedByteArray()
+var _elevation := PackedByteArray()
+var _buildings: Array = []
 
 
 func _ready() -> void:
@@ -12,17 +17,30 @@ func _ready() -> void:
 
 func set_simulation(value) -> void:
 	simulation = value
+	if simulation != null:
+		sync_board(simulation.call("GetBoardSnapshot"))
+	queue_redraw()
+
+
+func sync_board(snapshot: Dictionary) -> void:
+	var version := int(snapshot.get("version", -1))
+	if version == _board_version:
+		return
+	_board_version = version
+	_ownership = snapshot.get("ownership", PackedByteArray())
+	_blocked = snapshot.get("blocked", PackedByteArray())
+	_elevation = snapshot.get("elevation", PackedByteArray())
+	_buildings = snapshot.get("buildings", [])
 	queue_redraw()
 
 
 func can_build(cell: Vector2i, team: int = 2) -> bool:
 	if not _cell_is_valid(cell) or simulation == null:
 		return false
-	var cell_blocked: bool = simulation.is_blocked(cell)
+	var cell_blocked: bool = not _blocked.is_empty() and _blocked[cell.y * GameConfig.GRID_COLUMNS + cell.x] != 0
 	if cell_blocked:
 		return false
-	var current_ownership: PackedByteArray = simulation.get_ownership()
-	return _can_build_with_ownership(cell, team, current_ownership, cell_blocked)
+	return _can_build_with_ownership(cell, team, _ownership, cell_blocked)
 
 
 func _can_build_with_ownership(cell: Vector2i, team: int, current_ownership: PackedByteArray, cell_blocked: bool) -> bool:
@@ -30,7 +48,7 @@ func _can_build_with_ownership(cell: Vector2i, team: int, current_ownership: Pac
 		return false
 	if current_ownership[cell.y * GameConfig.GRID_COLUMNS + cell.x] != team:
 		return false
-	for building in simulation.buildings:
+	for building in _buildings:
 		if not bool(building.destroyed) and Vector2i(building.cell) == cell:
 			return false
 	return true
@@ -107,9 +125,7 @@ func get_core_anchor() -> Vector2:
 
 
 func _draw() -> void:
-	var current_ownership := PackedByteArray()
-	if simulation != null:
-		current_ownership = simulation.get_ownership()
+	var current_ownership := _ownership
 	for depth in GameConfig.GRID_COLUMNS + GameConfig.GRID_ROWS - 1:
 		var first_row := maxi(0, depth - GameConfig.GRID_COLUMNS + 1)
 		var last_row := mini(GameConfig.GRID_ROWS - 1, depth)
@@ -118,7 +134,7 @@ func _draw() -> void:
 			var cell := Vector2i(column, row)
 			var elevation_level := _elevation_at(cell)
 			var color := _cell_color(cell, current_ownership).lightened(float(elevation_level) * GameConfig.ELEVATION_BRIGHTNESS_STEP)
-			var cell_blocked: bool = simulation != null and simulation.is_blocked(cell)
+			var cell_blocked: bool = not _blocked.is_empty() and _blocked[cell.y * GameConfig.GRID_COLUMNS + cell.x] != 0
 			var diamond := _cell_diamond(cell)
 			_draw_cliff_sides(cell, diamond, elevation_level)
 			draw_colored_polygon(diamond, color)
@@ -194,9 +210,9 @@ func _cell_is_valid(cell: Vector2i) -> bool:
 
 
 func _elevation_at(cell: Vector2i) -> int:
-	if not _cell_is_valid(cell) or simulation == null or not simulation.has_method("elevation_at_cell"):
+	if not _cell_is_valid(cell) or _elevation.size() != GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS:
 		return 0
-	return int(simulation.elevation_at_cell(cell))
+	return int(_elevation[cell.y * GameConfig.GRID_COLUMNS + cell.x])
 
 
 func _cell_diamond(cell: Vector2i) -> PackedVector2Array:

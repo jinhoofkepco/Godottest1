@@ -64,6 +64,13 @@ func begin_frame() -> void:
 	minor_effects_dropped_this_frame = 0
 
 
+func clear_all() -> void:
+	_effects.clear()
+	_fragments.clear()
+	begin_frame()
+	queue_redraw()
+
+
 func _reserve_minor_effect() -> bool:
 	if _minor_effects_created_this_frame >= GameConfig.FX_MAX_PER_FRAME:
 		minor_effects_dropped_this_frame += 1
