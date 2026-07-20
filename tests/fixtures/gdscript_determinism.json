@@ -1,0 +1,141 @@
+{
+	"checkpoints": [
+		{
+			"ally_gold": 180,
+			"ally_hq_hp": 7200.0,
+			"ally_occupancy": 0.5,
+			"counts": [
+				0,
+				0,
+				0,
+				0,
+				0,
+				0,
+				0,
+				0
+			],
+			"enemy_gold": 120,
+			"enemy_hq_hp": 7200.0,
+			"result": "",
+			"tick": 0,
+			"time_remaining": 180.0
+		},
+		{
+			"ally_gold": 183,
+			"ally_hq_hp": 7200.0,
+			"ally_occupancy": 0.5,
+			"counts": [
+				0,
+				0,
+				0,
+				0,
+				0,
+				0,
+				0,
+				0
+			],
+			"enemy_gold": 123,
+			"enemy_hq_hp": 7200.0,
+			"result": "",
+			"tick": 30,
+			"time_remaining": 179.0
+		},
+		{
+			"ally_gold": 186,
+			"ally_hq_hp": 7200.0,
+			"ally_occupancy": 0.5,
+			"counts": [
+				1,
+				1,
+				0,
+				0,
+				1,
+				1,
+				0,
+				0
+			],
+			"enemy_gold": 126,
+			"enemy_hq_hp": 7200.0,
+			"result": "",
+			"tick": 60,
+			"time_remaining": 178.0
+		},
+		{
+			"ally_gold": 192,
+			"ally_hq_hp": 7200.0,
+			"ally_occupancy": 0.5,
+			"counts": [
+				2,
+				2,
+				0,
+				0,
+				2,
+				2,
+				0,
+				0
+			],
+			"enemy_gold": 132,
+			"enemy_hq_hp": 7200.0,
+			"result": "",
+			"tick": 120,
+			"time_remaining": 176.0
+		},
+		{
+			"ally_gold": 198,
+			"ally_hq_hp": 7200.0,
+			"ally_occupancy": 0.5,
+			"counts": [
+				3,
+				3,
+				0,
+				0,
+				3,
+				3,
+				0,
+				0
+			],
+			"enemy_gold": 138,
+			"enemy_hq_hp": 7200.0,
+			"result": "",
+			"tick": 180,
+			"time_remaining": 174.0
+		}
+	],
+	"fixed_delta": 0.0333333333333333,
+	"inputs": [
+		{
+			"cell": [
+				8,
+				8
+			],
+			"kind": 0,
+			"team": 1
+		},
+		{
+			"cell": [
+				13,
+				35
+			],
+			"kind": 0,
+			"team": 2
+		},
+		{
+			"cell": [
+				14,
+				8
+			],
+			"kind": 1,
+			"team": 1
+		},
+		{
+			"cell": [
+				7,
+				35
+			],
+			"kind": 1,
+			"team": 2
+		}
+	],
+	"schema": 1,
+	"seed": 731942
+}

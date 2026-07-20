@@ -202,7 +202,8 @@ void vertex() {
 }
 void fragment() {
 	vec2 cell = floor(atlas_data.rg * (atlas_grid - vec2(1.0)) + vec2(0.5));
-	vec2 inset_uv = (UV * (cell_pixels - vec2(2.0)) + vec2(1.0)) / cell_pixels;
+	vec2 frame_uv = vec2(UV.x, atlas_data.a > 0.5 ? 1.0 - UV.y : UV.y);
+	vec2 inset_uv = (frame_uv * (cell_pixels - vec2(2.0)) + vec2(1.0)) / cell_pixels;
 	vec4 sample_color = texture(atlas, vec3((cell + inset_uv) / atlas_grid, atlas_data.b * 3.0));
 	COLOR = vec4(sample_color.rgb * instance_data.g, sample_color.a * instance_data.a);
 }
@@ -329,13 +330,14 @@ func _sync_infantry_batch() -> void:
 		var render_size := get_unit_render_size(unit_kind)
 		var render_scale := render_size / GameConfig.INFANTRY_RENDER_SIZE
 		var atlas_layer := get_atlas_layer(unit_kind, team)
+		var atlas_flip := 1.0 if unit_kind == UNIT_SIEGE else 0.0
 		_write_multimesh_record(
 			buffer,
 			multimesh,
 			draw_index,
 			Transform2D(0.0, render_scale, 0.0, screen_position),
 			Color(1.0, brightness, 0.0, alpha),
-			Color(float(cell_x) / float(GameConfig.INFANTRY_ATLAS_COLUMNS - 1), float(cell_y) / float(GameConfig.INFANTRY_ATLAS_ROWS - 1), float(atlas_layer) / 3.0, 1.0)
+			Color(float(cell_x) / float(GameConfig.INFANTRY_ATLAS_COLUMNS - 1), float(cell_y) / float(GameConfig.INFANTRY_ATLAS_ROWS - 1), float(atlas_layer) / 3.0, atlas_flip)
 		)
 	_upload_multimesh(multimesh, entries.size(), buffer)
 

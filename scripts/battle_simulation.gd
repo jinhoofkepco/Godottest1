@@ -866,7 +866,7 @@ func _update_spawners(delta: float) -> void:
 			continue
 		building.spawn_timer = float(building.spawn_timer) - delta
 		if float(building.spawn_timer) <= 0.0:
-			var production_interval := GameConfig.DRAGON_PRODUCTION_INTERVAL if int(building.kind) == BUILDING_DRAGON_LAIR else GameConfig.SPAWNER_PRODUCTION_INTERVAL
+			var production_interval := GameConfig.DRAGON_PRODUCTION_INTERVAL if int(building.kind) == BUILDING_DRAGON_LAIR else (GameConfig.SIEGE_PRODUCTION_INTERVAL if int(building.unit_kind) == UNIT_SIEGE else GameConfig.SPAWNER_PRODUCTION_INTERVAL)
 			building.spawn_timer = float(building.spawn_timer) + production_interval
 			var cell: Vector2i = building.cell
 			var team := int(building.team)
@@ -1383,7 +1383,7 @@ func _add_building(team: int, kind: int, cell: Vector2i, unit_kind: int) -> int:
 		maximum_hp = GameConfig.DEFENSE_TOWER_MAX_HP
 	elif kind == BUILDING_DRAGON_LAIR:
 		maximum_hp = GameConfig.DRAGON_LAIR_MAX_HP
-	var spawn_timer := GameConfig.DRAGON_PRODUCTION_INTERVAL if kind == BUILDING_DRAGON_LAIR else GameConfig.SPAWNER_PRODUCTION_INTERVAL
+	var spawn_timer := GameConfig.DRAGON_PRODUCTION_INTERVAL if kind == BUILDING_DRAGON_LAIR else (GameConfig.SIEGE_PRODUCTION_INTERVAL if unit_kind == UNIT_SIEGE else GameConfig.SPAWNER_PRODUCTION_INTERVAL)
 	buildings.append({
 		"id": building_id,
 		"team": team,
