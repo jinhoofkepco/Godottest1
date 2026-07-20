@@ -10,6 +10,7 @@ func run_all(tree: SceneTree) -> Array[String]:
 	run_siege_contracts()
 	await _test_determinism_fixture(tree)
 	await _test_siege_production_and_render_flag(tree)
+	await _test_board_delta_boundary(tree)
 	_test_bulk_boundary_contract()
 	return failures
 
@@ -90,6 +91,39 @@ func _test_bulk_boundary_contract() -> void:
 		_expect(not renderer_source.contains(forbidden), "renderer does not pull per-unit field %s" % forbidden)
 	_expect(renderer_source.contains("call(\"GetRenderSnapshot\")"), "renderer consumes one bulk render snapshot")
 	_expect(renderer_source.contains("RenderingServer.multimesh_set_buffer"), "renderer uploads packed buffers directly")
+	_expect(main_source.contains("call(\"GetBoardVersion\")"), "main probes the cheap board version before requesting board data")
+	_expect(main_source.contains("call(\"GetBoardDelta\")"), "main requests a board delta after initial sync")
+
+
+func _test_board_delta_boundary(tree: SceneTree) -> void:
+	var simulation = await _new_simulation(tree)
+	_expect(simulation.has_method("GetBoardVersion"), "C# exposes a cheap board version getter")
+	_expect(simulation.has_method("GetBoardDelta"), "C# exposes a packed board delta channel")
+	if not simulation.has_method("GetBoardVersion") or not simulation.has_method("GetBoardDelta"):
+		simulation.queue_free()
+		return
+	var initial: Dictionary = simulation.call("GetBoardSnapshot")
+	var initial_version := int(simulation.call("GetBoardVersion"))
+	_expect(int(initial.version) == initial_version, "initial board snapshot and cheap version agree")
+	var indices := PackedInt32Array()
+	var owners := PackedInt32Array()
+	for offset in 30:
+		indices.append(5 * GameConfig.GRID_COLUMNS + offset % GameConfig.GRID_COLUMNS + floori(float(offset) / GameConfig.GRID_COLUMNS) * GameConfig.GRID_COLUMNS)
+		owners.append(2)
+	_expect(simulation.call("ApplyDebugCommand", {"op": "force_ownership_delta", "indices": indices, "owners": owners}), "30-cell territory delta fixture is accepted")
+	_expect(int(simulation.call("GetBoardVersion")) == initial_version + 1, "one batch increments the board version once")
+	var delta: Dictionary = simulation.call("GetBoardDelta")
+	_expect(PackedInt32Array(delta.ownership_indices).size() == 30, "board delta contains exactly 30 changed cell indices")
+	_expect(PackedInt32Array(delta.ownership_owners).size() == 30, "board delta contains exactly 30 new owners")
+	var drained: Dictionary = simulation.call("GetBoardDelta")
+	_expect(PackedInt32Array(drained.ownership_indices).is_empty(), "ownership delta ownership is transferred and drained")
+	_expect(PackedInt32Array(drained.ownership_owners).is_empty(), "owner values are drained with their indices")
+	var building_cell := Vector2i(8, 35)
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": 2, "kind": 1, "cell": building_cell, "unit_kind": 0}), "building delta fixture is accepted")
+	var building_delta: Dictionary = simulation.call("GetBoardDelta")
+	_expect(PackedInt32Array(building_delta.blocked_indices) == PackedInt32Array([building_cell.y * GameConfig.GRID_COLUMNS + building_cell.x]), "building delta identifies only its changed blocked cell")
+	_expect(PackedInt32Array(building_delta.blocked_values) == PackedInt32Array([1]), "new building marks its tile unavailable")
+	simulation.queue_free()
 
 
 func _new_simulation(tree: SceneTree):

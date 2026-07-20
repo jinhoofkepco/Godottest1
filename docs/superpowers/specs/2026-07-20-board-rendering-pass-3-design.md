@@ -6,11 +6,11 @@ This pass changes only board presentation and its C#/GDScript transfer path. Sim
 
 ## Chosen approach
 
-Use one `MultiMeshInstance2D` with 242 instances for all diamond tile tops. Each transform is written once at initial board sync, in isometric depth order. A fixed cell-index-to-instance-index table lets later ownership deltas update only the affected instance color and custom data. The tile shader draws the subdued grid edge, optional build marker, elevation-preserving ownership color, and a 0.62-second `TIME`-based territory flash.
+Use one `MultiMeshInstance2D` with `GRID_COLUMNS × GRID_ROWS` instances (the retained 22×44 map is 968 tiles) for all diamond tile tops. The diagnostic's older 242-cell count predates the locked four-times map expansion, so this pass must not shrink the gameplay map. Each transform is written once at initial board sync, in isometric depth order. A fixed cell-index-to-instance-index table lets later ownership deltas update only the affected instance color and custom data. The tile shader draws the subdued grid edge, optional build marker, elevation-preserving ownership color, and a 0.62-second `TIME`-based territory flash.
 
 Rejected alternatives:
 
-- Rebuilding and assigning a complete 242-instance buffer on every ownership change still performs full-board work and violates the delta-only requirement.
+- Rebuilding and assigning a complete 968-instance buffer on every ownership change still performs full-board work and violates the delta-only requirement.
 - One node or polygon per tile removes tessellation but adds hundreds of CanvasItems and draw calls.
 
 ## Layer responsibilities
@@ -34,9 +34,8 @@ Territory recomputation enqueues ownership deltas instead of allocating one `Dic
 
 ## Verification
 
-- Contract tests prove one 242-instance tile MultiMesh, one-time transforms/static terrain, delta-only instance updates, cached frontline redraw, and the absence of territory FX objects.
+- Contract tests prove one 968-instance tile MultiMesh, one-time transforms/static terrain, delta-only instance updates, cached frontline redraw, and the absence of territory FX objects.
 - C# tests prove initial full snapshot, cheap version probing, deduplicated ownership/blocked deltas, and no board snapshot request on an unchanged version.
 - Existing rule, flow, balance, deterministic-port, atlas, and game-flow suites remain green.
 - Smoke capture retains tile colors, elevation brightness, cliffs, frontline, and captures an active shader-driven territory flash.
 - A new Android debug APK is built by the Godot 4.5 .NET workflow, verified, and uploaded as both an Actions artifact and a GitHub Release asset.
-

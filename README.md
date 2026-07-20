@@ -1,6 +1,6 @@
 # Frontline Grid
 
-Godot 4.5 stable .NET + C#/GDScript로 만든 540×960 세로형 아이소메트릭 양군 전선 시뮬레이션입니다. 시뮬레이션 코어는 C#, HUD·입력·FX는 GDScript이며 보병·공성병기·드래곤·건물은 CC0 3D 모델을 자체 베이크한 스프라이트입니다. Android 릴리스 메타데이터는 **1.0.0 (version code 9)** 입니다.
+Godot 4.5 stable .NET + C#/GDScript로 만든 540×960 세로형 아이소메트릭 양군 전선 시뮬레이션입니다. 시뮬레이션 코어는 C#, HUD·입력·FX는 GDScript이며 보병·공성병기·드래곤·건물은 CC0 3D 모델을 자체 베이크한 스프라이트입니다. Android 릴리스 메타데이터는 **1.1.0 (version code 10)** 입니다.
 
 ## 한 판 규칙과 조작
 
@@ -74,17 +74,33 @@ Godot 4.5 자동 밸런스 경로는 파랑이 아무것도 짓지 않을 때 **
 
 | C# 규모 | 틱 평균 | p95 | 최악 | 스냅샷 평균 | GC Gen0/1/2 |
 |---|---:|---:|---:|---:|---:|
-| 600 | **0.691 ms** | 1.408 ms | 2.654 ms | **0.147 ms** | 0/0/0 |
-| 1500 | **1.705 ms** | 4.322 ms | 10.046 ms | **0.291 ms** | 0/0/0 |
-| 3000 | **2.684 ms** | 4.228 ms | 18.184 ms | **0.404 ms** | 1/1/0 |
+| 600 | **0.696 ms** | 1.529 ms | 2.291 ms | **0.147 ms** | 0/0/0 |
+| 1500 | **1.451 ms** | 2.509 ms | 5.467 ms | **0.254 ms** | 0/0/0 |
+| 3000 | **2.605 ms** | 4.140 ms | 13.249 ms | **0.391 ms** | 1/1/0 |
 
-600기 ≤1.5 ms와 3000기 ≤8 ms 평균 목표를 모두 달성했습니다. 3000기에서 한 차례 Gen0/Gen1 수집과 18.184 ms 최악치가 남았습니다. 주 병목은 표적 탐색 0.965 ms와 분리 0.554 ms이며, 180프레임마다 정확 크기 스냅샷·이벤트 배열을 GDScript에 넘기는 경계 할당이 해당 GC의 원인입니다. 평균과 p95는 30 Hz 시뮬 예산 안에 충분히 들어옵니다.
+600기 ≤1.5 ms와 3000기 ≤8 ms 평균 목표를 모두 달성했습니다. 패스 3 재측정에서 3000기는 한 차례 Gen0/Gen1 수집과 13.249 ms 최악치가 남았습니다. 주 병목은 표적 탐색 0.957 ms와 분리 0.544 ms이며, 정확 크기 스냅샷·이벤트 배열을 GDScript에 넘기는 경계 할당이 해당 GC의 원인입니다. 평균과 p95는 30 Hz 시뮬 예산 안에 충분히 들어옵니다.
 
 - 영토는 0.2초마다, 건물 이벤트 때는 즉시 공간 버킷으로 갱신하고 점유율도 같은 시점에 캐시합니다.
 - 유닛은 3개 그룹을 라운드로빈으로 나눠 표적·분리·혼잡 판단만 스태거링하고, 이동·쿨다운·타격·타겟 생존 검사는 매 틱 유지합니다.
 - 고빈도 hit/shot/death는 타입별 PackedArray 소유권 이전 채널을 쓰며, 사소 FX는 프레임당 40개로 제한하고 SIEGE/HQ/승패 이벤트는 제한하지 않습니다. HP바 타이머는 피해 이벤트 때만 갱신합니다.
-- 공개 언어 경계는 프레임당 `Step`, `GetRenderSnapshot`, `DrainEvents`, `GetHudSnapshot`과 필요 시 `TryBuild`/`GetBoardSnapshot` 벌크 호출만 사용합니다. 테스트 전용 명령·스냅샷도 유닛별 반복 호출 없이 묶어서 전달합니다.
+- 공개 언어 경계는 프레임당 `Step`, `GetRenderSnapshot`, `DrainEvents`, `GetHudSnapshot`, 정수형 `GetBoardVersion`과 필요 시 `TryBuild`/`GetBoardDelta` 벌크 호출만 사용합니다. 전체 `GetBoardSnapshot`은 경기 초기 1회만 호출하며, 테스트 전용 명령·스냅샷도 유닛별 반복 호출 없이 묶어서 전달합니다.
 - 프로젝트의 데스크톱·모바일 렌더러는 `gl_compatibility`로 고정돼 있습니다.
+
+## 보드 렌더링 성능 패스 3
+
+현재 맵은 이전 11×22에서 네 배로 확장된 **22×44, 968타일**을 그대로 유지합니다. 타일 상판은 하나의 968-instance `MultiMeshInstance2D`가 처리하며 transform은 초기 한 번만 기록합니다. 절벽 측면은 정적 CanvasItem이 한 번 그린 뒤 다시 만들지 않고, 전선은 캐시된 전용 레이어만 소유권 버전 변경 때 갱신합니다. 소유권 변경은 C#의 변경 인덱스/새 소유자 PackedArray 델타로 전달되어 해당 instance color/custom data만 씁니다. 0.62초 영토 플래시는 타일 custom data의 시작 시간과 셰이더 `TIME`으로 감쇠하므로 셀별 FX 객체와 매 프레임 CPU draw가 없습니다.
+
+2026-07-20 Apple M4, Godot 4.5 stable .NET, OpenGL Compatibility에서 같은 30셀 동시 플립을 3회 워밍업 후 18회 측정했습니다. 변경 전은 968타일 전체 `_draw` 재테셀레이션과 30개 `territory_change` FX, 변경 후는 버전 조회→30셀 델타→MultiMesh instance 갱신과 강제 렌더를 포함합니다.
+
+| 30셀 동시 플립 | 변경 전 전체 draw+FX | 변경 후 delta MultiMesh |
+|---|---:|---:|
+| 전체 평균 | 10.843 ms | **1.544 ms** |
+| 전체 p95 | 11.182 ms | **1.695 ms** |
+| 보드 경계 평균 | 0.047 ms | **0.051 ms** |
+| 렌더 갱신 평균 | 10.795 ms | **1.491 ms** |
+| 렌더 갱신 p95 | 11.134 ms | **1.630 ms** |
+
+렌더 p95는 **85.4% 감소**했고 로컬 목표 ≤2 ms를 달성했습니다. C# 단독 30셀 델타 마샬링은 평균 0.015 ms/p95 0.017 ms였습니다. GitHub 공유 러너의 software-renderer 편차를 고려해 CI 렌더 게이트는 25 ms로 완화하지만, 구조 테스트가 정확히 30개 instance만 갱신되고 전체 sync·transform 재기록·영토 FX 객체가 없음을 별도로 강제합니다.
 
 ## 검증
 
@@ -97,14 +113,15 @@ godot --headless --path . -s tests/run_game_flow.gd
 godot --headless --path . -s tests/validate_unit_atlas.gd
 godot --headless --path . -s tests/run_stress.gd
 godot --headless --path . --scene res://scenes/main.tscn --quit-after 180
+godot --display-driver macos --rendering-method gl_compatibility --audio-driver Dummy --path . -s tests/run_board_stress.gd
 godot --display-driver macos --rendering-method gl_compatibility --audio-driver Dummy --path . -s tests/smoke_capture.gd
 file build/smoke_*.png
 ```
 
-Godot 4.5 .NET 에디터와 .NET SDK 9 이상이 필요합니다. `run_dotnet_port.gd`는 삭제 전 저장한 GDScript 동일 시드 골든 fixture를 C#에 재생해 0/30/60/120/180틱의 병종별 수, 골드, 점유율, 타이머 결정성을 검증합니다. 마지막 캡처 명령은 `smoke_large_army.png`, `smoke_siege_impact.png`, 상하 보정된 `smoke_siege_closeup.png`를 포함한 540×960 PNG 열세 장을 만듭니다.
+Godot 4.5 .NET 에디터와 .NET SDK 9 이상이 필요합니다. `run_dotnet_port.gd`는 삭제 전 저장한 GDScript 동일 시드 골든 fixture를 C#에 재생해 0/30/60/120/180틱의 병종별 수, 골드, 점유율, 타이머 결정성을 검증합니다. 마지막 캡처 명령은 셰이더 플래시가 보이는 `smoke_territory_flash.png`, `smoke_large_army.png`, `smoke_siege_impact.png`, 상하 보정된 `smoke_siege_closeup.png`를 포함한 540×960 PNG 열네 장을 만듭니다.
 
 ## Android debug APK 받기
 
-이 버전의 GitHub Actions 검증 APK를 바로 받을 수 있습니다: [godottest1 v1.0.0 APK 직접 다운로드](https://github.com/jinhoofkepco/Godottest1/releases/download/v1.0.0/godottest1.apk)
+이 버전의 GitHub Actions 검증 APK를 바로 받을 수 있습니다: [godottest1 v1.1.0 APK 직접 다운로드](https://github.com/jinhoofkepco/Godottest1/releases/download/v1.1.0/godottest1.apk)
 
 GitHub Actions 경로는 **Actions → Android Debug APK → 최신 성공 실행 → Artifacts → `godottest1-debug-apk` → `build/godottest1.apk`**입니다. 워크플로가 Godot 4.5 stable, Android SDK/build-tools, export template과 임시 debug keystore를 준비하므로 로컬 Android SDK나 저장소 Secret이 필요하지 않습니다.

@@ -4,7 +4,7 @@
 
 **Goal:** Remove full-board tessellation and per-cell territory FX work by rendering immutable tile geometry once and applying ownership changes as shader-animated per-cell deltas.
 
-**Architecture:** C# exposes a cheap board version and deduplicated board delta channel. `GridBoard` initializes one 242-instance tile MultiMesh, delegates immutable cliffs and cached frontline lines to focused child layers, and updates only changed instance colors/custom data. `DefenseFx` no longer owns territory effects.
+**Architecture:** C# exposes a cheap board version and deduplicated board delta channel. `GridBoard` initializes one map-sized tile MultiMesh (22×44, 968 instances), delegates immutable cliffs and cached frontline lines to focused child layers, and updates only changed instance colors/custom data. `DefenseFx` no longer owns territory effects.
 
 **Tech Stack:** Godot 4.5 .NET, C# `BattleSimulation`, GDScript view/HUD/FX, `MultiMeshInstance2D`, CanvasItem shader, headless and OpenGL smoke tests, GitHub Actions Android export.
 
@@ -31,7 +31,7 @@
 - Produces: failing expectations for `GetBoardVersion`, `GetBoardDelta`, tile MultiMesh counters, static/frontline layers, and territory FX removal.
 
 - [ ] Add tests that require `GetBoardVersion()` and packed ownership/blocked delta arrays after a forced ownership update.
-- [ ] Add live-scene tests requiring exactly 242 tile instances, immutable transform count, 30 incremental color/custom writes, and no `territory_change` object in `DefenseFx`.
+- [ ] Add live-scene tests requiring exactly `GRID_COLUMNS × GRID_ROWS` tile instances, immutable transform count, 30 incremental color/custom writes, and no `territory_change` object in `DefenseFx`.
 - [ ] Add `run_board_stress.gd` with an old-path fallback so the pre-change 30-cell flip frame can be measured.
 - [ ] Run the focused suites and confirm failures are caused by the missing delta/MultiMesh APIs.
 - [ ] Record the pre-change board frame measurement for the README table.
@@ -67,7 +67,7 @@
 - Consumes: initial `GetBoardSnapshot()` and subsequent `GetBoardDelta()` dictionaries.
 - Produces: `GridBoard.sync_initial(snapshot)`, `GridBoard.apply_board_delta(delta)`, one tile MultiMesh, static cliff layer, cached frontline layer, and instrumentation counters.
 
-- [ ] Build a six-vertex diamond `ArrayMesh` and one 242-instance `MultiMesh` with depth-ordered immutable transforms.
+- [ ] Build a diamond `ArrayMesh` and one 968-instance `MultiMesh` with depth-ordered immutable transforms.
 - [ ] Add the tile shader for grid edge, build marker, elevation-colored ownership, and `TIME`-based flash.
 - [ ] Move cliff drawing into `StaticTerrainLayer` and frontline drawing into `FrontlineLayer`.
 - [ ] Implement initial sync and changed-cell updates without `queue_redraw()` on the full grid.
@@ -105,4 +105,3 @@
 - [ ] Record exact before/after numbers and explain any remaining bottleneck in README.
 - [ ] Add board stress to CI and bump Android version metadata.
 - [ ] Commit, push `main`, watch Actions to success, download and verify its APK, then publish the verified binary as a GitHub Release asset.
-

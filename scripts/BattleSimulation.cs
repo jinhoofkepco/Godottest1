@@ -114,6 +114,12 @@ public partial class BattleSimulation : Node
 
     private readonly byte[] _ownership = new byte[BattleConfig.CellCount];
     private readonly byte[] _blocked = new byte[BattleConfig.CellCount];
+    private readonly int[] _pendingOwnershipCells = new int[BattleConfig.CellCount];
+    private readonly byte[] _pendingOwnershipFlags = new byte[BattleConfig.CellCount];
+    private int _pendingOwnershipCount;
+    private readonly int[] _pendingBlockedCells = new int[BattleConfig.CellCount];
+    private readonly byte[] _pendingBlockedFlags = new byte[BattleConfig.CellCount];
+    private int _pendingBlockedCount;
     private byte[] _elevation = new byte[BattleConfig.CellCount];
     private readonly TerrainMap _terrain = new(BattleConfig.GridColumns, BattleConfig.GridRows);
     private readonly FlowField _enemyFlow = new(BattleConfig.GridColumns, BattleConfig.GridRows);
@@ -232,6 +238,7 @@ public partial class BattleSimulation : Node
         _enemyOccupancy = 0.5f;
         _result = string.Empty;
         _decisionCursor = 0;
+        ClearPendingBoardDeltas();
         _boardVersion++;
         _boardSnapshot = null;
         _rng.Seed = 731942;
@@ -259,6 +266,7 @@ public partial class BattleSimulation : Node
         RebuildBuckets();
         RebuildFlowFields();
         RecalculateTerritory(false, false);
+        ClearPendingBoardDeltas();
         ResetProfileCounters();
     }
 
@@ -378,6 +386,7 @@ public partial class BattleSimulation : Node
             Id = id, Team = team, Kind = kind, UnitKind = unitKind, Cell = cell,
             Hp = maximumHp, MaxHp = maximumHp, SpawnTimer = production,
         };
+        QueueBlockedDelta(Index(cell));
         _boardVersion++;
         return id;
     }
@@ -409,4 +418,26 @@ public partial class BattleSimulation : Node
     private static bool Valid(Vector2I cell) => cell.X >= 0 && cell.X < BattleConfig.GridColumns && cell.Y >= 0 && cell.Y < BattleConfig.GridRows;
     private static Vector2I CellAt(Vector2 position) => new(Math.Clamp(Mathf.FloorToInt(position.X), 0, BattleConfig.GridColumns - 1), Math.Clamp(Mathf.FloorToInt(position.Y), 0, BattleConfig.GridRows - 1));
     private bool IsBlocked(Vector2I cell) => Valid(cell) && _blocked[Index(cell)] != 0;
+
+    private void QueueOwnershipDelta(int cellIndex)
+    {
+        if (_pendingOwnershipFlags[cellIndex] != 0) return;
+        _pendingOwnershipFlags[cellIndex] = 1;
+        _pendingOwnershipCells[_pendingOwnershipCount++] = cellIndex;
+    }
+
+    private void QueueBlockedDelta(int cellIndex)
+    {
+        if (_pendingBlockedFlags[cellIndex] != 0) return;
+        _pendingBlockedFlags[cellIndex] = 1;
+        _pendingBlockedCells[_pendingBlockedCount++] = cellIndex;
+    }
+
+    private void ClearPendingBoardDeltas()
+    {
+        _pendingOwnershipCount = 0;
+        _pendingBlockedCount = 0;
+        Array.Clear(_pendingOwnershipFlags);
+        Array.Clear(_pendingBlockedFlags);
+    }
 }

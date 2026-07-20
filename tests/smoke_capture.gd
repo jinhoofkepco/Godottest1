@@ -33,11 +33,12 @@ func _run() -> void:
 	await _capture_closeup("smoke_infantry_closeup.png", false)
 	await _capture_visual_hierarchy()
 	await _capture_elevation_overview()
+	await _capture_territory_flash()
 	await _capture_high_ground()
 	await _capture_cluster("smoke_large_army.png", 360)
 	await _capture_siege_impact()
 	await _capture_closeup("smoke_siege_closeup.png", true)
-	print("SMOKE CAPTURE PASS: 13 frames")
+	print("SMOKE CAPTURE PASS: 14 frames")
 	quit(0)
 
 
@@ -149,6 +150,20 @@ func _capture_elevation_overview() -> void:
 	for index in 50: _spawn(TEAM_ALLY if index % 2 else TEAM_ENEMY, UNIT_MELEE, Vector2(2.5 + float(index % 18), 16.5 + float(index % 12)))
 	main.unit_renderer.sync()
 	await _save("smoke_elevation_overview.png")
+
+
+func _capture_territory_flash() -> void:
+	_reset()
+	var indices := PackedInt32Array()
+	var owners := PackedInt32Array()
+	for offset in 30:
+		var column := offset % GameConfig.GRID_COLUMNS
+		var row := 5 + floori(float(offset) / GameConfig.GRID_COLUMNS)
+		indices.append(row * GameConfig.GRID_COLUMNS + column)
+		owners.append(TEAM_ALLY)
+	main.simulation.call("ApplyDebugCommand", {"op": "force_ownership_delta", "indices": indices, "owners": owners})
+	main._sync_board_and_buildings()
+	await _save("smoke_territory_flash.png")
 
 
 func _capture_high_ground() -> void:

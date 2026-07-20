@@ -21,6 +21,7 @@ func run(tree: SceneTree) -> Array[String]:
 	_expect(main_scene != null, "main scene exists")
 	if main_scene == null: return failures
 	await _test_scene_and_bulk_render(tree, main_scene)
+	await _test_incremental_board_render(tree, main_scene)
 	await _test_build_selection_and_picking(tree, main_scene)
 	await _test_zoom_grounding_and_zero_shake(tree, main_scene)
 	await _test_event_feedback_and_terminal_routes(tree, main_scene)
@@ -32,6 +33,41 @@ func _spawn_main(tree: SceneTree, main_scene: PackedScene):
 	tree.root.add_child(main)
 	await tree.process_frame
 	return main
+
+
+func _test_incremental_board_render(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = await _spawn_main(tree, main_scene)
+	_expect(main.grid.has_method("get_tile_instance_count"), "board exposes its tile MultiMesh instance count")
+	_expect(main.grid.has_method("apply_board_delta"), "board accepts packed incremental deltas")
+	if not main.grid.has_method("get_tile_instance_count") or not main.grid.has_method("apply_board_delta"):
+		main.queue_free()
+		await tree.process_frame
+		return
+	var expected_tiles := GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS
+	_expect(main.grid.get_tile_instance_count() == expected_tiles, "one tile MultiMesh owns every fixed map tile instance")
+	_expect(main.grid.tile_transform_write_count == expected_tiles, "tile transforms are initialized exactly once")
+	var initial_full_syncs: int = main.grid.full_sync_count
+	var initial_transforms: int = main.grid.tile_transform_write_count
+	var initial_updates: int = main.grid.tile_incremental_update_count
+	var indices := PackedInt32Array()
+	var owners := PackedInt32Array()
+	for offset in 30:
+		indices.append(5 * GameConfig.GRID_COLUMNS + offset % GameConfig.GRID_COLUMNS + floori(float(offset) / GameConfig.GRID_COLUMNS) * GameConfig.GRID_COLUMNS)
+		owners.append(TEAM_ALLY)
+	_expect(main.simulation.call("ApplyDebugCommand", {"op": "force_ownership_delta", "indices": indices, "owners": owners}), "live board accepts a 30-cell territory push")
+	main._sync_board_and_buildings()
+	_expect(main.grid.full_sync_count == initial_full_syncs, "territory push does not rebuild the full board")
+	_expect(main.grid.tile_transform_write_count == initial_transforms, "territory push never rewrites immutable tile transforms")
+	_expect(main.grid.tile_incremental_update_count - initial_updates == 30, "territory push updates exactly 30 tile instances")
+	_expect(main.grid.last_flash_update_count == 30, "all 30 changed tiles receive shader flash timestamps")
+	_expect(main.grid.get_static_terrain_redraw_count() == 1, "immutable cliff geometry draws once")
+	var fx_source := FileAccess.get_file_as_string("res://scripts/fx.gd")
+	var grid_source := FileAccess.get_file_as_string("res://scripts/grid.gd")
+	_expect(not fx_source.contains("territory_change"), "DefenseFx has no per-cell territory effect path")
+	_expect(not grid_source.contains("func _draw()"), "GridBoard no longer tessellates all tile geometry in _draw")
+	_expect(grid_source.contains("set_instance_color") and grid_source.contains("set_instance_custom_data"), "ownership deltas update only tile instance attributes")
+	main.queue_free()
+	await tree.process_frame
 
 
 func _test_scene_and_bulk_render(tree: SceneTree, main_scene: PackedScene) -> void:

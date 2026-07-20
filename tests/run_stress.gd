@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SIMULATION_SCENE = preload("res://scenes/battle_simulation.tscn")
+const GameConfig = preload("res://scripts/game_config.gd")
 const COUNTS := [600, 1500, 3000]
 const WARMUP_TICKS := 30
 const MEASURED_TICKS := 180
@@ -28,6 +29,14 @@ func _run() -> void:
 		if unit_count == 3000 and float(result.tick_avg) > budget_3000:
 			push_error("STRESS TARGET MISS: 3000-unit average %.3f ms exceeds %.3f ms" % [result.tick_avg, budget_3000])
 			failed = true
+	var board_delta := _measure_board_delta()
+	print("BOARD DELTA STRESS: cells=%d boundary_avg=%.3f ms boundary_p95=%.3f ms" % [board_delta.cells, board_delta.average, board_delta.p95])
+	if int(board_delta.cells) != 30:
+		push_error("BOARD DELTA TARGET MISS: expected 30 changed cells, received %d" % board_delta.cells)
+		failed = true
+	if float(board_delta.p95) > _environment_budget("BOARD_DELTA_BUDGET_MS", 0.25):
+		push_error("BOARD DELTA TARGET MISS: p95 %.3f ms exceeds boundary budget" % board_delta.p95)
+		failed = true
 	quit(1 if failed else 0)
 
 
@@ -72,6 +81,33 @@ func _measure(unit_count: int) -> Dictionary:
 	}
 	simulation.queue_free()
 	return result
+
+
+func _measure_board_delta() -> Dictionary:
+	var simulation = SIMULATION_SCENE.instantiate()
+	root.add_child(simulation)
+	simulation.call("Reset")
+	simulation.call("GetBoardSnapshot")
+	var indices := PackedInt32Array()
+	for offset in 30:
+		var column := offset % GameConfig.GRID_COLUMNS
+		var row := 5 + floori(float(offset) / GameConfig.GRID_COLUMNS)
+		indices.append(row * GameConfig.GRID_COLUMNS + column)
+	var samples := PackedFloat64Array()
+	var last_count := 0
+	for round_index in 121:
+		var owners := PackedInt32Array()
+		for offset in 30:
+			owners.append(2 if (round_index + offset) % 2 == 0 else 1)
+		simulation.call("ApplyDebugCommand", {"op": "force_ownership_delta", "indices": indices, "owners": owners})
+		var started := Time.get_ticks_usec()
+		simulation.call("GetBoardVersion")
+		var delta: Dictionary = simulation.call("GetBoardDelta")
+		if round_index > 0:
+			samples.append(float(Time.get_ticks_usec() - started) / 1000.0)
+			last_count = PackedInt32Array(delta.ownership_indices).size()
+	simulation.queue_free()
+	return {"cells": last_count, "average": _average(samples), "p95": _percentile(samples, 0.95)}
 
 
 func _average(samples: PackedFloat64Array) -> float:

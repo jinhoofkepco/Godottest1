@@ -69,8 +69,7 @@ func try_build_spawner(cell: Vector2i) -> bool:
 	var valid: bool = game_result == "" and simulation.call("TryBuild", TEAM_ALLY, cell, selected_build_kind)
 	fx.show_placement(cell, valid)
 	if valid:
-		_sync_board_and_buildings(true)
-		grid.queue_redraw()
+		_sync_board_and_buildings()
 		_update_hud()
 		hud.show_message("BLUE %s DEPLOYED" % _build_kind_name(selected_build_kind), GameConfig.COLOR_ALLY)
 	else:
@@ -149,9 +148,6 @@ func _consume_events(events: Array) -> void:
 				else:
 					fx.show_spawner_destroyed(Vector2i(event.cell), int(event.team))
 				_start_building_destroy(int(event.building_id))
-			"territory_changed":
-				fx.show_territory_change(Vector2i(event.cell), int(event.team))
-				grid.queue_redraw()
 			"building_built":
 				var team := int(event.team)
 				hud.show_message(
@@ -163,14 +159,18 @@ func _consume_events(events: Array) -> void:
 func _sync_board_and_buildings(force := false) -> void:
 	if simulation == null:
 		return
-	_hud_snapshot = simulation.call("GetHudSnapshot")
-	var version := int(_hud_snapshot.get("board_version", -1))
+	var version := int(simulation.call("GetBoardVersion"))
 	if not force and version == _last_board_version:
 		return
-	var board: Dictionary = simulation.call("GetBoardSnapshot")
-	_last_board_version = version
-	grid.sync_board(board)
-	for record in board.get("buildings", []):
+	var board_data: Dictionary
+	if _last_board_version < 0 or force:
+		board_data = simulation.call("GetBoardSnapshot")
+		grid.sync_initial(board_data)
+	else:
+		board_data = simulation.call("GetBoardDelta")
+		grid.apply_board_delta(board_data)
+	_last_board_version = int(board_data.get("version", version))
+	for record in board_data.get("buildings", []):
 		var building_id := int(record.id)
 		if bool(record.destroyed):
 			continue

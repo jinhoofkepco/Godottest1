@@ -425,6 +425,7 @@ public partial class BattleSimulation
         _events.Add(new GDictionary { ["type"] = type, ["team"] = building.Team, ["building_id"] = id, ["cell"] = building.Cell });
         if (building.Hp > 0f) return;
         building.Destroyed = true;
+        QueueBlockedDelta(Index(building.Cell));
         _events.Add(new GDictionary { ["type"] = "building_destroyed", ["team"] = building.Team, ["building_id"] = id, ["cell"] = building.Cell, ["kind"] = building.Kind });
         RebuildFlowFields();
         if (building.Kind == BuildingHq) _result = attackerTeam == TeamAlly ? "VICTORY" : "DEFEAT";

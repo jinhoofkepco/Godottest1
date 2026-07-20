@@ -7,7 +7,7 @@ public partial class BattleSimulation
 {
     public GDictionary GetDebugSnapshot()
     {
-        var buildings = (GArray)GetBoardSnapshot()["buildings"];
+        var buildings = BuildBuildingsSnapshot();
         return new GDictionary
         {
             ["unit_count"] = _unitCount,
@@ -152,10 +152,36 @@ public partial class BattleSimulation
             {
                 byte[] values = command.TryGetValue("values", out Variant variant) ? variant.AsByteArray() : Array.Empty<byte>();
                 if (values.Length != BattleConfig.CellCount) return false;
-                Array.Copy(values, _ownership, values.Length);
-                _boardVersion++;
+                bool changed = false;
+                for (int i = 0; i < values.Length; i++)
+                {
+                    if (_ownership[i] == values[i]) continue;
+                    _ownership[i] = values[i];
+                    QueueOwnershipDelta(i);
+                    changed = true;
+                }
+                if (changed) _boardVersion++;
                 RecalculateTerritory(false, true);
                 return true;
+            }
+            case "force_ownership_delta":
+            {
+                int[] indices = command.TryGetValue("indices", out Variant indexVariant) ? indexVariant.AsInt32Array() : Array.Empty<int>();
+                int[] owners = command.TryGetValue("owners", out Variant ownerVariant) ? ownerVariant.AsInt32Array() : Array.Empty<int>();
+                if (indices.Length == 0 || indices.Length != owners.Length) return false;
+                bool changed = false;
+                for (int i = 0; i < indices.Length; i++)
+                {
+                    int cellIndex = indices[i];
+                    int owner = owners[i];
+                    if (cellIndex < 0 || cellIndex >= BattleConfig.CellCount || (owner != TeamEnemy && owner != TeamAlly)) return false;
+                    if (_ownership[cellIndex] == owner) continue;
+                    _ownership[cellIndex] = (byte)owner;
+                    QueueOwnershipDelta(cellIndex);
+                    changed = true;
+                }
+                if (changed) _boardVersion++;
+                return changed;
             }
             case "set_gold":
                 _allyGold = DInt(command, "ally", _allyGold);

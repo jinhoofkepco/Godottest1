@@ -18,7 +18,6 @@ const DARK_DEBRIS := Color("182033")
 @export var production_duration := 0.58
 @export var building_hit_duration := 0.28
 @export var building_destroy_duration := 0.72
-@export var territory_duration := 0.62
 @export var hq_hit_duration := 0.48
 @export var fragment_count := 7
 
@@ -31,7 +30,6 @@ var unit_death_feedback_count := 0
 var production_feedback_count := 0
 var spawner_hit_feedback_count := 0
 var spawner_destroyed_feedback_count := 0
-var territory_change_feedback_count := 0
 var hq_hit_feedback_count := 0
 var hq_destroyed_feedback_count := 0
 var last_feedback_mode := ""
@@ -145,12 +143,6 @@ func show_spawner_destroyed(cell: Vector2i, team: int) -> void:
 	last_feedback_mode = "spawner_destroyed"
 
 
-func show_territory_change(cell: Vector2i, team: int) -> void:
-	_add_effect("territory_change", cell, team, territory_duration)
-	territory_change_feedback_count += 1
-	last_feedback_mode = "territory_change"
-
-
 func show_hq_hit(cell: Vector2i, team: int) -> void:
 	_add_effect("hq_hit", cell, team, hq_hit_duration)
 	hq_hit_feedback_count += 1
@@ -241,8 +233,6 @@ func _draw() -> void:
 				_draw_spawner_hit(effect)
 			"spawner_destroyed":
 				_draw_spawner_destroyed(effect)
-			"territory_change":
-				_draw_territory_change(effect)
 			"hq_hit":
 				_draw_hq_hit(effect)
 	for fragment in _fragments:
@@ -356,20 +346,6 @@ func _draw_spawner_destroyed(effect: Dictionary) -> void:
 		var y := -32.0 + float(index) * 10.0 + progress * (16.0 + float(index) * 7.0)
 		draw_rect(Rect2(at + Vector2(-width * 0.5, y), Vector2(width, height)), Color(color.darkened(progress * 0.65), ratio))
 	draw_circle(at + Vector2(0, 3), 14.0 + 20.0 * progress, Color(ENEMY_RED, ratio * 0.28))
-
-
-func _draw_territory_change(effect: Dictionary) -> void:
-	if not is_instance_valid(_grid):
-		return
-	var cell := Vector2i(effect.grid_position)
-	var ratio := _life_ratio(effect)
-	var progress := 1.0 - ratio
-	var color := _team_color(int(effect.team))
-	var diamond := _cell_diamond(cell)
-	draw_colored_polygon(diamond, Color(color, 0.16 + 0.36 * ratio))
-	_draw_cell_outline(cell, Color(color.lightened(0.25), ratio), 2.0 + 3.0 * (1.0 - progress))
-	var center := _grid.cell_to_world(cell)
-	draw_line(center + Vector2(-18 + 36 * progress, -7), center + Vector2(-18 + 36 * progress, 7), Color(HIT_WHITE, ratio), 3.0, true)
 
 
 func _draw_hq_hit(effect: Dictionary) -> void:

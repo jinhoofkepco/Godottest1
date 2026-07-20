@@ -20,10 +20,63 @@ public partial class BattleSimulation
         return _hudSnapshot;
     }
 
+    public int GetBoardVersion() => _boardVersion;
+
     public GDictionary GetBoardSnapshot()
     {
+        ClearPendingBoardDeltas();
         if (_boardSnapshot is not null && _boardSnapshotVersion == _boardVersion)
             return _boardSnapshot;
+        _boardSnapshot = new GDictionary
+        {
+            ["version"] = _boardVersion,
+            ["ownership"] = (byte[])_ownership.Clone(),
+            ["blocked"] = (byte[])_blocked.Clone(),
+            ["elevation"] = (byte[])_elevation.Clone(),
+            ["buildings"] = BuildBuildingsSnapshot(),
+            ["ally_hq_id"] = _allyHqId,
+            ["enemy_hq_id"] = _enemyHqId,
+        };
+        _boardSnapshotVersion = _boardVersion;
+        return _boardSnapshot;
+    }
+
+    public GDictionary GetBoardDelta()
+    {
+        int[] ownershipIndices = new int[_pendingOwnershipCount];
+        int[] ownershipOwners = new int[_pendingOwnershipCount];
+        for (int i = 0; i < _pendingOwnershipCount; i++)
+        {
+            int cellIndex = _pendingOwnershipCells[i];
+            ownershipIndices[i] = cellIndex;
+            ownershipOwners[i] = _ownership[cellIndex];
+            _pendingOwnershipFlags[cellIndex] = 0;
+        }
+        int[] blockedIndices = new int[_pendingBlockedCount];
+        int[] blockedValues = new int[_pendingBlockedCount];
+        for (int i = 0; i < _pendingBlockedCount; i++)
+        {
+            int cellIndex = _pendingBlockedCells[i];
+            blockedIndices[i] = cellIndex;
+            Vector2I cell = new(cellIndex % BattleConfig.GridColumns, cellIndex / BattleConfig.GridColumns);
+            blockedValues[i] = _blocked[cellIndex] != 0 || BuildingAt(cell) >= 0 ? 1 : 0;
+            _pendingBlockedFlags[cellIndex] = 0;
+        }
+        _pendingOwnershipCount = 0;
+        _pendingBlockedCount = 0;
+        return new GDictionary
+        {
+            ["version"] = _boardVersion,
+            ["ownership_indices"] = ownershipIndices,
+            ["ownership_owners"] = ownershipOwners,
+            ["blocked_indices"] = blockedIndices,
+            ["blocked_values"] = blockedValues,
+            ["buildings"] = BuildBuildingsSnapshot(),
+        };
+    }
+
+    private GArray BuildBuildingsSnapshot()
+    {
         var buildings = new GArray();
         for (int i = 0; i < _buildingCount; i++)
         {
@@ -40,18 +93,7 @@ public partial class BattleSimulation
                 ["destroyed"] = building.Destroyed,
             });
         }
-        _boardSnapshot = new GDictionary
-        {
-            ["version"] = _boardVersion,
-            ["ownership"] = (byte[])_ownership.Clone(),
-            ["blocked"] = (byte[])_blocked.Clone(),
-            ["elevation"] = (byte[])_elevation.Clone(),
-            ["buildings"] = buildings,
-            ["ally_hq_id"] = _allyHqId,
-            ["enemy_hq_id"] = _enemyHqId,
-        };
-        _boardSnapshotVersion = _boardVersion;
-        return _boardSnapshot;
+        return buildings;
     }
 
     public GDictionary GetRenderSnapshot()

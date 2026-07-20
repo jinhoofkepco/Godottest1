@@ -315,8 +315,7 @@ public partial class BattleSimulation
                 if (emitChanges && previous[cellIndex] != _ownership[cellIndex])
                 {
                     changed = true;
-                    var e = new GDictionary { ["type"] = "territory_changed", ["cell"] = new Vector2I(col, row), ["team"] = (int)_ownership[cellIndex] };
-                    _events.Add(e);
+                    QueueOwnershipDelta(cellIndex);
                 }
             }
         }
