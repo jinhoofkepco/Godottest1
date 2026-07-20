@@ -438,8 +438,8 @@ func _step(delta: float) -> void:
 					steering += _calculate_obstacle_repulsion(position) * GameConfig.GROUND_BLOCK_REPULSION_WEIGHT
 			unit_states[index] = STATE_WAIT if waiting else STATE_ADVANCE
 			var maximum_speed := _unit_speed(unit_kinds[index]) * unit_speed_scales[index]
-			if unit_kinds[index] != UNIT_DRAGON and advance_direction.length_squared() > 0.000001:
-				maximum_speed *= get_ground_speed_multiplier(position, position + advance_direction.normalized())
+			if unit_kinds[index] != UNIT_DRAGON and steering.length_squared() > 0.000001:
+				maximum_speed *= get_ground_speed_multiplier(position, position + steering.normalized())
 			var target_velocity := Vector2.ZERO
 			if steering.length_squared() > 0.000001:
 				target_velocity = steering.normalized() * maximum_speed
