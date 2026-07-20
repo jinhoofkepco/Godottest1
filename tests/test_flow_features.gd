@@ -1,11 +1,14 @@
 extends RefCounted
 
+const GameConfig = preload("res://scripts/game_config.gd")
+
 var failures: Array[String] = []
 
 
 func run() -> Array[String]:
 	_test_config_contract()
 	_test_flow_detour_and_congestion()
+	_test_elevation_flow_costs()
 	_test_wait_enter_and_release()
 	_test_defense_tower_rules_and_attack()
 	_test_dragon_lair_and_flight()
@@ -65,6 +68,35 @@ func _test_flow_detour_and_congestion() -> void:
 	_expect(flow.cost_at(Vector2i(5, 3)) < flow.cost_at(Vector2i(1, 3)), "congestion makes the second opening cheaper")
 	_expect(flow.direction_at(Vector2i(3, 5)).x > 0.0, "congested approach steers toward the alternate opening")
 	_expect(_flow_directions_are_weighted(flow, blocked, Vector2i(3, 0), width, height), "cached directions preserve weighted cardinal/diagonal Dijkstra choices")
+
+
+func _test_elevation_flow_costs() -> void:
+	var flow_script := load("res://scripts/flow_field.gd")
+	if flow_script == null or not flow_script.can_instantiate():
+		_expect(false, "flow field parses for elevation tests")
+		return
+	var width := 5
+	var height := 5
+	var blocked := PackedByteArray()
+	blocked.resize(width * height)
+	var density := PackedInt32Array()
+	density.resize(width * height)
+	var elevation := PackedByteArray()
+	elevation.resize(width * height)
+	# A level-2 center cannot be entered directly from the level-0 ring.
+	elevation[2 * width + 2] = 2
+	var flow = flow_script.new(width, height)
+	if _method_argument_count(flow, "rebuild") < 6:
+		_expect(false, "flow rebuild accepts elevation and uphill cost")
+		return
+	var uphill_cost := float(load("res://scripts/game_config.gd").get_script_constant_map().get("UPHILL_COST", -1.0))
+	flow.rebuild(Vector2i(4, 2), blocked, density, 0.0, elevation, uphill_cost)
+	_expect(flow.direction_at(Vector2i(1, 2)).y != 0.0, "flow field routes around an impassable two-level cliff")
+	# A one-level direct ridge remains reachable but an expensive climb should lose to the flat detour.
+	elevation.fill(0)
+	elevation[2 * width + 2] = 1
+	flow.rebuild(Vector2i(4, 2), blocked, density, 0.0, elevation, 8.0)
+	_expect(flow.direction_at(Vector2i(1, 2)).y != 0.0, "uphill integration cost selects a gentler flat detour")
 
 
 func _test_wait_enter_and_release() -> void:
@@ -132,17 +164,17 @@ func _test_dragon_lair_and_flight() -> void:
 	simulation.buildings[lair_index] = lair
 	simulation.tick(1.0 / 30.0)
 	_expect(simulation.unit_kinds.has(simulation.UNIT_DRAGON), "dragon lair produces a flying unit")
-	var blocked_index: int = simulation.blocked.find(1)
-	_expect(blocked_index >= 0, "dragon obstacle fixture exists")
-	if blocked_index < 0:
+	var cliff_index: int = simulation.elevation.find(2)
+	_expect(cliff_index >= 0, "dragon cliff fixture exists")
+	if cliff_index < 0:
 		return
 	var dragon_index: int = simulation.unit_kinds.find(simulation.UNIT_DRAGON)
-	var blocker := Vector2i(blocked_index % simulation.config.GRID_COLUMNS, blocked_index / simulation.config.GRID_COLUMNS)
-	simulation.unit_positions[dragon_index] = Vector2(blocker) + Vector2(0.5, 1.02)
+	var cliff := Vector2i(cliff_index % simulation.config.GRID_COLUMNS, cliff_index / simulation.config.GRID_COLUMNS)
+	simulation.unit_positions[dragon_index] = Vector2(cliff) + Vector2(0.5, 1.02)
 	var before_y: float = simulation.unit_positions[dragon_index].y
 	for step in 30:
 		simulation.tick(1.0 / 30.0)
-	_expect(simulation.unit_positions[dragon_index].y < float(blocker.y) + 0.5, "flying dragon crosses a blocked cell")
+	_expect(simulation.unit_positions[dragon_index].y < float(cliff.y) + 0.5, "flying dragon crosses an elevation cliff")
 	_expect(simulation.unit_positions[dragon_index].y < before_y, "dragon advances toward enemy HQ")
 	_expect(simulation.unit_velocities.size() == simulation.unit_ids.size(), "velocity packed array stays aligned")
 	_expect(simulation.unit_flow_bias_radians.size() == simulation.unit_ids.size(), "flow bias packed array stays aligned")
@@ -154,18 +186,18 @@ func _test_dragon_lair_and_flight() -> void:
 	_expect(ally_density[dragon_cell.y * simulation.config.GRID_COLUMNS + dragon_cell.x] == 0, "flying dragons do not add ground congestion")
 
 	var surrounded = _new_simulation()
-	surrounded.blocked.fill(0)
+	surrounded.elevation.fill(0)
 	var producer_cell := Vector2i(10, 30)
 	var producer_id: int = surrounded.add_building(surrounded.TEAM_ALLY, surrounded.BUILDING_SPAWNER, producer_cell)
 	var producer_index: int = surrounded._building_index_from_id(producer_id)
 	for offset in [Vector2i(0, -1), Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, 1)]:
 		var cell: Vector2i = producer_cell + offset
-		surrounded.blocked[cell.y * surrounded.config.GRID_COLUMNS + cell.x] = 1
+		surrounded.elevation[cell.y * surrounded.config.GRID_COLUMNS + cell.x] = 2
 	var producer: Dictionary = surrounded.buildings[producer_index]
 	producer.spawn_timer = 0.0
 	surrounded.buildings[producer_index] = producer
 	surrounded.tick(1.0 / 30.0)
-	_expect(surrounded.unit_ids.is_empty(), "fully surrounded ground spawner waits instead of spawning inside itself")
+	_expect(surrounded.unit_ids.is_empty(), "cliff-surrounded ground spawner waits instead of spawning inside itself")
 
 
 func _flow_directions_are_weighted(flow, blocked: PackedByteArray, goal: Vector2i, width: int, height: int) -> bool:
@@ -208,3 +240,10 @@ func _flow_directions_are_weighted(flow, blocked: PackedByteArray, goal: Vector2
 func _expect(condition: bool, message: String) -> void:
 	if not condition:
 		failures.append(message)
+
+
+func _method_argument_count(value: Object, method_name: String) -> int:
+	for method in value.get_method_list():
+		if String(method.name) == method_name:
+			return method.args.size()
+	return -1

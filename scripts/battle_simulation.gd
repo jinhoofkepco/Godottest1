@@ -3,6 +3,7 @@ extends RefCounted
 
 const GameConfig = preload("res://scripts/game_config.gd")
 const FlowFieldScript = preload("res://scripts/flow_field.gd")
+const TerrainMapScript = preload("res://scripts/terrain_map.gd")
 const config = GameConfig
 
 const TEAM_NONE := 0
@@ -41,6 +42,7 @@ var unit_flow_bias_radians := PackedFloat32Array()
 var buildings: Array[Dictionary] = []
 var ownership := PackedByteArray()
 var blocked := PackedByteArray()
+var elevation := PackedByteArray()
 var ally_gold := GameConfig.START_GOLD
 var enemy_gold := GameConfig.ENEMY_START_GOLD
 var ally_hq_id := 0
@@ -50,6 +52,7 @@ var result := ""
 var target_candidate_checks := 0
 var enemy_flow: FlowField
 var ally_flow: FlowField
+var terrain_map
 
 var _next_unit_id := 1
 var _next_building_id := 1
@@ -95,7 +98,18 @@ func reset() -> void:
 			ownership[row * GameConfig.GRID_COLUMNS + column] = owner
 	blocked.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	blocked.fill(0)
-	_generate_blocked_cells()
+	terrain_map = TerrainMapScript.new(GameConfig.GRID_COLUMNS, GameConfig.GRID_ROWS)
+	elevation = terrain_map.generate(
+		GameConfig.TERRAIN_SEED,
+		GameConfig.TERRAIN_HILL_PAIR_COUNT,
+		GameConfig.TERRAIN_SUMMIT_PAIR_COUNT,
+		GameConfig.TERRAIN_CLIFF_PAIR_COUNT,
+		GameConfig.TERRAIN_MIN_ROW,
+		GameConfig.TERRAIN_MAX_ROW,
+		GameConfig.TERRAIN_DEPLOYMENT_DEPTH,
+		GameConfig.TERRAIN_GENERATION_ATTEMPTS
+	)
+	terrain_map.elevation = elevation
 	ally_gold = GameConfig.START_GOLD
 	enemy_gold = GameConfig.ENEMY_START_GOLD
 	time_remaining = GameConfig.MATCH_DURATION
@@ -247,6 +261,47 @@ func get_blocked_cells() -> PackedByteArray:
 	return blocked.duplicate()
 
 
+func get_elevation() -> PackedByteArray:
+	return elevation.duplicate()
+
+
+func elevation_at_cell(cell: Vector2i) -> int:
+	return int(elevation[_cell_index(cell)]) if _cell_is_valid(cell) and elevation.size() == GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS else 0
+
+
+func elevation_at_position(position: Vector2) -> int:
+	return elevation_at_cell(Vector2i(clampi(floori(position.x), 0, GameConfig.GRID_COLUMNS - 1), clampi(floori(position.y), 0, GameConfig.GRID_ROWS - 1)))
+
+
+func can_ground_step(from_cell: Vector2i, to_cell: Vector2i) -> bool:
+	return _cell_is_valid(from_cell) and _cell_is_valid(to_cell) and absi(elevation_at_cell(from_cell) - elevation_at_cell(to_cell)) <= 1
+
+
+func terrain_paths_valid() -> bool:
+	if terrain_map == null:
+		return false
+	terrain_map.elevation = elevation
+	return terrain_map.all_required_paths_reachable(GameConfig.TERRAIN_DEPLOYMENT_DEPTH)
+
+
+func get_ground_speed_multiplier(from_position: Vector2, toward_position: Vector2) -> float:
+	return GameConfig.UPHILL_SPEED_MULTIPLIER if elevation_at_position(toward_position) > elevation_at_position(from_position) else 1.0
+
+
+func get_elevation_damage_multiplier(attacker_position: Vector2, target_position: Vector2) -> float:
+	var attacker_elevation := elevation_at_position(attacker_position)
+	var target_elevation := elevation_at_position(target_position)
+	if attacker_elevation > target_elevation:
+		return GameConfig.HIGH_GROUND_DAMAGE_MULTIPLIER
+	if attacker_elevation < target_elevation:
+		return GameConfig.LOW_GROUND_DAMAGE_MULTIPLIER
+	return 1.0
+
+
+func get_unit_attack_range(unit_kind: int, position: Vector2) -> float:
+	return _unit_attack_range(unit_kind, position)
+
+
 func get_occupancy(team: int) -> float:
 	if ownership.is_empty():
 		return 0.0
@@ -361,7 +416,7 @@ func _step(delta: float) -> void:
 		_find_target(index)
 		unit_target_ids[index] = _found_target_id
 		var position := unit_positions[index]
-		var attack_range := _unit_attack_range(unit_kinds[index])
+		var attack_range := _unit_attack_range(unit_kinds[index], position)
 		var target_in_attack_range := _found_target_id != 0 and position.distance_squared_to(_found_target_position) <= attack_range * attack_range
 		if target_in_attack_range:
 			unit_states[index] = STATE_ATTACK
@@ -383,6 +438,8 @@ func _step(delta: float) -> void:
 					steering += _calculate_obstacle_repulsion(position) * GameConfig.OBSTACLE_REPULSION_WEIGHT
 			unit_states[index] = STATE_WAIT if waiting else STATE_ADVANCE
 			var maximum_speed := _unit_speed(unit_kinds[index]) * unit_speed_scales[index]
+			if unit_kinds[index] != UNIT_DRAGON and advance_direction.length_squared() > 0.000001:
+				maximum_speed *= get_ground_speed_multiplier(position, position + advance_direction.normalized())
 			var target_velocity := Vector2.ZERO
 			if steering.length_squared() > 0.000001:
 				target_velocity = steering.normalized() * maximum_speed
@@ -470,10 +527,12 @@ func _update_static_defenses(delta: float) -> void:
 			buildings[building_index] = building
 			continue
 		building.attack_cooldown = GameConfig.HQ_ATTACK_INTERVAL if building_kind == BUILDING_HQ else GameConfig.DEFENSE_TOWER_ATTACK_INTERVAL
-		unit_hp[target_index] -= GameConfig.HQ_ATTACK_DAMAGE if building_kind == BUILDING_HQ else GameConfig.DEFENSE_TOWER_DAMAGE
+		var base_damage := GameConfig.HQ_ATTACK_DAMAGE if building_kind == BUILDING_HQ else GameConfig.DEFENSE_TOWER_DAMAGE
+		var damage_multiplier := get_elevation_damage_multiplier(origin, unit_positions[target_index])
+		unit_hp[target_index] -= base_damage * damage_multiplier
 		unit_last_attacker_teams[target_index] = int(building.team)
 		_events.append({"type": "hq_shot" if building_kind == BUILDING_HQ else "tower_shot", "team": int(building.team), "origin": origin, "position": unit_positions[target_index]})
-		_events.append({"type": "hit", "team": unit_teams[target_index], "position": unit_positions[target_index]})
+		_events.append({"type": "hit", "team": unit_teams[target_index], "position": unit_positions[target_index], "high_ground": damage_multiplier > 1.0})
 		buildings[building_index] = building
 
 
@@ -514,9 +573,9 @@ func _rebuild_flow_for_team(team: int) -> void:
 			continue
 		flow_blocked[_cell_index(Vector2i(building.cell))] = 1
 	if team == TEAM_ENEMY:
-		enemy_flow.rebuild(_building_cell(ally_hq_id), flow_blocked, _density_from_buckets(_enemy_buckets), GameConfig.CONGESTION_COST_WEIGHT)
+		enemy_flow.rebuild(_building_cell(ally_hq_id), flow_blocked, _density_from_buckets(_enemy_buckets), GameConfig.CONGESTION_COST_WEIGHT, elevation, GameConfig.UPHILL_COST)
 	else:
-		ally_flow.rebuild(_building_cell(enemy_hq_id), flow_blocked, _density_from_buckets(_ally_buckets), GameConfig.CONGESTION_COST_WEIGHT)
+		ally_flow.rebuild(_building_cell(enemy_hq_id), flow_blocked, _density_from_buckets(_ally_buckets), GameConfig.CONGESTION_COST_WEIGHT, elevation, GameConfig.UPHILL_COST)
 
 
 func _nearest_hostile_unit_index(team: int, position: Vector2, radius: float, can_target_air: bool = true) -> int:
@@ -665,13 +724,14 @@ func _calculate_obstacle_repulsion(position: Vector2) -> Vector2:
 
 
 func _move_without_entering_blocked(position: Vector2, motion: Vector2) -> Vector2:
+	var from_cell := Vector2i(clampi(floori(position.x), 0, GameConfig.GRID_COLUMNS - 1), clampi(floori(position.y), 0, GameConfig.GRID_ROWS - 1))
 	var candidate_motions: Array[Vector2] = [motion, Vector2(motion.x, 0.0), Vector2(0.0, motion.y)]
 	for candidate_motion in candidate_motions:
 		var candidate: Vector2 = position + candidate_motion
 		candidate.x = clampf(candidate.x, 0.2, float(GameConfig.GRID_COLUMNS) - 0.2)
 		candidate.y = clampf(candidate.y, 0.5, float(GameConfig.GRID_ROWS) - 0.5)
 		var cell := Vector2i(floori(candidate.x), floori(candidate.y))
-		if not _cell_blocks_ground(cell):
+		if not _cell_blocks_ground(cell) and can_ground_step(from_cell, cell):
 			return candidate
 	return position
 
@@ -726,7 +786,7 @@ func _find_spawn_position(cell: Vector2i, team: int, flying: bool) -> Vector2:
 		cell + Vector2i(-1, 0), cell + Vector2i(1, 0), cell + Vector2i(0, -forward),
 	]
 	for candidate: Vector2i in candidates:
-		if _cell_is_valid(candidate) and (flying or not _cell_blocks_ground(candidate)):
+		if _cell_is_valid(candidate) and (flying or (not _cell_blocks_ground(candidate) and can_ground_step(cell, candidate))):
 			return Vector2(candidate) + Vector2(0.5, 0.5)
 	return Vector2(-1.0, -1.0)
 
@@ -753,17 +813,20 @@ func _attack_target(attacker_index: int, target_unit_index: int, building_index:
 	unit_cooldowns[attacker_index] = _unit_attack_interval(unit_kind)
 	unit_lunge_timers[attacker_index] = GameConfig.UNIT_LUNGE_DURATION
 	var attacker_team := unit_teams[attacker_index]
+	var attacker_position := unit_positions[attacker_index]
 	if target_unit_index >= 0 and target_unit_index < unit_ids.size():
 		if unit_kind == UNIT_RANGED:
 			_events.append({"type": "ranged_shot", "team": attacker_team, "origin": unit_positions[attacker_index], "position": unit_positions[target_unit_index]})
-		unit_hp[target_unit_index] -= _unit_attack_damage(unit_kind)
+		var damage_multiplier := get_elevation_damage_multiplier(attacker_position, unit_positions[target_unit_index])
+		unit_hp[target_unit_index] -= _unit_attack_damage(unit_kind) * damage_multiplier
 		unit_last_attacker_teams[target_unit_index] = attacker_team
-		_events.append({"type": "hit", "team": unit_teams[target_unit_index], "position": unit_positions[target_unit_index]})
+		_events.append({"type": "hit", "team": unit_teams[target_unit_index], "position": unit_positions[target_unit_index], "high_ground": damage_multiplier > 1.0})
 		return
 	if building_index >= 0 and building_index < buildings.size():
+		var building_position := Vector2(buildings[building_index].cell) + Vector2(0.5, 0.5)
 		if unit_kind == UNIT_RANGED:
-			_events.append({"type": "ranged_shot", "team": attacker_team, "origin": unit_positions[attacker_index], "position": Vector2(buildings[building_index].cell) + Vector2(0.5, 0.5)})
-		apply_building_damage(int(buildings[building_index].id), _unit_attack_damage(unit_kind), attacker_team)
+			_events.append({"type": "ranged_shot", "team": attacker_team, "origin": attacker_position, "position": building_position})
+		apply_building_damage(int(buildings[building_index].id), _unit_attack_damage(unit_kind) * get_elevation_damage_multiplier(attacker_position, building_position), attacker_team)
 
 
 func _remove_dead_units() -> void:
@@ -880,10 +943,13 @@ func _unit_speed(unit_kind: int) -> float:
 	return GameConfig.RANGED_UNIT_SPEED if unit_kind == UNIT_RANGED else GameConfig.UNIT_SPEED
 
 
-func _unit_attack_range(unit_kind: int) -> float:
+func _unit_attack_range(unit_kind: int, position: Vector2 = Vector2(-1.0, -1.0)) -> float:
 	if unit_kind == UNIT_DRAGON:
 		return GameConfig.DRAGON_UNIT_ATTACK_RANGE
-	return GameConfig.RANGED_UNIT_ATTACK_RANGE if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_RANGE
+	if unit_kind == UNIT_RANGED:
+		var high_ground_bonus := GameConfig.RANGED_HIGH_GROUND_RANGE_BONUS if position.x >= 0.0 and elevation_at_position(position) >= 1 else 0.0
+		return GameConfig.RANGED_UNIT_ATTACK_RANGE + high_ground_bonus
+	return GameConfig.UNIT_ATTACK_RANGE
 
 
 func _unit_attack_damage(unit_kind: int) -> float:

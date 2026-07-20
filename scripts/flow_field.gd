@@ -21,7 +21,14 @@ func _init(grid_width: int = 1, grid_height: int = 1) -> void:
 	directions.resize(width * height)
 
 
-func rebuild(goal: Vector2i, blocked: PackedByteArray, density: PackedInt32Array, congestion_weight: float) -> void:
+func rebuild(
+	goal: Vector2i,
+	blocked: PackedByteArray,
+	density: PackedInt32Array,
+	congestion_weight: float,
+	elevation: PackedByteArray = PackedByteArray(),
+	uphill_cost: float = 0.0
+) -> void:
 	var cell_count := width * height
 	costs.resize(cell_count)
 	directions.resize(cell_count)
@@ -49,7 +56,10 @@ func rebuild(goal: Vector2i, blocked: PackedByteArray, density: PackedInt32Array
 				continue
 			if offset.x != 0 and offset.y != 0 and _diagonal_is_pinched(current, offset, blocked, goal_index):
 				continue
+			if not _elevation_transition_allowed(neighbor, current, elevation):
+				continue
 			var step_cost := DIAGONAL_COST if offset.x != 0 and offset.y != 0 else CARDINAL_COST
+			step_cost += _uphill_transition_cost(neighbor, current, elevation, uphill_cost)
 			if neighbor_index < density.size():
 				step_cost += float(density[neighbor_index]) * maxf(0.0, congestion_weight)
 			var candidate := queued_cost + step_cost
@@ -57,7 +67,7 @@ func rebuild(goal: Vector2i, blocked: PackedByteArray, density: PackedInt32Array
 				continue
 			costs[neighbor_index] = candidate
 			_heap_push(heap_indices, heap_costs, neighbor_index, candidate)
-	_build_directions(blocked, goal_index)
+	_build_directions(blocked, goal_index, elevation, uphill_cost)
 
 
 func cost_at(cell: Vector2i) -> float:
@@ -68,7 +78,7 @@ func direction_at(cell: Vector2i) -> Vector2:
 	return directions[_index(cell)] if _valid(cell) else Vector2.ZERO
 
 
-func _build_directions(blocked: PackedByteArray, goal_index: int) -> void:
+func _build_directions(blocked: PackedByteArray, goal_index: int, elevation: PackedByteArray, uphill_cost: float) -> void:
 	for row in height:
 		for column in width:
 			var cell := Vector2i(column, row)
@@ -88,12 +98,27 @@ func _build_directions(blocked: PackedByteArray, goal_index: int) -> void:
 					continue
 				if offset.x != 0 and offset.y != 0 and _diagonal_is_pinched(cell, offset, blocked, goal_index):
 					continue
+				if not _elevation_transition_allowed(cell, neighbor, elevation):
+					continue
 				var transition_cost := DIAGONAL_COST if offset.x != 0 and offset.y != 0 else CARDINAL_COST
+				transition_cost += _uphill_transition_cost(cell, neighbor, elevation, uphill_cost)
 				var candidate_cost := costs[neighbor_index] + transition_cost
 				if candidate_cost + 0.0001 < best_cost:
 					best_cost = candidate_cost
 					best_offset = offset
 			directions[cell_index] = Vector2(best_offset).normalized()
+
+
+func _elevation_transition_allowed(from_cell: Vector2i, to_cell: Vector2i, elevation: PackedByteArray) -> bool:
+	if elevation.size() != width * height:
+		return true
+	return absi(int(elevation[_index(from_cell)]) - int(elevation[_index(to_cell)])) <= 1
+
+
+func _uphill_transition_cost(from_cell: Vector2i, to_cell: Vector2i, elevation: PackedByteArray, uphill_cost: float) -> float:
+	if elevation.size() != width * height:
+		return 0.0
+	return maxf(0.0, uphill_cost) if elevation[_index(to_cell)] > elevation[_index(from_cell)] else 0.0
 
 
 func _diagonal_is_pinched(cell: Vector2i, offset: Vector2i, blocked: PackedByteArray, goal_index: int) -> bool:

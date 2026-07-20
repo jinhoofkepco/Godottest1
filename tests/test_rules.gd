@@ -5,7 +5,9 @@ var failures: Array[String] = []
 
 func run() -> Array[String]:
 	_test_config_values()
-	_test_expanded_grid_and_obstacles()
+	_test_elevation_generation_and_reachability()
+	_test_elevation_movement_and_combat()
+	_test_expanded_grid_and_terrain()
 	_test_grid_projection_and_dynamic_building()
 	_test_simulation_contract()
 	_test_initial_territory()
@@ -52,6 +54,86 @@ func _test_grid_projection_and_dynamic_building() -> void:
 	grid.free()
 
 
+func _test_elevation_generation_and_reachability() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	var properties := _property_names(simulation)
+	_expect(properties.has("elevation"), "simulation exposes packed elevation terrain")
+	if not properties.has("elevation"):
+		return
+	var heights: PackedByteArray = simulation.elevation
+	var cell_count: int = simulation.config.GRID_COLUMNS * simulation.config.GRID_ROWS
+	_expect(typeof(heights) == TYPE_PACKED_BYTE_ARRAY and heights.size() == cell_count, "elevation stores one packed byte per grid cell")
+	_expect(heights.count(1) > 0 and heights.count(2) > 0, "terrain contains hills and summit cells")
+	for index in heights.size():
+		_expect(heights[index] <= 2, "terrain elevation remains within 0/1/2")
+		var cell := Vector2i(index % simulation.config.GRID_COLUMNS, index / simulation.config.GRID_COLUMNS)
+		var mirrored := Vector2i(simulation.config.GRID_COLUMNS - 1 - cell.x, simulation.config.GRID_ROWS - 1 - cell.y)
+		_expect(heights[index] == heights[mirrored.y * simulation.config.GRID_COLUMNS + mirrored.x], "terrain is center-mirror symmetric at %s" % cell)
+	_expect(simulation.elevation_at_cell(Vector2i(simulation.config.GRID_COLUMNS / 2, 0)) == 0, "enemy HQ remains on clear level terrain")
+	_expect(simulation.elevation_at_cell(Vector2i(simulation.config.GRID_COLUMNS / 2, simulation.config.GRID_ROWS - 1)) == 0, "ally HQ remains on clear level terrain")
+	_expect(simulation.has_method("terrain_paths_valid") and simulation.terrain_paths_valid(), "all deployment candidates retain a traversable path to the opposing HQ")
+	var comparison = _new_simulation()
+	_expect(comparison != null and comparison.elevation == heights, "seeded elevation generation is deterministic")
+
+	var grid_script := load("res://scripts/grid.gd")
+	var grid = grid_script.new()
+	grid.set_simulation(simulation)
+	var sampled_levels := {}
+	for index in heights.size():
+		var level := int(heights[index])
+		if sampled_levels.has(level):
+			continue
+		var cell := Vector2i(index % simulation.config.GRID_COLUMNS, index / simulation.config.GRID_COLUMNS)
+		sampled_levels[level] = true
+		_expect(grid.world_to_cell(grid.cell_to_world(cell)) == cell, "elevated picking round trips level %d at %s" % [level, cell])
+	_expect(sampled_levels.size() == 3, "picking fixture covers all three terrain levels")
+	grid.free()
+
+
+func _test_elevation_movement_and_combat() -> void:
+	var simulation = _new_simulation()
+	if simulation == null or not _property_names(simulation).has("elevation"):
+		return
+	simulation.elevation.fill(0)
+	var low := Vector2i(8, 24)
+	var slope := Vector2i(8, 23)
+	var cliff := Vector2i(9, 24)
+	simulation.elevation[slope.y * simulation.config.GRID_COLUMNS + slope.x] = 1
+	simulation.elevation[cliff.y * simulation.config.GRID_COLUMNS + cliff.x] = 2
+	_expect(simulation.can_ground_step(low, slope), "ground units can traverse a one-level slope")
+	_expect(not simulation.can_ground_step(low, cliff), "ground units cannot traverse a two-level cliff")
+	_expect(is_equal_approx(simulation.get_ground_speed_multiplier(Vector2(low) + Vector2(0.5, 0.5), Vector2(slope) + Vector2(0.5, 0.5)), simulation.config.UPHILL_SPEED_MULTIPLIER), "uphill motion applies the configured 0.7 speed multiplier")
+	_expect(is_equal_approx(simulation.get_ground_speed_multiplier(Vector2(slope) + Vector2(0.5, 0.5), Vector2(low) + Vector2(0.5, 0.5)), 1.0), "downhill motion keeps full speed")
+	_expect(simulation._move_without_entering_blocked(Vector2(low) + Vector2(0.5, 0.5), Vector2(0.0, -1.0)).floor() == Vector2(slope), "movement accepts a one-level destination")
+	_expect(simulation._move_without_entering_blocked(Vector2(low) + Vector2(0.5, 0.5), Vector2(1.0, 0.0)).floor() == Vector2(low), "movement rejects a cliff destination")
+
+	_expect(is_equal_approx(simulation.get_elevation_damage_multiplier(Vector2(low) + Vector2(0.5, 0.5), Vector2(cliff) + Vector2(0.5, 0.5)), simulation.config.LOW_GROUND_DAMAGE_MULTIPLIER), "low-to-high attacks deal 0.75 damage")
+	_expect(is_equal_approx(simulation.get_elevation_damage_multiplier(Vector2(cliff) + Vector2(0.5, 0.5), Vector2(low) + Vector2(0.5, 0.5)), simulation.config.HIGH_GROUND_DAMAGE_MULTIPLIER), "high-to-low attacks deal 1.25 damage")
+	_expect(is_equal_approx(simulation.get_elevation_damage_multiplier(Vector2(low) + Vector2(0.5, 0.5), Vector2(low) + Vector2(0.6, 0.5)), 1.0), "equal-elevation attacks keep base damage")
+	var ranged_low: float = simulation.get_unit_attack_range(simulation.UNIT_RANGED, Vector2(low) + Vector2(0.5, 0.5))
+	var ranged_high: float = simulation.get_unit_attack_range(simulation.UNIT_RANGED, Vector2(slope) + Vector2(0.5, 0.5))
+	_expect(is_equal_approx(ranged_high, ranged_low + simulation.config.RANGED_HIGH_GROUND_RANGE_BONUS), "ranged infantry gains exactly 0.5 range on high ground")
+	_expect(is_equal_approx(simulation.get_unit_attack_range(simulation.UNIT_MELEE, Vector2(slope) + Vector2(0.5, 0.5)), simulation.config.UNIT_ATTACK_RANGE), "melee range is unchanged on high ground")
+
+	var high_attack = _new_simulation()
+	high_attack.elevation.fill(0)
+	high_attack.elevation[low.y * high_attack.config.GRID_COLUMNS + low.x] = 2
+	var attacker_id: int = high_attack.spawn_unit(high_attack.TEAM_ALLY, Vector2(low) + Vector2(0.5, 0.5), high_attack.UNIT_MELEE)
+	var target_cell := Vector2i(8, 25)
+	var target_id: int = high_attack.spawn_unit(high_attack.TEAM_ENEMY, Vector2(target_cell) + Vector2(0.5, 0.5), high_attack.UNIT_MELEE)
+	var attacker_index: int = high_attack.unit_ids.find(attacker_id)
+	var target_index: int = high_attack.unit_ids.find(target_id)
+	high_attack.unit_positions[attacker_index] = Vector2(low) + Vector2(0.5, 0.5)
+	high_attack.unit_positions[target_index] = Vector2(target_cell) + Vector2(0.5, 0.5)
+	var hp_before: float = high_attack.unit_hp[target_index]
+	high_attack._attack_target(attacker_index, target_index, -1)
+	_expect(is_equal_approx(hp_before - high_attack.unit_hp[target_index], high_attack.config.UNIT_ATTACK_DAMAGE * high_attack.config.HIGH_GROUND_DAMAGE_MULTIPLIER), "actual unit attack applies high-ground damage")
+	var hit_event := _event_of_type(high_attack.drain_events(), "hit")
+	_expect(bool(hit_event.get("high_ground", false)), "high-ground hit event carries enhanced spark metadata")
+
+
 func _test_config_values() -> void:
 	var config := load("res://scripts/game_config.gd")
 	_expect(config != null and config.can_instantiate(), "game config parses")
@@ -69,6 +151,11 @@ func _test_config_values() -> void:
 	_expect(constants.has("UNIT_SEPARATION_RADIUS"), "config exposes ally separation radius")
 	_expect(constants.has("UNIT_SEEK_WEIGHT"), "config exposes seek steering weight")
 	_expect(constants.has("UNIT_LUNGE_DURATION"), "config exposes attack lunge duration")
+	for terrain_constant in [
+		"ELEVATION_LEVELS", "ELEVATION_PIXEL_STEP", "UPHILL_SPEED_MULTIPLIER", "UPHILL_COST",
+		"HIGH_GROUND_DAMAGE_MULTIPLIER", "LOW_GROUND_DAMAGE_MULTIPLIER", "RANGED_HIGH_GROUND_RANGE_BONUS",
+	]:
+		_expect(constants.has(terrain_constant), "config exposes %s" % terrain_constant)
 	_expect(constants.has("BASE_UNIT_MAX_HP"), "config exposes neutral base HP for class ratios")
 	_expect(constants.has("BASE_UNIT_ATTACK_DAMAGE"), "config exposes neutral base damage for class ratios")
 	_expect(constants.has("BASE_UNIT_ATTACK_RANGE"), "config exposes neutral base range for class ratios")
@@ -97,7 +184,7 @@ func _test_config_values() -> void:
 		_expect(enemy_ground.s < Color(constants.COLOR_ENEMY).s * 0.75 and enemy_ground.get_luminance() < Color(constants.COLOR_ENEMY).get_luminance() * 0.75, "red territory is substantially more muted than red actors")
 
 
-func _test_expanded_grid_and_obstacles() -> void:
+func _test_expanded_grid_and_terrain() -> void:
 	var simulation = _new_simulation()
 	if simulation == null:
 		return
@@ -109,58 +196,24 @@ func _test_expanded_grid_and_obstacles() -> void:
 		return
 	var blocked: PackedByteArray = simulation.get_blocked_cells()
 	_expect(blocked.size() == cell_count, "blocked terrain has one entry per tile")
-	_expect(blocked.count(1) == simulation.config.OBSTACLE_PAIR_COUNT * 2, "central terrain has sixteen mirrored obstacle pairs")
+	_expect(blocked.count(1) == 0, "legacy prop blockers are removed in favor of elevation cliffs")
 	var comparison = _new_simulation()
-	_expect(comparison != null and comparison.get_blocked_cells() == blocked, "obstacle generation is deterministic")
-	var row_counts := PackedInt32Array()
-	row_counts.resize(simulation.config.GRID_ROWS)
-	for row in simulation.config.GRID_ROWS:
-		for column in simulation.config.GRID_COLUMNS:
-			var cell := Vector2i(column, row)
-			if not simulation.is_blocked(cell):
-				continue
-			row_counts[row] += 1
-			_expect(row >= simulation.config.OBSTACLE_MIN_ROW and row <= simulation.config.OBSTACLE_MAX_ROW, "obstacles stay in the central terrain band")
-			var mirrored := Vector2i(simulation.config.GRID_COLUMNS - 1 - column, simulation.config.GRID_ROWS - 1 - row)
-			_expect(simulation.is_blocked(mirrored), "every obstacle has a center-mirrored partner")
-	for count in row_counts:
-		_expect(count <= simulation.config.OBSTACLE_MAX_PER_ROW, "no terrain row exceeds the blocker cap")
+	_expect(comparison != null and comparison.get_blocked_cells() == blocked, "empty legacy blocker compatibility is deterministic")
 	for cell in [
 		Vector2i(simulation.config.GRID_COLUMNS / 2, 0),
 		Vector2i(simulation.config.GRID_COLUMNS / 2, simulation.config.GRID_ROWS - 1),
 		Vector2i(4, simulation.config.GRID_ROWS - 8),
 	]:
 		_expect(not simulation.is_blocked(cell), "reserved deployment cells stay clear")
-	var blocked_index := blocked.find(1)
-	if blocked_index >= 0:
-		var blocked_cell := Vector2i(blocked_index % simulation.config.GRID_COLUMNS, blocked_index / simulation.config.GRID_COLUMNS)
-		var owner: int = simulation.get_ownership()[blocked_index]
-		var gold_before: int = simulation.ally_gold if owner == simulation.TEAM_ALLY else simulation.enemy_gold
-		_expect(not simulation.try_build_spawner(owner, blocked_cell), "blocked terrain rejects simulation builds")
-		var gold_after: int = simulation.ally_gold if owner == simulation.TEAM_ALLY else simulation.enemy_gold
-		_expect(gold_after == gold_before, "blocked build rejection never spends gold")
-		var grid_script := load("res://scripts/grid.gd")
-		var grid = grid_script.new()
-		grid.set_simulation(simulation)
-		_expect(not grid.can_build(blocked_cell, owner), "blocked terrain rejects grid builds")
-		grid.free()
-	for row in range(simulation.config.OBSTACLE_MIN_ROW, simulation.config.OBSTACLE_MAX_ROW + 1):
-		for column in simulation.config.GRID_COLUMNS:
-			var blocker := Vector2i(column, row)
-			var approach := Vector2i(column, row + 1)
-			if not simulation.is_blocked(blocker) or simulation.is_blocked(approach):
-				continue
-			simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(column) + 0.5, float(row) + 1.01))
-			var unit_index: int = simulation.unit_ids.size() - 1
-			simulation.unit_positions[unit_index] = Vector2(float(column) + 0.5, float(row) + 1.01)
-			simulation.tick(1.0 / float(simulation.config.SIM_TICK_RATE))
-			_expect(unit_index < simulation.unit_positions.size(), "blocker approach keeps its test unit alive")
-			if unit_index >= simulation.unit_positions.size():
-				return
-			var final_cell := Vector2i(floori(simulation.unit_positions[unit_index].x), floori(simulation.unit_positions[unit_index].y))
-			_expect(not simulation.is_blocked(final_cell), "movement never leaves a unit inside blocked terrain")
-			return
-	_expect(false, "deterministic terrain includes a blocker with an open approach")
+	var high_build_cell := Vector2i(-1, -1)
+	for index in simulation.elevation.size():
+		if simulation.elevation[index] == 2 and simulation.get_ownership()[index] == simulation.TEAM_ALLY:
+			high_build_cell = Vector2i(index % simulation.config.GRID_COLUMNS, index / simulation.config.GRID_COLUMNS)
+			break
+	_expect(high_build_cell.x >= 0, "terrain provides an allied summit build fixture")
+	if high_build_cell.x >= 0:
+		simulation.ally_gold = 999
+		_expect(simulation.try_build_spawner(simulation.TEAM_ALLY, high_build_cell), "building is allowed on owned elevation-2 terrain")
 
 
 func _new_simulation():
@@ -531,38 +584,13 @@ func _test_hq_fallback_and_obstacle_sliding() -> void:
 	_expect(edge_simulation.unit_positions[0].x > 0.5, "edge breakthrough steers laterally toward the opposing HQ")
 
 	var slide_simulation = _new_simulation()
-	var fixture_found := false
-	for row in range(slide_simulation.config.OBSTACLE_MIN_ROW, slide_simulation.config.OBSTACLE_MAX_ROW + 1):
-		for column in range(0, slide_simulation.config.GRID_COLUMNS - 2):
-			var blocker := Vector2i(column, row)
-			var approach := Vector2i(column, row + 1)
-			var hostile_cell := Vector2i(column + 2, row - 1)
-			if (
-				not slide_simulation.is_blocked(blocker)
-				or slide_simulation.is_blocked(approach)
-				or slide_simulation.is_blocked(hostile_cell)
-			):
-				continue
-			slide_simulation.spawn_unit(slide_simulation.TEAM_ALLY, Vector2(float(column) + 0.5, float(row) + 1.01))
-			slide_simulation.spawn_unit(slide_simulation.TEAM_ENEMY, Vector2(float(column) + 2.0, float(row) - 0.5))
-			slide_simulation.unit_positions[0] = Vector2(float(column) + 0.5, float(row) + 1.01)
-			slide_simulation.unit_positions[1] = Vector2(float(column) + 2.0, float(row) - 0.5)
-			fixture_found = true
-			break
-		if fixture_found:
-			break
-	_expect(fixture_found, "deterministic terrain includes a safe slide fixture")
-	if not fixture_found or slide_simulation.unit_positions.size() < 2:
-		return
-	var before_x: float = slide_simulation.unit_positions[0].x
-	slide_simulation.tick(1.0 / float(slide_simulation.config.SIM_TICK_RATE))
-	_expect(not slide_simulation.unit_positions.is_empty(), "obstacle slide keeps its test unit alive")
-	if slide_simulation.unit_positions.is_empty():
-		return
-	var final_position: Vector2 = slide_simulation.unit_positions[0]
-	var final_cell := Vector2i(floori(final_position.x), floori(final_position.y))
-	_expect(not slide_simulation.is_blocked(final_cell), "obstacle slide keeps the final logical cell clear")
-	_expect(final_position.x > before_x, "blocked diagonal movement slides along an open axis")
+	slide_simulation.elevation.fill(0)
+	var start := Vector2(8.5, 24.5)
+	var diagonal_cliff := Vector2i(9, 23)
+	slide_simulation.elevation[diagonal_cliff.y * slide_simulation.config.GRID_COLUMNS + diagonal_cliff.x] = 2
+	var final_position: Vector2 = slide_simulation._move_without_entering_blocked(start, Vector2(1.0, -1.0))
+	_expect(final_position.x > start.x and is_equal_approx(final_position.y, start.y), "cliff-blocked diagonal movement slides along the open level axis")
+	_expect(slide_simulation.elevation_at_position(final_position) == 0, "cliff slide keeps the final logical cell on traversable terrain")
 
 
 func _test_terminal_results() -> void:
