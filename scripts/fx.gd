@@ -34,6 +34,7 @@ var hq_destroyed_feedback_count := 0
 var last_feedback_mode := ""
 var last_placement_cell := Vector2i(-1, -1)
 var last_placement_valid := false
+var last_hit_high_ground := false
 
 var _grid: GridBoard
 var _effects: Array[Dictionary] = []
@@ -61,8 +62,9 @@ func show_placement(cell: Vector2i, is_valid: bool) -> void:
 	last_feedback_mode = "placement_valid" if is_valid else "placement_invalid"
 
 
-func show_hit(grid_position: Vector2) -> void:
-	_add_effect("hit", grid_position, 0, hit_duration)
+func show_hit(grid_position: Vector2, high_ground: bool = false) -> void:
+	last_hit_high_ground = high_ground
+	_add_effect("hit", grid_position, 0, hit_duration, {"high_ground": high_ground})
 	hit_feedback_count += 1
 	last_feedback_mode = "hit"
 
@@ -219,12 +221,15 @@ func _draw_placement(effect: Dictionary) -> void:
 func _draw_hit(effect: Dictionary) -> void:
 	var at := _screen_position(Vector2(effect.grid_position)) + Vector2(0, -17)
 	var ratio := _life_ratio(effect)
+	var high_ground := bool(effect.get("high_ground", false))
+	var scale_multiplier := 1.32 if high_ground else 1.0
+	var spark_color := Color.WHITE if high_ground else HIT_WHITE
 	for index in 6:
 		var direction := Vector2.from_angle(TAU * float(index) / 6.0)
-		var inner := at + direction * (4.0 + 6.0 * (1.0 - ratio))
-		var outer := at + direction * (10.0 + 13.0 * (1.0 - ratio))
-		draw_line(inner, outer, Color(HIT_WHITE, ratio), 3.0, true)
-	draw_circle(at, 5.0 * ratio, Color(GameConfig.COLOR_ORANGE, ratio))
+		var inner := at + direction * (4.0 + 6.0 * (1.0 - ratio)) * scale_multiplier
+		var outer := at + direction * (10.0 + 13.0 * (1.0 - ratio)) * scale_multiplier
+		draw_line(inner, outer, Color(spark_color, ratio), 3.6 if high_ground else 3.0, true)
+	draw_circle(at, 5.0 * ratio * scale_multiplier, Color(GameConfig.COLOR_ORANGE.lightened(0.18 if high_ground else 0.0), ratio))
 
 
 func _draw_ranged_shot(effect: Dictionary) -> void:
@@ -306,7 +311,7 @@ func _draw_hq_hit(effect: Dictionary) -> void:
 
 
 func _screen_position(grid_position: Vector2) -> Vector2:
-	return _grid.grid_to_screen(grid_position) if is_instance_valid(_grid) else grid_position
+	return _grid.position_to_world(grid_position) if is_instance_valid(_grid) else grid_position
 
 
 func _cell_center(cell: Vector2i) -> Vector2:
@@ -314,12 +319,7 @@ func _cell_center(cell: Vector2i) -> Vector2:
 
 
 func _cell_diamond(cell: Vector2i) -> PackedVector2Array:
-	return PackedVector2Array([
-		_grid.grid_to_screen(Vector2(cell.x, cell.y)),
-		_grid.grid_to_screen(Vector2(cell.x + 1, cell.y)),
-		_grid.grid_to_screen(Vector2(cell.x + 1, cell.y + 1)),
-		_grid.grid_to_screen(Vector2(cell.x, cell.y + 1)),
-	])
+	return _grid.get_cell_diamond(cell)
 
 
 func _draw_cell_outline(cell: Vector2i, color: Color, width: float) -> void:

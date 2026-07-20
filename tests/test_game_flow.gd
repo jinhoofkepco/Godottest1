@@ -36,6 +36,7 @@ func run(tree: SceneTree) -> Array[String]:
 		return failures
 	await _test_grid_draw_ownership_snapshot(tree)
 	await _test_scene_contract(tree, main_scene)
+	await _test_elevated_projection_and_feedback(tree, main_scene)
 	await _test_dynamic_building(tree, main_scene)
 	await _test_production_and_feedback(tree, main_scene)
 	await _test_ranged_presentation(tree, main_scene)
@@ -107,11 +108,46 @@ func _test_scene_contract(tree: SceneTree, main_scene: PackedScene) -> void:
 	main.unit_renderer.sync()
 	_expect(main.unit_renderer.get_child_count() == 4, "spawning data creates only three unit batches plus one shared shadow batch")
 	_expect(main.unit_renderer.get_shadow_batch_count() == 1, "all units share one blob-shadow MultiMesh")
-	_expect(main.grid.has_method("uses_baked_obstacles") and main.grid.uses_baked_obstacles(), "grid blockers use the baked CC0 prop atlas")
+	_expect(main.grid.has_method("has_elevation_side_walls") and main.grid.has_elevation_side_walls(), "grid renders dedicated elevation side walls instead of prop blockers")
 	_expect(main.buildings_layer.y_sort_enabled, "low-count building layer uses y sorting")
 	_expect(main.fx.z_index > main.unit_renderer.z_index, "FX overlay stays above units and buildings")
 	_expect(main.grid.world_to_cell(main.grid.cell_to_world(Vector2i(3, 35))) == Vector2i(3, 35), "isometric center picking remains exact")
 	_expect(is_equal_approx(main.hud.last_ally_occupancy, main.simulation.get_occupancy(main.simulation.TEAM_ALLY)), "HUD occupancy mirrors simulation")
+	main.queue_free()
+	await tree.process_frame
+
+
+func _test_elevated_projection_and_feedback(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	_expect(main.grid.has_method("position_to_world"), "grid exposes elevation-aware logical position projection")
+	if not main.grid.has_method("position_to_world"):
+		main.queue_free()
+		await tree.process_frame
+		return
+	var high_cell := Vector2i(8, 26)
+	var high_index: int = high_cell.y * GameConfig.GRID_COLUMNS + high_cell.x
+	main.simulation.elevation[high_index] = 2
+	var flat_center: Vector2 = main.grid.grid_to_screen(Vector2(high_cell) + Vector2(0.5, 0.5))
+	var raised_center: Vector2 = flat_center - Vector2(0.0, GameConfig.ELEVATION_PIXEL_STEP * 2.0)
+	_expect(main.grid.cell_to_world(high_cell).is_equal_approx(raised_center), "elevation-2 tile center rises by two configured height steps")
+	_expect(main.grid.position_to_world(Vector2(high_cell) + Vector2(0.5, 0.5)).is_equal_approx(raised_center), "continuous actor projection samples its cell elevation")
+	_expect(main.grid.world_to_cell(raised_center) == high_cell, "picking resolves the elevated visible diamond back to its logical cell")
+
+	var building_id: int = main.simulation.add_building(main.simulation.TEAM_ALLY, main.simulation.BUILDING_SPAWNER, high_cell)
+	main._sync_building_views()
+	_expect(building_id > 0 and main.building_views[building_id].position.is_equal_approx(raised_center), "building feet inherit their cell elevation")
+	var unit_id: int = main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(high_cell) + Vector2(0.5, 0.5), main.simulation.UNIT_MELEE)
+	var unit_index: int = main.simulation.unit_ids.find(unit_id)
+	main.simulation.unit_positions[unit_index] = Vector2(high_cell) + Vector2(0.5, 0.5)
+	main.unit_renderer.sync()
+	var expected_unit := raised_center + Vector2(0.0, GameConfig.INFANTRY_FOOT_ANCHOR_Y)
+	_expect(main.unit_renderer.get_unit_render_position(unit_index).is_equal_approx(expected_unit), "unit sprite, shadow, and HP overlay share elevated grounding")
+	_expect(_method_argument_count(main.fx, "show_hit") >= 2, "hit FX accepts high-ground enhancement metadata")
+	if _method_argument_count(main.fx, "show_hit") >= 2:
+		main.fx.show_hit(Vector2(high_cell) + Vector2(0.5, 0.5), true)
+		_expect(bool(main.fx.get("last_hit_high_ground")), "high-ground hit selects the enlarged bright spark variant")
 	main.queue_free()
 	await tree.process_frame
 
@@ -544,9 +580,9 @@ func _test_batched_lunge(tree: SceneTree, main_scene: PackedScene) -> void:
 		return
 	main.unit_renderer.sync()
 	var rendered_origin: Vector2 = main.unit_renderer.get_unit_render_position(0)
-	var expected_origin: Vector2 = main.grid.grid_to_screen(
-		main.simulation.unit_positions[0] + Vector2.RIGHT * main.simulation.config.UNIT_LUNGE_DISTANCE
-	) + Vector2(0, main.simulation.config.INFANTRY_FOOT_ANCHOR_Y)
+	var logical_origin: Vector2 = main.simulation.unit_positions[0] + Vector2.RIGHT * main.simulation.config.UNIT_LUNGE_DISTANCE
+	var projected_origin: Vector2 = main.grid.position_to_world(logical_origin) if main.grid.has_method("position_to_world") else main.grid.grid_to_screen(logical_origin)
+	var expected_origin: Vector2 = projected_origin + Vector2(0, main.simulation.config.INFANTRY_FOOT_ANCHOR_Y)
 	_expect(rendered_origin.is_equal_approx(expected_origin), "batched transform applies target-facing lunge without a unit node")
 	main.queue_free()
 	await tree.process_frame
@@ -587,6 +623,13 @@ func _property_names(value: Object) -> Array[String]:
 	for property in value.get_property_list():
 		names.append(String(property.name))
 	return names
+
+
+func _method_argument_count(value: Object, method_name: String) -> int:
+	for method in value.get_method_list():
+		if String(method.name) == method_name:
+			return method.args.size()
+	return -1
 
 
 func _send_mouse_tap(map_view, at: Vector2, device_id: int = 0) -> void:

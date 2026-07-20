@@ -2,7 +2,6 @@ class_name GridBoard
 extends Node2D
 
 const GameConfig = preload("res://scripts/game_config.gd")
-const WORLD_ATLAS = preload("res://assets/world/world_atlas.png")
 
 var simulation
 
@@ -49,6 +48,15 @@ func grid_to_screen(grid_position: Vector2) -> Vector2:
 	)
 
 
+func grid_to_screen_elevated(grid_position: Vector2, elevation_level: int) -> Vector2:
+	return grid_to_screen(grid_position) - Vector2(0.0, float(elevation_level) * GameConfig.ELEVATION_PIXEL_STEP)
+
+
+func position_to_world(grid_position: Vector2) -> Vector2:
+	var cell := Vector2i(clampi(floori(grid_position.x), 0, GameConfig.GRID_COLUMNS - 1), clampi(floori(grid_position.y), 0, GameConfig.GRID_ROWS - 1))
+	return grid_to_screen_elevated(grid_position, _elevation_at(cell))
+
+
 func screen_to_grid(screen_position: Vector2) -> Vector2:
 	return Vector2(
 		screen_position.x / GameConfig.ISO_TILE_WIDTH + screen_position.y / GameConfig.ISO_TILE_HEIGHT,
@@ -57,12 +65,24 @@ func screen_to_grid(screen_position: Vector2) -> Vector2:
 
 
 func cell_to_world(cell: Vector2i) -> Vector2:
-	return grid_to_screen(Vector2(cell) + Vector2(0.5, 0.5))
+	return grid_to_screen_elevated(Vector2(cell) + Vector2(0.5, 0.5), _elevation_at(cell))
 
 
 func world_to_cell(world_position: Vector2) -> Vector2i:
-	var grid_position := screen_to_grid(world_position)
-	return Vector2i(floori(grid_position.x), floori(grid_position.y))
+	var best_cell := Vector2i(-1, -1)
+	var best_depth := -1
+	for depth in GameConfig.GRID_COLUMNS + GameConfig.GRID_ROWS - 1:
+		var first_row := maxi(0, depth - GameConfig.GRID_COLUMNS + 1)
+		var last_row := mini(GameConfig.GRID_ROWS - 1, depth)
+		for row in range(first_row, last_row + 1):
+			var cell := Vector2i(depth - row, row)
+			if Geometry2D.is_point_in_polygon(world_position, _cell_diamond(cell)) and depth >= best_depth:
+				best_cell = cell
+				best_depth = depth
+	if best_cell.x >= 0:
+		return best_cell
+	var flat_position := screen_to_grid(world_position)
+	return Vector2i(floori(flat_position.x), floori(flat_position.y))
 
 
 func get_board_bounds() -> Rect2:
@@ -77,6 +97,7 @@ func get_board_bounds() -> Rect2:
 	for corner in corners:
 		minimum = Vector2(minf(minimum.x, corner.x), minf(minimum.y, corner.y))
 		maximum = Vector2(maxf(maximum.x, corner.x), maxf(maximum.y, corner.y))
+	minimum.y -= float(GameConfig.ELEVATION_LEVELS - 1) * GameConfig.ELEVATION_PIXEL_STEP
 	return Rect2(minimum, maximum - minimum)
 
 
@@ -95,41 +116,45 @@ func _draw() -> void:
 		for row in range(first_row, last_row + 1):
 			var column := depth - row
 			var cell := Vector2i(column, row)
-			var color := _cell_color(cell, current_ownership)
+			var elevation_level := _elevation_at(cell)
+			var color := _cell_color(cell, current_ownership).lightened(float(elevation_level) * GameConfig.ELEVATION_BRIGHTNESS_STEP)
 			var cell_blocked: bool = simulation != null and simulation.is_blocked(cell)
-			var diamond := PackedVector2Array([
-				grid_to_screen(Vector2(column, row)),
-				grid_to_screen(Vector2(column + 1, row)),
-				grid_to_screen(Vector2(column + 1, row + 1)),
-				grid_to_screen(Vector2(column, row + 1)),
-			])
+			var diamond := _cell_diamond(cell)
+			_draw_cliff_sides(cell, diamond, elevation_level)
 			draw_colored_polygon(diamond, color)
 			diamond.append(diamond[0])
 			draw_polyline(diamond, Color(GameConfig.COLOR_GRID_LINE, 0.48), 0.75, true)
-			if cell_blocked:
-				_draw_blocker(diamond, cell)
 			if _can_build_with_ownership(cell, 2, current_ownership, cell_blocked):
 				draw_circle(cell_to_world(cell), 1.8, Color(GameConfig.COLOR_TEAL, 0.38))
 	for segment in get_frontline_segments(current_ownership):
 		draw_line(segment[0], segment[1], Color(GameConfig.COLOR_FRONTLINE, 0.82), 1.35, true)
 
 
-func _draw_blocker(_base_diamond: PackedVector2Array, cell: Vector2i) -> void:
-	var center := cell_to_world(cell)
-	for ring in 3:
-		var shadow := PackedVector2Array()
-		for point_index in 16:
-			var angle := TAU * float(point_index) / 16.0
-			shadow.append(center + Vector2(cos(angle) * (16.0 - ring * 2.0), sin(angle) * (5.0 - ring * 0.6)) + Vector2(4, 4))
-		draw_colored_polygon(shadow, Color(0.02, 0.03, 0.05, 0.07 + ring * 0.035))
-	var variant := posmod(cell.x * 7 + cell.y * 13, 4)
-	var sprite_index := 10 + variant
-	var source := Rect2(Vector2(float(sprite_index % 4), float(sprite_index / 4)) * GameConfig.WORLD_ATLAS_CELL_SIZE, Vector2.ONE * GameConfig.WORLD_ATLAS_CELL_SIZE)
-	draw_texture_rect_region(WORLD_ATLAS, Rect2(center + Vector2(-25, -45), Vector2(50, 50)), source)
+func _draw_cliff_sides(cell: Vector2i, diamond: PackedVector2Array, elevation_level: int) -> void:
+	if elevation_level <= 0:
+		return
+	var right_neighbor := Vector2i(cell.x + 1, cell.y)
+	var front_neighbor := Vector2i(cell.x, cell.y + 1)
+	var right_difference := elevation_level - _elevation_at(right_neighbor)
+	if right_difference > 0:
+		var drop := Vector2(0.0, float(right_difference) * GameConfig.ELEVATION_PIXEL_STEP)
+		var wall := PackedVector2Array([diamond[1], diamond[2], diamond[2] + drop, diamond[1] + drop])
+		draw_colored_polygon(wall, GameConfig.COLOR_CLIFF_SIDE.lightened(0.05))
+		draw_line(diamond[1], diamond[2], Color(GameConfig.COLOR_CLIFF_EDGE, 0.58), 0.8, true)
+	var front_difference := elevation_level - _elevation_at(front_neighbor)
+	if front_difference > 0:
+		var drop := Vector2(0.0, float(front_difference) * GameConfig.ELEVATION_PIXEL_STEP)
+		var wall := PackedVector2Array([diamond[2], diamond[3], diamond[3] + drop, diamond[2] + drop])
+		draw_colored_polygon(wall, GameConfig.COLOR_CLIFF_SIDE.darkened(0.08))
+		draw_line(diamond[2], diamond[3], Color(GameConfig.COLOR_CLIFF_EDGE, 0.52), 0.8, true)
 
 
-func uses_baked_obstacles() -> bool:
-	return WORLD_ATLAS != null
+func has_elevation_side_walls() -> bool:
+	return true
+
+
+func get_cell_diamond(cell: Vector2i) -> PackedVector2Array:
+	return _cell_diamond(cell)
 
 
 func get_frontline_segments(current_ownership: PackedByteArray) -> Array[PackedVector2Array]:
@@ -140,14 +165,16 @@ func get_frontline_segments(current_ownership: PackedByteArray) -> Array[PackedV
 		for column in GameConfig.GRID_COLUMNS:
 			var owner: int = current_ownership[row * GameConfig.GRID_COLUMNS + column]
 			if column + 1 < GameConfig.GRID_COLUMNS and current_ownership[row * GameConfig.GRID_COLUMNS + column + 1] != owner:
+				var edge_elevation := maxi(_elevation_at(Vector2i(column, row)), _elevation_at(Vector2i(column + 1, row)))
 				segments.append(PackedVector2Array([
-					grid_to_screen(Vector2(column + 1, row)),
-					grid_to_screen(Vector2(column + 1, row + 1)),
+					grid_to_screen_elevated(Vector2(column + 1, row), edge_elevation),
+					grid_to_screen_elevated(Vector2(column + 1, row + 1), edge_elevation),
 				]))
 			if row + 1 < GameConfig.GRID_ROWS and current_ownership[(row + 1) * GameConfig.GRID_COLUMNS + column] != owner:
+				var edge_elevation := maxi(_elevation_at(Vector2i(column, row)), _elevation_at(Vector2i(column, row + 1)))
 				segments.append(PackedVector2Array([
-					grid_to_screen(Vector2(column + 1, row + 1)),
-					grid_to_screen(Vector2(column, row + 1)),
+					grid_to_screen_elevated(Vector2(column + 1, row + 1), edge_elevation),
+					grid_to_screen_elevated(Vector2(column, row + 1), edge_elevation),
 				]))
 	return segments
 
@@ -164,3 +191,19 @@ func _cell_color(cell: Vector2i, current_ownership: PackedByteArray) -> Color:
 
 func _cell_is_valid(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.x < GameConfig.GRID_COLUMNS and cell.y >= 0 and cell.y < GameConfig.GRID_ROWS
+
+
+func _elevation_at(cell: Vector2i) -> int:
+	if not _cell_is_valid(cell) or simulation == null or not simulation.has_method("elevation_at_cell"):
+		return 0
+	return int(simulation.elevation_at_cell(cell))
+
+
+func _cell_diamond(cell: Vector2i) -> PackedVector2Array:
+	var elevation_level := _elevation_at(cell)
+	return PackedVector2Array([
+		grid_to_screen_elevated(Vector2(cell.x, cell.y), elevation_level),
+		grid_to_screen_elevated(Vector2(cell.x + 1, cell.y), elevation_level),
+		grid_to_screen_elevated(Vector2(cell.x + 1, cell.y + 1), elevation_level),
+		grid_to_screen_elevated(Vector2(cell.x, cell.y + 1), elevation_level),
+	])

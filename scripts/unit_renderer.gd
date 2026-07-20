@@ -208,10 +208,10 @@ func _sync_infantry_batch() -> void:
 	var entries: Array[Dictionary] = []
 	for index in _simulation.unit_ids.size():
 		if _simulation.unit_kinds[index] != UNIT_DRAGON and _simulation.unit_hp[index] > 0.0:
-			entries.append({"unit_index": index, "y": _grid.grid_to_screen(_simulation.unit_positions[index]).y})
+			entries.append({"unit_index": index, "y": _grid.position_to_world(_simulation.unit_positions[index]).y})
 	for ghost_index in _death_ghosts.size():
 		var ghost: Dictionary = _death_ghosts[ghost_index]
-		entries.append({"ghost_index": ghost_index, "y": _grid.grid_to_screen(Vector2(ghost.position)).y})
+		entries.append({"ghost_index": ghost_index, "y": _grid.position_to_world(Vector2(ghost.position)).y})
 	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a.y) < float(b.y))
 	_infantry_units.multimesh.instance_count = entries.size()
 	for draw_index in entries.size():
@@ -251,7 +251,7 @@ func _sync_infantry_batch() -> void:
 			var ghost: Dictionary = _death_ghosts[int(entry.ghost_index)]
 			team = int(ghost.team)
 			unit_kind = int(ghost.kind)
-			screen_position = _grid.grid_to_screen(Vector2(ghost.position)) + Vector2(0, GameConfig.INFANTRY_FOOT_ANCHOR_Y)
+			screen_position = _grid.position_to_world(Vector2(ghost.position)) + Vector2(0, GameConfig.INFANTRY_FOOT_ANCHOR_Y)
 			direction = Vector2(ghost.direction)
 			state_index = 3
 			var death_progress := 1.0 - clampf(float(ghost.remaining) / GameConfig.INFANTRY_DEATH_DURATION, 0.0, 1.0)
@@ -271,7 +271,7 @@ func _sync_dragon_batch(instance: MultiMeshInstance2D, team: int) -> void:
 	for index in _simulation.unit_ids.size():
 		if _simulation.unit_teams[index] == team and _simulation.unit_kinds[index] == UNIT_DRAGON and _simulation.unit_hp[index] > 0.0:
 			indices.append(index)
-	indices.sort_custom(func(a: int, b: int) -> bool: return _grid.grid_to_screen(_simulation.unit_positions[a]).y < _grid.grid_to_screen(_simulation.unit_positions[b]).y)
+	indices.sort_custom(func(a: int, b: int) -> bool: return _grid.position_to_world(_simulation.unit_positions[a]).y < _grid.position_to_world(_simulation.unit_positions[b]).y)
 	instance.multimesh.instance_count = indices.size()
 	for draw_index in indices.size():
 		var unit_index := indices[draw_index]
@@ -310,7 +310,7 @@ func _sync_shadows() -> void:
 	for index in positions.size():
 		var entry: Dictionary = positions[index]
 		var scale := Vector2(1.28, 1.0) if bool(entry.dragon) else Vector2.ONE
-		var at := _grid.grid_to_screen(Vector2(entry.position)) + Vector2(0, 2)
+		var at := _grid.position_to_world(Vector2(entry.position)) + Vector2(0, 2)
 		_shadows.multimesh.set_instance_transform_2d(index, Transform2D(0.0, scale, 0.0, at))
 		_shadows.multimesh.set_instance_color(index, Color(0.02, 0.03, 0.05, 0.24 if bool(entry.dragon) else 0.35))
 
@@ -342,7 +342,7 @@ func get_unit_render_position(unit_index: int) -> Vector2:
 		var lunge_envelope := sin((1.0 - remaining_ratio) * PI)
 		lunge_offset = _simulation.unit_lunge_directions[unit_index] * GameConfig.UNIT_LUNGE_DISTANCE * lunge_envelope
 	var anchor_y := GameConfig.DRAGON_FOOT_ANCHOR_Y if _simulation.unit_kinds[unit_index] == UNIT_DRAGON else GameConfig.INFANTRY_FOOT_ANCHOR_Y
-	return _grid.grid_to_screen(_simulation.unit_positions[unit_index] + lunge_offset) + Vector2(0, anchor_y)
+	return _grid.position_to_world(_simulation.unit_positions[unit_index] + lunge_offset) + Vector2(0, anchor_y)
 
 
 func _update_hp_bar_visibility() -> void:
@@ -387,7 +387,7 @@ func _draw() -> void:
 		if ratio >= 0.995 or alpha <= 0.0:
 			continue
 		var bar_y := -76.0 if _simulation.unit_kinds[index] == UNIT_DRAGON else -53.0
-		var at := _grid.grid_to_screen(_simulation.unit_positions[index]) + Vector2(-9, bar_y)
+		var at := _grid.position_to_world(_simulation.unit_positions[index]) + Vector2(-9, bar_y)
 		draw_rect(Rect2(at, Vector2(18, 2)), Color(0.04, 0.05, 0.08, 0.86 * alpha))
 		var color := GameConfig.COLOR_ALLY if _simulation.unit_teams[index] == TEAM_ALLY else GameConfig.COLOR_ENEMY
 		draw_rect(Rect2(at + Vector2(1, 0.5), Vector2(16.0 * ratio, 1)), Color(color.lightened(0.25), alpha))

@@ -83,7 +83,7 @@ func _consume_events(events: Array) -> void:
 		var event_type := String(event.get("type", ""))
 		match event_type:
 			"hit":
-				fx.show_hit(Vector2(event.position))
+				fx.show_hit(Vector2(event.position), bool(event.get("high_ground", false)))
 			"ranged_shot":
 				fx.show_ranged_shot(Vector2(event.origin), Vector2(event.position), int(event.team))
 			"tower_shot":
