@@ -98,8 +98,11 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y xvfb
           fi
+          # GitHub's Xvfb job renders through CPU-only llvmpipe. Keep this as
+          # a generous regression guard; the documented 2 ms target is
+          # measured separately on hardware-accelerated local rendering.
           xvfb-run -a -s "-screen 0 540x960x24" \
-            env BOARD_FLIP_BUDGET_MS=25.0 \
+            env BOARD_FLIP_BUDGET_MS=60.0 \
             godot --display-driver x11 --rendering-method gl_compatibility \
             --audio-driver Dummy --path . -s tests/run_board_stress.gd
           xvfb-run -a -s "-screen 0 540x960x24" \
