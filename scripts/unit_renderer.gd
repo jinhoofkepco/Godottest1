@@ -4,6 +4,8 @@ extends Node2D
 const GameConfig = preload("res://scripts/game_config.gd")
 const BLUE_ATLAS = preload("res://assets/units/infantry_blue.png")
 const RED_ATLAS = preload("res://assets/units/infantry_red.png")
+const BLUE_SIEGE_ATLAS = preload("res://assets/units/siege_blue.png")
+const RED_SIEGE_ATLAS = preload("res://assets/units/siege_red.png")
 const BLUE_DRAGON_ATLAS = preload("res://assets/world/dragon_blue.png")
 const RED_DRAGON_ATLAS = preload("res://assets/world/dragon_red.png")
 const TEAM_ENEMY := 1
@@ -11,6 +13,7 @@ const TEAM_ALLY := 2
 const UNIT_MELEE := 0
 const UNIT_RANGED := 1
 const UNIT_DRAGON := 2
+const UNIT_SIEGE := 3
 const STATE_ADVANCE := 0
 const STATE_ATTACK := 1
 const STATE_WAIT := 2
@@ -120,7 +123,7 @@ func _make_batch(node_name: String, mesh: Mesh, use_colors: bool, use_custom_dat
 
 func _make_team_texture_array() -> Texture2DArray:
 	var atlas := Texture2DArray.new()
-	var error := atlas.create_from_images([BLUE_ATLAS.get_image(), RED_ATLAS.get_image()])
+	var error := atlas.create_from_images([BLUE_ATLAS.get_image(), RED_ATLAS.get_image(), BLUE_SIEGE_ATLAS.get_image(), RED_SIEGE_ATLAS.get_image()])
 	assert(error == OK, "could not create infantry team texture array")
 	return atlas
 
@@ -142,7 +145,7 @@ void vertex() {
 void fragment() {
 	vec2 cell = floor(atlas_data.rg * (atlas_grid - vec2(1.0)) + vec2(0.5));
 	vec2 inset_uv = (UV * (cell_pixels - vec2(2.0)) + vec2(1.0)) / cell_pixels;
-	vec4 sample_color = texture(atlas, vec3((cell + inset_uv) / atlas_grid, instance_data.r));
+	vec4 sample_color = texture(atlas, vec3((cell + inset_uv) / atlas_grid, atlas_data.b * 3.0));
 	COLOR = vec4(sample_color.rgb * instance_data.g, sample_color.a * instance_data.a);
 }
 """
@@ -162,6 +165,7 @@ render_mode unshaded;
 uniform sampler2D atlas : source_color, filter_linear;
 uniform vec2 atlas_grid = vec2(16.0, 8.0);
 uniform vec2 cell_pixels = vec2(96.0);
+uniform bool flip_y = true;
 varying vec4 atlas_data;
 varying vec4 instance_data;
 void vertex() {
@@ -170,7 +174,8 @@ void vertex() {
 }
 void fragment() {
 	vec2 cell = floor(atlas_data.rg * (atlas_grid - vec2(1.0)) + vec2(0.5));
-	vec2 inset_uv = (UV * (cell_pixels - vec2(2.0)) + vec2(1.0)) / cell_pixels;
+	vec2 frame_uv = vec2(UV.x, flip_y ? 1.0 - UV.y : UV.y);
+	vec2 inset_uv = (frame_uv * (cell_pixels - vec2(2.0)) + vec2(1.0)) / cell_pixels;
 	vec4 sample_color = texture(atlas, (cell + inset_uv) / atlas_grid);
 	COLOR = vec4(sample_color.rgb * instance_data.rgb, sample_color.a * instance_data.a);
 }
@@ -180,6 +185,7 @@ void fragment() {
 	material.set_shader_parameter("atlas", atlas)
 	material.set_shader_parameter("atlas_grid", Vector2(GameConfig.DRAGON_ATLAS_COLUMNS, GameConfig.DRAGON_ATLAS_ROWS))
 	material.set_shader_parameter("cell_pixels", Vector2.ONE * GameConfig.DRAGON_ATLAS_CELL_SIZE)
+	material.set_shader_parameter("flip_y", true)
 	return material
 
 
@@ -234,7 +240,7 @@ func _sync_infantry_batch() -> void:
 			if unit_state == STATE_ATTACK:
 				state_index = 2
 				direction = _simulation.unit_lunge_directions[unit_index]
-				var interval := GameConfig.RANGED_UNIT_ATTACK_INTERVAL if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_INTERVAL
+				var interval := _unit_attack_interval(unit_kind)
 				var attack_progress := 1.0 - clampf(_simulation.unit_cooldowns[unit_index] / interval, 0.0, 1.0)
 				animation_frame = mini(3, floori(attack_progress * 4.0))
 			elif unit_state == STATE_ADVANCE and direction.length_squared() > 0.01:
@@ -243,7 +249,7 @@ func _sync_infantry_batch() -> void:
 			else:
 				state_index = 0
 				animation_frame = (floori(_animation_clock * GameConfig.INFANTRY_IDLE_FPS) + int(_simulation.unit_ids[unit_index])) % 2
-			var maximum_hp := GameConfig.RANGED_UNIT_MAX_HP if unit_kind == UNIT_RANGED else GameConfig.UNIT_MAX_HP
+			var maximum_hp := _unit_max_hp(unit_kind)
 			brightness = lerpf(0.58, 1.0, clampf(_simulation.unit_hp[unit_index] / maximum_hp, 0.0, 1.0))
 			if unit_state == STATE_WAIT:
 				brightness *= 0.76
@@ -251,19 +257,22 @@ func _sync_infantry_batch() -> void:
 			var ghost: Dictionary = _death_ghosts[int(entry.ghost_index)]
 			team = int(ghost.team)
 			unit_kind = int(ghost.kind)
-			screen_position = _grid.position_to_world(Vector2(ghost.position)) + Vector2(0, GameConfig.INFANTRY_FOOT_ANCHOR_Y)
+			screen_position = _grid.position_to_world(Vector2(ghost.position)) + Vector2(0, _unit_foot_anchor(unit_kind))
 			direction = Vector2(ghost.direction)
 			state_index = 3
 			var death_progress := 1.0 - clampf(float(ghost.remaining) / GameConfig.INFANTRY_DEATH_DURATION, 0.0, 1.0)
 			animation_frame = mini(3, floori(death_progress * 4.0))
 			alpha = clampf(float(ghost.remaining) / (GameConfig.INFANTRY_DEATH_DURATION * 0.28), 0.0, 1.0)
 		var direction_index: int = get_direction_index(direction, team)
-		var linear_index: int = unit_kind * GameConfig.INFANTRY_CLASS_FRAME_COUNT + direction_index * GameConfig.INFANTRY_FRAMES_PER_DIRECTION + int(STATE_OFFSETS[state_index]) + animation_frame
+		var linear_index: int = (0 if unit_kind == UNIT_SIEGE else unit_kind * GameConfig.INFANTRY_CLASS_FRAME_COUNT) + direction_index * GameConfig.INFANTRY_FRAMES_PER_DIRECTION + int(STATE_OFFSETS[state_index]) + animation_frame
 		var cell_x: int = linear_index % GameConfig.INFANTRY_ATLAS_COLUMNS
 		var cell_y: int = linear_index / GameConfig.INFANTRY_ATLAS_COLUMNS
-		_infantry_units.multimesh.set_instance_transform_2d(draw_index, Transform2D(0.0, screen_position))
-		_infantry_units.multimesh.set_instance_custom_data(draw_index, Color(float(cell_x) / float(GameConfig.INFANTRY_ATLAS_COLUMNS - 1), float(cell_y) / float(GameConfig.INFANTRY_ATLAS_ROWS - 1), 0.0, 1.0))
-		_infantry_units.multimesh.set_instance_color(draw_index, Color(1.0 if team == TEAM_ENEMY else 0.0, brightness, 0.0, alpha))
+		var render_size := get_unit_render_size(unit_kind)
+		var render_scale := render_size / GameConfig.INFANTRY_RENDER_SIZE
+		var atlas_layer := get_atlas_layer(unit_kind, team)
+		_infantry_units.multimesh.set_instance_transform_2d(draw_index, Transform2D(0.0, render_scale, 0.0, screen_position))
+		_infantry_units.multimesh.set_instance_custom_data(draw_index, Color(float(cell_x) / float(GameConfig.INFANTRY_ATLAS_COLUMNS - 1), float(cell_y) / float(GameConfig.INFANTRY_ATLAS_ROWS - 1), float(atlas_layer) / 3.0, 1.0))
+		_infantry_units.multimesh.set_instance_color(draw_index, Color(1.0, brightness, 0.0, alpha))
 
 
 func _sync_dragon_batch(instance: MultiMeshInstance2D, team: int) -> void:
@@ -303,16 +312,18 @@ func _sync_shadows() -> void:
 	for index in _simulation.unit_ids.size():
 		if _simulation.unit_hp[index] <= 0.0:
 			continue
-		positions.append({"position": _simulation.unit_positions[index], "dragon": _simulation.unit_kinds[index] == UNIT_DRAGON})
+		positions.append({"position": _simulation.unit_positions[index], "kind": _simulation.unit_kinds[index]})
 	for ghost in _death_ghosts:
-		positions.append({"position": ghost.position, "dragon": false})
+		positions.append({"position": ghost.position, "kind": int(ghost.kind)})
 	_shadows.multimesh.instance_count = positions.size()
 	for index in positions.size():
 		var entry: Dictionary = positions[index]
-		var scale := Vector2(1.28, 1.0) if bool(entry.dragon) else Vector2.ONE
+		var unit_kind := int(entry.kind)
+		var radius_scale: float = _simulation.get_unit_radius(unit_kind) / GameConfig.MELEE_UNIT_RADIUS
+		var scale := Vector2(radius_scale, radius_scale * (0.82 if unit_kind == UNIT_DRAGON else 1.0))
 		var at := _grid.position_to_world(Vector2(entry.position)) + Vector2(0, 2)
 		_shadows.multimesh.set_instance_transform_2d(index, Transform2D(0.0, scale, 0.0, at))
-		_shadows.multimesh.set_instance_color(index, Color(0.02, 0.03, 0.05, 0.24 if bool(entry.dragon) else 0.35))
+		_shadows.multimesh.set_instance_color(index, Color(0.02, 0.03, 0.05, 0.24 if unit_kind == UNIT_DRAGON else 0.35))
 
 
 func get_direction_index(direction: Vector2, team: int) -> int:
@@ -328,6 +339,8 @@ func get_unit_color(team: int, unit_kind: int, unit_state: int) -> Color:
 		color = color.lerp(GameConfig.COLOR_TEAL, 0.38).lightened(0.08)
 	elif unit_kind == UNIT_DRAGON:
 		color = color.lerp(GameConfig.COLOR_ORANGE, 0.48).lightened(0.14)
+	elif unit_kind == UNIT_SIEGE:
+		color = color.lerp(GameConfig.COLOR_ORANGE, 0.32)
 	if unit_state == STATE_ADVANCE:
 		color = color.darkened(0.12)
 	elif unit_state == STATE_WAIT:
@@ -341,8 +354,41 @@ func get_unit_render_position(unit_index: int) -> Vector2:
 		var remaining_ratio: float = clampf(_simulation.unit_lunge_timers[unit_index] / GameConfig.UNIT_LUNGE_DURATION, 0.0, 1.0)
 		var lunge_envelope := sin((1.0 - remaining_ratio) * PI)
 		lunge_offset = _simulation.unit_lunge_directions[unit_index] * GameConfig.UNIT_LUNGE_DISTANCE * lunge_envelope
-	var anchor_y := GameConfig.DRAGON_FOOT_ANCHOR_Y if _simulation.unit_kinds[unit_index] == UNIT_DRAGON else GameConfig.INFANTRY_FOOT_ANCHOR_Y
+	var anchor_y := _unit_foot_anchor(_simulation.unit_kinds[unit_index])
 	return _grid.position_to_world(_simulation.unit_positions[unit_index] + lunge_offset) + Vector2(0, anchor_y)
+
+
+func get_unit_render_size(unit_kind: int) -> Vector2:
+	var width: float = _simulation.get_unit_radius(unit_kind) * GameConfig.UNIT_RENDER_PIXELS_PER_RADIUS if _simulation != null else GameConfig.MELEE_UNIT_RADIUS * GameConfig.UNIT_RENDER_PIXELS_PER_RADIUS
+	var aspect := 1.12 if unit_kind == UNIT_DRAGON else (1.0 if unit_kind == UNIT_SIEGE else 1.30)
+	return Vector2(width, width * aspect)
+
+
+func get_atlas_layer(unit_kind: int, team: int) -> int:
+	if unit_kind == UNIT_SIEGE:
+		return 3 if team == TEAM_ENEMY else 2
+	return 1 if team == TEAM_ENEMY else 0
+
+
+func _unit_foot_anchor(unit_kind: int) -> float:
+	var render_size := get_unit_render_size(unit_kind)
+	return -render_size.y * (0.47 if unit_kind == UNIT_DRAGON else 0.45)
+
+
+func _unit_max_hp(unit_kind: int) -> float:
+	if unit_kind == UNIT_DRAGON:
+		return GameConfig.DRAGON_UNIT_MAX_HP
+	if unit_kind == UNIT_SIEGE:
+		return GameConfig.SIEGE_UNIT_MAX_HP
+	return GameConfig.RANGED_UNIT_MAX_HP if unit_kind == UNIT_RANGED else GameConfig.UNIT_MAX_HP
+
+
+func _unit_attack_interval(unit_kind: int) -> float:
+	if unit_kind == UNIT_DRAGON:
+		return GameConfig.DRAGON_UNIT_ATTACK_INTERVAL
+	if unit_kind == UNIT_SIEGE:
+		return GameConfig.SIEGE_UNIT_ATTACK_INTERVAL
+	return GameConfig.RANGED_UNIT_ATTACK_INTERVAL if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_INTERVAL
 
 
 func _update_hp_bar_visibility() -> void:
@@ -351,11 +397,7 @@ func _update_hp_bar_visibility() -> void:
 		var unit_id: int = _simulation.unit_ids[index]
 		living_ids[unit_id] = true
 		var current_hp: float = _simulation.unit_hp[index]
-		var maximum_hp := GameConfig.UNIT_MAX_HP
-		if _simulation.unit_kinds[index] == UNIT_RANGED:
-			maximum_hp = GameConfig.RANGED_UNIT_MAX_HP
-		elif _simulation.unit_kinds[index] == UNIT_DRAGON:
-			maximum_hp = GameConfig.DRAGON_UNIT_MAX_HP
+		var maximum_hp := _unit_max_hp(_simulation.unit_kinds[index])
 		var previous_hp: float = float(_last_hp_by_id.get(unit_id, maximum_hp))
 		if current_hp + 0.0001 < previous_hp:
 			_hp_bar_time_by_id[unit_id] = GameConfig.UNIT_HP_BAR_VISIBLE_SECONDS
@@ -377,17 +419,15 @@ func _draw() -> void:
 	if not is_instance_valid(_grid) or _simulation == null:
 		return
 	for index in _simulation.unit_ids.size():
-		var maximum_hp := GameConfig.UNIT_MAX_HP
-		if _simulation.unit_kinds[index] == UNIT_RANGED:
-			maximum_hp = GameConfig.RANGED_UNIT_MAX_HP
-		elif _simulation.unit_kinds[index] == UNIT_DRAGON:
-			maximum_hp = GameConfig.DRAGON_UNIT_MAX_HP
+		var maximum_hp := _unit_max_hp(_simulation.unit_kinds[index])
 		var ratio := clampf(_simulation.unit_hp[index] / maximum_hp, 0.0, 1.0)
 		var alpha := get_hp_bar_alpha(_simulation.unit_ids[index])
 		if ratio >= 0.995 or alpha <= 0.0:
 			continue
-		var bar_y := -76.0 if _simulation.unit_kinds[index] == UNIT_DRAGON else -53.0
-		var at := _grid.position_to_world(_simulation.unit_positions[index]) + Vector2(-9, bar_y)
-		draw_rect(Rect2(at, Vector2(18, 2)), Color(0.04, 0.05, 0.08, 0.86 * alpha))
+		var render_size := get_unit_render_size(_simulation.unit_kinds[index])
+		var bar_width := maxf(12.0, render_size.x * 0.62)
+		var bar_y := _unit_foot_anchor(_simulation.unit_kinds[index]) - render_size.y * 0.55
+		var at := _grid.position_to_world(_simulation.unit_positions[index]) + Vector2(-bar_width * 0.5, bar_y)
+		draw_rect(Rect2(at, Vector2(bar_width, 2)), Color(0.04, 0.05, 0.08, 0.86 * alpha))
 		var color := GameConfig.COLOR_ALLY if _simulation.unit_teams[index] == TEAM_ALLY else GameConfig.COLOR_ENEMY
-		draw_rect(Rect2(at + Vector2(1, 0.5), Vector2(16.0 * ratio, 1)), Color(color.lightened(0.25), alpha))
+		draw_rect(Rect2(at + Vector2(1, 0.5), Vector2((bar_width - 2.0) * ratio, 1)), Color(color.lightened(0.25), alpha))

@@ -13,6 +13,7 @@ const DARK_DEBRIS := Color("182033")
 @export var placement_duration := 0.42
 @export var hit_duration := 0.18
 @export var ranged_shot_duration := 0.12
+@export var siege_impact_duration := 0.48
 @export var death_duration := 0.42
 @export var production_duration := 0.58
 @export var building_hit_duration := 0.28
@@ -24,6 +25,8 @@ const DARK_DEBRIS := Color("182033")
 var placement_feedback_count := 0
 var hit_feedback_count := 0
 var ranged_shot_feedback_count := 0
+var siege_projectile_feedback_count := 0
+var siege_impact_feedback_count := 0
 var unit_death_feedback_count := 0
 var production_feedback_count := 0
 var spawner_hit_feedback_count := 0
@@ -73,6 +76,19 @@ func show_ranged_shot(origin: Vector2, grid_position: Vector2, team: int) -> voi
 	_add_effect("ranged_shot", grid_position, team, ranged_shot_duration, {"origin": origin})
 	ranged_shot_feedback_count += 1
 	last_feedback_mode = "ranged_shot"
+
+
+func show_siege_projectile(origin: Vector2, target: Vector2, team: int, duration: float) -> void:
+	_add_effect("siege_projectile", target, team, maxf(duration, 0.05), {"origin": origin})
+	siege_projectile_feedback_count += 1
+	last_feedback_mode = "siege_projectile"
+
+
+func show_siege_impact(grid_position: Vector2, team: int, radius: float) -> void:
+	_add_effect("siege_impact", grid_position, team, siege_impact_duration, {"radius": radius})
+	_spawn_fragments(grid_position, 0, fragment_count + 4, 55.0, 110.0, 1.5, 3.5)
+	siege_impact_feedback_count += 1
+	last_feedback_mode = "siege_impact"
 
 
 func show_unit_death(grid_position: Vector2, team: int) -> void:
@@ -185,6 +201,10 @@ func _draw() -> void:
 				_draw_hit(effect)
 			"ranged_shot":
 				_draw_ranged_shot(effect)
+			"siege_projectile":
+				_draw_siege_projectile(effect)
+			"siege_impact":
+				_draw_siege_impact(effect)
 			"unit_death":
 				_draw_unit_death(effect)
 			"production":
@@ -240,6 +260,34 @@ func _draw_ranged_shot(effect: Dictionary) -> void:
 	draw_line(origin, target, Color(color, ratio * 0.7), 5.0, true)
 	draw_line(origin, target, Color(HIT_WHITE, ratio), 2.0, true)
 	draw_circle(target, 2.5, Color(HIT_WHITE, ratio))
+
+
+func _draw_siege_projectile(effect: Dictionary) -> void:
+	var origin := _screen_position(Vector2(effect.origin)) + Vector2(0, -13)
+	var target := _screen_position(Vector2(effect.grid_position)) + Vector2(0, -8)
+	var ratio := _life_ratio(effect)
+	var progress := 1.0 - ratio
+	var ground_position := origin.lerp(target, progress)
+	var projectile_position := ground_position + Vector2(0, -sin(progress * PI) * 44.0)
+	var team_color := _team_color(int(effect.team))
+	# The full-flight target ring lets players leave the blast before impact.
+	draw_arc(target, GameConfig.ISO_TILE_WIDTH * GameConfig.SIEGE_BLAST_RADIUS * 0.42, 0.0, TAU, 36, Color(GameConfig.COLOR_ORANGE, 0.3 + 0.65 * ratio), 2.5, true)
+	draw_circle(ground_position, 4.0 + 2.0 * sin(progress * PI), Color(0.02, 0.025, 0.035, 0.42))
+	draw_line(ground_position, projectile_position, Color(team_color, 0.22), 2.0, true)
+	draw_circle(projectile_position, 5.5, Color(GameConfig.COLOR_ORANGE, 1.0))
+	draw_circle(projectile_position + Vector2(-1.5, -1.5), 2.2, HIT_WHITE)
+
+
+func _draw_siege_impact(effect: Dictionary) -> void:
+	var at := _screen_position(Vector2(effect.grid_position)) + Vector2(0, -9)
+	var ratio := _life_ratio(effect)
+	var progress := 1.0 - ratio
+	var blast_radius := GameConfig.ISO_TILE_WIDTH * float(effect.get("radius", GameConfig.SIEGE_BLAST_RADIUS)) * 0.42
+	draw_circle(at, blast_radius * (0.2 + progress * 0.8), Color(HIT_WHITE, ratio * 0.58))
+	draw_arc(at, blast_radius * (0.45 + progress * 0.75), 0.0, TAU, 40, Color(GameConfig.COLOR_ORANGE, ratio), 7.0 * ratio + 1.0, true)
+	for index in 8:
+		var direction := Vector2.from_angle(TAU * float(index) / 8.0)
+		draw_line(at + direction * 7.0, at + direction * blast_radius * (0.5 + progress), Color(GameConfig.COLOR_ORANGE.darkened(0.32), ratio), 3.0, true)
 
 
 func _draw_unit_death(effect: Dictionary) -> void:
@@ -333,4 +381,8 @@ func _life_ratio(item: Dictionary) -> float:
 
 
 func _team_color(team: int) -> Color:
-	return ALLY_BLUE if team == TEAM_ALLY else ENEMY_RED
+	if team == TEAM_ALLY:
+		return ALLY_BLUE
+	if team == TEAM_ENEMY:
+		return ENEMY_RED
+	return GameConfig.COLOR_ORANGE.darkened(0.24)

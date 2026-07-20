@@ -15,6 +15,7 @@ const BUILD_MELEE_SPAWNER := 0
 const BUILD_RANGED_SPAWNER := 1
 const BUILD_DEFENSE_TOWER := 2
 const BUILD_DRAGON_LAIR := 3
+const BUILD_SIEGE_SPAWNER := 4
 
 var gold_label: Label
 var ally_hq_label: Label
@@ -31,6 +32,7 @@ var result_label: Label
 var restart_button: Button
 var melee_button: Button
 var ranged_button: Button
+var siege_button: Button
 var tower_button: Button
 var dragon_button: Button
 
@@ -186,16 +188,19 @@ func _build_spawner_selector() -> void:
 	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(plate)
 
-	melee_button = _make_selector_button("MELEE 60", Vector2(4, 7))
-	ranged_button = _make_selector_button("RANGED 80", Vector2(122, 7))
-	tower_button = _make_selector_button("TOWER 120", Vector2(240, 7))
-	dragon_button = _make_selector_button("DRAGON 220", Vector2(358, 7))
+	melee_button = _make_selector_button("MELEE 60", Vector2(3, 7))
+	ranged_button = _make_selector_button("RANGED 80", Vector2(98, 7))
+	siege_button = _make_selector_button("SIEGE 140", Vector2(193, 7))
+	tower_button = _make_selector_button("TOWER 120", Vector2(288, 7))
+	dragon_button = _make_selector_button("DRAGON 220", Vector2(383, 7))
 	melee_button.pressed.connect(func() -> void: _select_build_kind(BUILD_MELEE_SPAWNER))
 	ranged_button.pressed.connect(func() -> void: _select_build_kind(BUILD_RANGED_SPAWNER))
+	siege_button.pressed.connect(func() -> void: _select_build_kind(BUILD_SIEGE_SPAWNER))
 	tower_button.pressed.connect(func() -> void: _select_build_kind(BUILD_DEFENSE_TOWER))
 	dragon_button.pressed.connect(func() -> void: _select_build_kind(BUILD_DRAGON_LAIR))
 	plate.add_child(melee_button)
 	plate.add_child(ranged_button)
+	plate.add_child(siege_button)
 	plate.add_child(tower_button)
 	plate.add_child(dragon_button)
 	_update_selector_styles()
@@ -204,20 +209,22 @@ func _build_spawner_selector() -> void:
 func _make_selector_button(label_text: String, at: Vector2) -> Button:
 	var button := Button.new()
 	button.position = at
-	button.size = Vector2(114, 48)
+	button.size = Vector2(92, 48)
 	button.text = label_text
 	button.mouse_filter = Control.MOUSE_FILTER_STOP
-	button.add_theme_font_size_override("font_size", 13)
+	button.add_theme_font_size_override("font_size", 10)
 	return button
 
 
 func _select_build_kind(build_kind: int) -> void:
-	if build_kind not in [BUILD_MELEE_SPAWNER, BUILD_RANGED_SPAWNER, BUILD_DEFENSE_TOWER, BUILD_DRAGON_LAIR] or build_kind == selected_build_kind:
+	if build_kind not in [BUILD_MELEE_SPAWNER, BUILD_RANGED_SPAWNER, BUILD_SIEGE_SPAWNER, BUILD_DEFENSE_TOWER, BUILD_DRAGON_LAIR] or build_kind == selected_build_kind:
 		return
 	selected_build_kind = build_kind
 	match build_kind:
 		BUILD_RANGED_SPAWNER:
 			instruction_label.text = "TAP BLUE TERRITORY // RANGED SPAWNER 80"
+		BUILD_SIEGE_SPAWNER:
+			instruction_label.text = "TAP BLUE TERRITORY // SIEGE SPAWNER 140"
 		BUILD_DEFENSE_TOWER:
 			instruction_label.text = "TAP WITHIN HQ 5x5 // DEFENSE TOWER 120"
 		BUILD_DRAGON_LAIR:
@@ -231,6 +238,7 @@ func _select_build_kind(build_kind: int) -> void:
 func _update_selector_styles() -> void:
 	_style_selector_button(melee_button, selected_build_kind == BUILD_MELEE_SPAWNER)
 	_style_selector_button(ranged_button, selected_build_kind == BUILD_RANGED_SPAWNER)
+	_style_selector_button(siege_button, selected_build_kind == BUILD_SIEGE_SPAWNER)
 	_style_selector_button(tower_button, selected_build_kind == BUILD_DEFENSE_TOWER)
 	_style_selector_button(dragon_button, selected_build_kind == BUILD_DRAGON_LAIR)
 

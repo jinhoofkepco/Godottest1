@@ -1,0 +1,61 @@
+{
+	"atlas_size": [
+		1536,
+		1536
+	],
+	"cell_size": [
+		96,
+		96
+	],
+	"columns": 16,
+	"direction_degrees": [
+		0,
+		45,
+		90,
+		135,
+		180,
+		225,
+		270,
+		315
+	],
+	"directions": 8,
+	"frames_per_direction": 16,
+	"generator": "tools/sprite_baker/bake_siege_sprites.gd",
+	"license": "KayKit Medieval Hexagon Pack, CC0 1.0",
+	"lighting": {
+		"ambient_energy": 0.22,
+		"key": "upper-left 45 degrees",
+		"key_energy": 1.55
+	},
+	"rows": 16,
+	"schema": 1,
+	"sources": [
+		{
+			"name": "blue",
+			"path": "res://assets/source/kaykit_medieval/buildings/blue/building_tower_catapult_blue.gltf"
+		},
+		{
+			"name": "red",
+			"path": "res://assets/source/kaykit_medieval/buildings/red/building_tower_catapult_red.gltf"
+		}
+	],
+	"state_counts": {
+		"attack": 4,
+		"death": 4,
+		"idle": 2,
+		"walk": 6
+	},
+	"state_offsets": {
+		"attack": 8,
+		"death": 12,
+		"idle": 0,
+		"walk": 2
+	},
+	"state_order": [
+		"idle",
+		"walk",
+		"attack",
+		"death"
+	],
+	"transparent_background": true
+}

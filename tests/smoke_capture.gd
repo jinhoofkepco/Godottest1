@@ -12,6 +12,8 @@ const OUTPUTS := [
 	"res://build/smoke_visual_hierarchy.png",
 	"res://build/smoke_elevation_overview.png",
 	"res://build/smoke_high_ground_combat.png",
+	"res://build/smoke_large_army.png",
+	"res://build/smoke_siege_impact.png",
 ]
 
 
@@ -49,7 +51,7 @@ func _run() -> void:
 			return
 		main.queue_free()
 		await process_frame
-	print("SMOKE CAPTURE PASS: opening / advantage / disadvantage / cluster / persistent flank / flow split / infantry closeup / visual hierarchy / elevation overview / high-ground combat (540x960)")
+	print("SMOKE CAPTURE PASS: opening / advantage / disadvantage / cluster / persistent flank / flow split / infantry closeup / visual hierarchy / elevation overview / high-ground combat / 200-unit army / SIEGE impact (540x960)")
 	quit(0)
 
 
@@ -98,8 +100,12 @@ func _stage_scenario(main: Node, scenario: int) -> bool:
 		return _stage_visual_hierarchy(main)
 	elif scenario == 8:
 		return _stage_elevation_overview(main)
-	else:
+	elif scenario == 9:
 		return _stage_high_ground_combat(main)
+	elif scenario == 10:
+		return _stage_large_army(main)
+	else:
+		return _stage_siege_impact(main)
 	return true
 
 
@@ -272,6 +278,45 @@ func _stage_high_ground_combat(main: Node) -> bool:
 	main.hud.show_message("HIGH GROUND +25% // RANGED +0.5", GameConfig.COLOR_ORANGE)
 	_focus_map(main, center, 4.8)
 	return simulation.elevation_at_position(high_position) == 2 and simulation.elevation_at_position(low_position) == 1
+
+
+func _stage_large_army(main: Node) -> bool:
+	var simulation = main.simulation
+	var middle := float(GameConfig.GRID_ROWS) * 0.5
+	for index in 100:
+		var column := index % GameConfig.GRID_COLUMNS
+		var rank := index / GameConfig.GRID_COLUMNS
+		var enemy_kind: int = [simulation.UNIT_MELEE, simulation.UNIT_RANGED, simulation.UNIT_SIEGE][index % 3]
+		var ally_kind: int = [simulation.UNIT_RANGED, simulation.UNIT_MELEE, simulation.UNIT_SIEGE][index % 3]
+		var enemy_position := Vector2(float(column) + 0.28 + float(index % 3) * 0.16, middle - 4.0 - float(rank) * 0.48)
+		var ally_position := Vector2(float(column) + 0.72 - float(index % 3) * 0.16, middle + 4.0 + float(rank) * 0.48)
+		var enemy_id: int = simulation.spawn_unit(simulation.TEAM_ENEMY, enemy_position, enemy_kind)
+		var ally_id: int = simulation.spawn_unit(simulation.TEAM_ALLY, ally_position, ally_kind)
+		simulation.unit_positions[simulation.unit_ids.find(enemy_id)] = enemy_position
+		simulation.unit_positions[simulation.unit_ids.find(ally_id)] = ally_position
+	main.unit_renderer.sync()
+	main.hud.show_message("100+ PER SIDE // ARMY SCALE", GameConfig.COLOR_TEAL)
+	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), 1.72)
+	return simulation.unit_ids.size() == 200 and simulation.unit_kinds.count(simulation.UNIT_SIEGE) >= 60
+
+
+func _stage_siege_impact(main: Node) -> bool:
+	var simulation = main.simulation
+	var center := Vector2(float(GameConfig.GRID_COLUMNS) * 0.5, float(GameConfig.GRID_ROWS) * 0.5)
+	for index in 3:
+		var siege_position := center + Vector2(-1.2 + float(index) * 1.2, 3.0)
+		var siege_id: int = simulation.spawn_unit(simulation.TEAM_ALLY, siege_position, simulation.UNIT_SIEGE)
+		simulation.unit_positions[simulation.unit_ids.find(siege_id)] = siege_position
+	for index in 9:
+		var victim_position := center + Vector2((float(index % 3) - 1.0) * 0.42, -0.45 + float(index / 3) * 0.38)
+		var victim_id: int = simulation.spawn_unit(simulation.TEAM_ENEMY, victim_position, simulation.UNIT_MELEE)
+		simulation.unit_positions[simulation.unit_ids.find(victim_id)] = victim_position
+	main.unit_renderer.sync()
+	main.fx.show_siege_projectile(center + Vector2(-1.2, 3.0), center, simulation.TEAM_ALLY, GameConfig.SIEGE_FLIGHT_SECONDS)
+	main.fx.show_siege_impact(center + Vector2(1.3, 0.2), simulation.TEAM_ALLY, GameConfig.SIEGE_BLAST_RADIUS)
+	main.hud.show_message("SIEGE // TELEGRAPH + ARC + BLAST", GameConfig.COLOR_ORANGE)
+	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), 3.4)
+	return simulation.unit_kinds.count(simulation.UNIT_SIEGE) == 3 and main.fx.siege_impact_feedback_count == 1
 
 
 func _nearest_clear_cell(simulation, desired: Vector2i, excluded: Array = []) -> Vector2i:

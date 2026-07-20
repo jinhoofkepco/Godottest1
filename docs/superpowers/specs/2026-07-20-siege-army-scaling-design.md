@@ -2,7 +2,7 @@
 
 ## Scope
 
-Add a fourth packed-data unit kind, SIEGE, while preserving the 22x44 elevation battlefield, fixed-tick simulation, bucket targeting, 2-3 minute match, building nodes, and batched unit renderer. Fix the existing dragon atlas presentation by vertically flipping only dragon quad transforms.
+Add a fourth packed-data unit kind, SIEGE, while preserving the 22x44 elevation battlefield, fixed-tick simulation, bucket targeting, 2-3 minute match, building nodes, and batched unit renderer. Fix the existing dragon atlas presentation by vertically flipping only the dragon atlas frame UV.
 
 ## Simulation
 
@@ -14,7 +14,7 @@ Enemy build AI cycles MELEE, RANGED, SIEGE. Ground SIEGE follows the existing el
 
 ## View and feedback
 
-Ground units share one globally Y-sorted MultiMesh and a team texture array. The atlas gains a third 8-direction class baked from the already-vendored CC0 KayKit catapult model; static source motion is enhanced with per-frame bob/recoil in the baker. Dragon quads use a negative local Y scale, leaving infantry, direction mapping, grounding, and shadow transforms unchanged.
+Ground units share one globally Y-sorted MultiMesh and a team texture array. The atlas gains a third 8-direction class baked from the already-vendored CC0 KayKit catapult model; static source motion is enhanced with per-frame bob/recoil in the baker. The dragon-only atlas shader flips frame UV vertically, leaving infantry, direction mapping, grounding, and shadow transforms unchanged.
 
 SIEGE launch emits a projectile event. `fx.gd` stores the shot for its flight duration and draws a ground shadow moving linearly, a projectile following a screen-space parabolic arc, and a persistent orange landing ring. Impact emits a larger flash plus muted earth fragments. These are visibly distinct from straight ranged tracers and ordinary hit sparks.
 

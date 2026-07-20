@@ -90,6 +90,10 @@ func _consume_events(events: Array) -> void:
 				fx.show_ranged_shot(Vector2(event.origin), Vector2(event.position), int(event.team))
 			"hq_shot":
 				fx.show_ranged_shot(Vector2(event.origin), Vector2(event.position), int(event.team))
+			"siege_projectile":
+				fx.show_siege_projectile(Vector2(event.origin), Vector2(event.position), int(event.team), float(event.get("duration", GameConfig.SIEGE_FLIGHT_SECONDS)))
+			"siege_impact":
+				fx.show_siege_impact(Vector2(event.position), int(event.team), float(event.get("radius", GameConfig.SIEGE_BLAST_RADIUS)))
 			"unit_death":
 				unit_renderer.queue_death(Vector2(event.position), int(event.team), int(event.get("unit_kind", simulation.UNIT_MELEE)), Vector2(event.get("direction", Vector2.ZERO)))
 				fx.show_unit_death(Vector2(event.position), int(event.team))
@@ -179,6 +183,8 @@ func _finish_match(value: String) -> void:
 func _unit_kind_name(unit_kind: int) -> String:
 	if unit_kind == simulation.UNIT_DRAGON:
 		return "DRAGON"
+	if unit_kind == simulation.UNIT_SIEGE:
+		return "SIEGE"
 	return "RANGED" if unit_kind == simulation.UNIT_RANGED else "MELEE"
 
 
@@ -190,6 +196,8 @@ func _build_kind_name(build_kind: int) -> String:
 			return "DEFENSE TOWER"
 		simulation.BUILD_DRAGON_LAIR:
 			return "DRAGON LAIR"
+		simulation.BUILD_SIEGE_SPAWNER:
+			return "SIEGE SPAWNER"
 		_:
 			return "MELEE SPAWNER"
 

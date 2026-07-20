@@ -16,10 +16,12 @@ const BUILDING_DRAGON_LAIR := 3
 const UNIT_MELEE := 0
 const UNIT_RANGED := 1
 const UNIT_DRAGON := 2
+const UNIT_SIEGE := 3
 const BUILD_MELEE_SPAWNER := 0
 const BUILD_RANGED_SPAWNER := 1
 const BUILD_DEFENSE_TOWER := 2
 const BUILD_DRAGON_LAIR := 3
+const BUILD_SIEGE_SPAWNER := 4
 const STATE_ADVANCE := 0
 const STATE_ATTACK := 1
 const STATE_WAIT := 2
@@ -38,6 +40,7 @@ var unit_lunge_timers := PackedFloat32Array()
 var unit_lunge_directions := PackedVector2Array()
 var unit_velocities := PackedVector2Array()
 var unit_flow_bias_radians := PackedFloat32Array()
+var unit_siege_target_positions := PackedVector2Array()
 
 var buildings: Array[Dictionary] = []
 var ownership := PackedByteArray()
@@ -50,6 +53,10 @@ var enemy_hq_id := 0
 var time_remaining := GameConfig.MATCH_DURATION
 var result := ""
 var target_candidate_checks := 0
+var aoe_candidate_checks := 0
+var siege_impacts_resolved_this_tick := 0
+var siege_target_searches := 0
+var siege_impacts: Array[Dictionary] = []
 var enemy_flow: FlowField
 var ally_flow: FlowField
 var terrain_map
@@ -67,6 +74,8 @@ var _next_flow_rebuild_team := TEAM_ENEMY
 var _events: Array[Dictionary] = []
 var _enemy_buckets: Array[Array] = []
 var _ally_buckets: Array[Array] = []
+var _enemy_siege_density := PackedInt32Array()
+var _ally_siege_density := PackedInt32Array()
 var _unit_index_by_id: Dictionary = {}
 var _rng := RandomNumberGenerator.new()
 var _found_target_id := 0
@@ -90,6 +99,7 @@ func reset() -> void:
 	unit_lunge_directions.clear()
 	unit_velocities.clear()
 	unit_flow_bias_radians.clear()
+	unit_siege_target_positions.clear()
 	buildings.clear()
 	ownership.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	for row in GameConfig.GRID_ROWS:
@@ -115,6 +125,10 @@ func reset() -> void:
 	time_remaining = GameConfig.MATCH_DURATION
 	result = ""
 	target_candidate_checks = 0
+	aoe_candidate_checks = 0
+	siege_impacts_resolved_this_tick = 0
+	siege_target_searches = 0
+	siege_impacts.clear()
 	_next_unit_id = 1
 	_next_building_id = 1
 	_tick_accumulator = 0.0
@@ -132,6 +146,10 @@ func reset() -> void:
 	_unit_index_by_id.clear()
 	_enemy_buckets.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	_ally_buckets.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	_enemy_siege_density.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	_ally_siege_density.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	_enemy_siege_density.fill(0)
+	_ally_siege_density.fill(0)
 	enemy_hq_id = add_building(TEAM_ENEMY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, 0))
 	ally_hq_id = add_building(TEAM_ALLY, BUILDING_HQ, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS - 1))
 	enemy_flow = FlowFieldScript.new(GameConfig.GRID_COLUMNS, GameConfig.GRID_ROWS)
@@ -141,7 +159,7 @@ func reset() -> void:
 
 
 func spawn_unit(team: int, position: Vector2, unit_kind: int = UNIT_MELEE) -> int:
-	if team not in [TEAM_ALLY, TEAM_ENEMY] or unit_kind not in [UNIT_MELEE, UNIT_RANGED, UNIT_DRAGON]:
+	if team not in [TEAM_ALLY, TEAM_ENEMY] or unit_kind not in [UNIT_MELEE, UNIT_RANGED, UNIT_DRAGON, UNIT_SIEGE]:
 		return 0
 	var unit_id := _next_unit_id
 	_next_unit_id += 1
@@ -165,12 +183,13 @@ func spawn_unit(team: int, position: Vector2, unit_kind: int = UNIT_MELEE) -> in
 	unit_lunge_directions.append(Vector2.ZERO)
 	unit_velocities.append(Vector2.ZERO)
 	unit_flow_bias_radians.append(deg_to_rad(_rng.randf_range(-GameConfig.FLOW_NOISE_DEGREES, GameConfig.FLOW_NOISE_DEGREES)))
+	unit_siege_target_positions.append(Vector2(-1.0, -1.0))
 	_unit_index_by_id[unit_id] = unit_ids.size() - 1
 	return unit_id
 
 
 func add_building(team: int, kind: int, cell: Vector2i, unit_kind: int = UNIT_MELEE) -> int:
-	if team not in [TEAM_ALLY, TEAM_ENEMY] or kind not in [BUILDING_HQ, BUILDING_SPAWNER, BUILDING_DEFENSE_TOWER, BUILDING_DRAGON_LAIR] or unit_kind not in [UNIT_MELEE, UNIT_RANGED, UNIT_DRAGON] or not _cell_is_valid(cell) or is_blocked(cell):
+	if team not in [TEAM_ALLY, TEAM_ENEMY] or kind not in [BUILDING_HQ, BUILDING_SPAWNER, BUILDING_DEFENSE_TOWER, BUILDING_DRAGON_LAIR] or unit_kind not in [UNIT_MELEE, UNIT_RANGED, UNIT_DRAGON, UNIT_SIEGE] or not _cell_is_valid(cell) or is_blocked(cell):
 		return 0
 	var building_id := _add_building(team, kind, cell, unit_kind)
 	if enemy_flow != null and ally_flow != null:
@@ -195,14 +214,14 @@ func tick(delta: float) -> void:
 
 
 func try_build_spawner(team: int, cell: Vector2i, unit_kind: int = UNIT_MELEE) -> bool:
-	if unit_kind not in [UNIT_MELEE, UNIT_RANGED]:
+	if unit_kind not in [UNIT_MELEE, UNIT_RANGED, UNIT_SIEGE]:
 		return false
-	var build_kind := BUILD_RANGED_SPAWNER if unit_kind == UNIT_RANGED else BUILD_MELEE_SPAWNER
+	var build_kind := BUILD_SIEGE_SPAWNER if unit_kind == UNIT_SIEGE else (BUILD_RANGED_SPAWNER if unit_kind == UNIT_RANGED else BUILD_MELEE_SPAWNER)
 	return try_build(team, cell, build_kind)
 
 
 func try_build(team: int, cell: Vector2i, build_kind: int) -> bool:
-	if result != "" or build_kind not in [BUILD_MELEE_SPAWNER, BUILD_RANGED_SPAWNER, BUILD_DEFENSE_TOWER, BUILD_DRAGON_LAIR] or not _cell_is_valid(cell) or is_blocked(cell):
+	if result != "" or build_kind not in [BUILD_MELEE_SPAWNER, BUILD_RANGED_SPAWNER, BUILD_DEFENSE_TOWER, BUILD_DRAGON_LAIR, BUILD_SIEGE_SPAWNER] or not _cell_is_valid(cell) or is_blocked(cell):
 		return false
 	if ownership[_cell_index(cell)] != team or _building_at(cell) != -1:
 		return false
@@ -223,6 +242,8 @@ func try_build(team: int, cell: Vector2i, build_kind: int) -> bool:
 	var unit_kind := UNIT_MELEE
 	if build_kind == BUILD_RANGED_SPAWNER:
 		unit_kind = UNIT_RANGED
+	elif build_kind == BUILD_SIEGE_SPAWNER:
+		unit_kind = UNIT_SIEGE
 	elif build_kind == BUILD_DEFENSE_TOWER:
 		building_type = BUILDING_DEFENSE_TOWER
 	elif build_kind == BUILD_DRAGON_LAIR:
@@ -300,6 +321,91 @@ func get_elevation_damage_multiplier(attacker_position: Vector2, target_position
 
 func get_unit_attack_range(unit_kind: int, position: Vector2) -> float:
 	return _unit_attack_range(unit_kind, position)
+
+
+func get_unit_radius(unit_kind: int) -> float:
+	match unit_kind:
+		UNIT_RANGED:
+			return GameConfig.RANGED_UNIT_RADIUS
+		UNIT_SIEGE:
+			return GameConfig.SIEGE_UNIT_RADIUS
+		UNIT_DRAGON:
+			return GameConfig.DRAGON_UNIT_RADIUS
+		_:
+			return GameConfig.MELEE_UNIT_RADIUS
+
+
+func get_separation_distance(first_kind: int, second_kind: int) -> float:
+	return (get_unit_radius(first_kind) + get_unit_radius(second_kind)) * GameConfig.UNIT_SEPARATION_SPACING_MULTIPLIER
+
+
+func get_siege_damage_at_distance(center_distance: float, target_radius: float, base_damage: float) -> float:
+	var surface_distance := maxf(0.0, center_distance - target_radius)
+	if surface_distance > GameConfig.SIEGE_BLAST_RADIUS:
+		return 0.0
+	var falloff := clampf(surface_distance / GameConfig.SIEGE_BLAST_RADIUS, 0.0, 1.0)
+	return base_damage * lerpf(1.0, GameConfig.SIEGE_EDGE_DAMAGE_MULTIPLIER, falloff)
+
+
+func get_siege_flight_seconds(distance: float) -> float:
+	var ratio := clampf(distance / GameConfig.SIEGE_UNIT_ATTACK_RANGE, 0.0, 1.0)
+	return GameConfig.SIEGE_FLIGHT_SECONDS * lerpf(GameConfig.SIEGE_FLIGHT_MIN_MULTIPLIER, GameConfig.SIEGE_FLIGHT_MAX_MULTIPLIER, ratio)
+
+
+func get_siege_target_point(unit_index: int) -> Vector2:
+	if unit_index < 0 or unit_index >= unit_ids.size() or unit_kinds[unit_index] != UNIT_SIEGE or unit_hp[unit_index] <= 0.0:
+		return Vector2(-1.0, -1.0)
+	var origin := unit_positions[unit_index]
+	var target_density := _ally_siege_density if unit_teams[unit_index] == TEAM_ENEMY else _enemy_siege_density
+	var origin_cell := Vector2i(floori(origin.x), floori(origin.y))
+	var cell_radius := ceili(GameConfig.SIEGE_UNIT_ATTACK_RANGE)
+	var best_score := -1
+	var best_distance_squared := INF
+	var best_point_index := 2147483647
+	var best_point := Vector2(-1.0, -1.0)
+	for row in range(maxi(0, origin_cell.y - cell_radius), mini(GameConfig.GRID_ROWS - 1, origin_cell.y + cell_radius) + 1):
+		for column in range(maxi(0, origin_cell.x - cell_radius), mini(GameConfig.GRID_COLUMNS - 1, origin_cell.x + cell_radius) + 1):
+			var point := Vector2(float(column) + 0.5, float(row) + 0.5)
+			var distance_squared := origin.distance_squared_to(point)
+			if distance_squared < GameConfig.SIEGE_UNIT_MIN_RANGE * GameConfig.SIEGE_UNIT_MIN_RANGE or distance_squared > GameConfig.SIEGE_UNIT_ATTACK_RANGE * GameConfig.SIEGE_UNIT_ATTACK_RANGE:
+				continue
+			var score := target_density[_cell_index(Vector2i(column, row))]
+			var point_index := row * GameConfig.GRID_COLUMNS + column
+			if score > best_score or (score == best_score and score > 0 and (distance_squared < best_distance_squared - 0.000001 or (is_equal_approx(distance_squared, best_distance_squared) and point_index < best_point_index))):
+				best_score = score
+				best_distance_squared = distance_squared
+				best_point_index = point_index
+				best_point = point
+	if best_score <= 0:
+		return Vector2(-1.0, -1.0)
+	return best_point
+
+
+func _predicted_siege_target_position(candidate_index: int, fallback_direction: Vector2, flight_seconds: float) -> Vector2:
+	var velocity := unit_velocities[candidate_index]
+	if velocity.length_squared() <= 0.0001 and unit_states[candidate_index] == STATE_ADVANCE:
+		velocity = fallback_direction * _unit_speed(unit_kinds[candidate_index]) * unit_speed_scales[candidate_index]
+	var predicted := unit_positions[candidate_index] + velocity * flight_seconds
+	predicted.x = clampf(predicted.x, 0.2, float(GameConfig.GRID_COLUMNS) - 0.2)
+	predicted.y = clampf(predicted.y, 0.5, float(GameConfig.GRID_ROWS) - 0.5)
+	return predicted
+
+
+func schedule_siege_impact(team: int, origin: Vector2, target: Vector2, damage: float, duration: float = GameConfig.SIEGE_FLIGHT_SECONDS) -> void:
+	var flight_duration := maxf(0.001, duration)
+	siege_impacts.append({"team": team, "origin": origin, "target": target, "damage": damage, "remaining": flight_duration, "duration": flight_duration})
+	_events.append({"type": "siege_projectile", "team": team, "origin": origin, "position": target, "duration": flight_duration})
+
+
+func advance_siege_impacts(delta: float) -> void:
+	for impact_index in range(siege_impacts.size() - 1, -1, -1):
+		var impact := siege_impacts[impact_index]
+		impact.remaining = float(impact.remaining) - delta
+		if float(impact.remaining) > 0.0:
+			siege_impacts[impact_index] = impact
+			continue
+		_resolve_siege_impact(impact)
+		siege_impacts.remove_at(impact_index)
 
 
 func get_occupancy(team: int) -> float:
@@ -401,6 +507,9 @@ func _step(delta: float) -> void:
 	_update_enemy_ai(delta)
 	_update_spawners(delta)
 	_rebuild_buckets()
+	aoe_candidate_checks = 0
+	siege_impacts_resolved_this_tick = 0
+	advance_siege_impacts(delta)
 	_congestion_rebuild_timer -= delta
 	if _congestion_rebuild_timer <= 0.0:
 		_rebuild_flow_for_team(_next_flow_rebuild_team)
@@ -413,17 +522,31 @@ func _step(delta: float) -> void:
 			continue
 		unit_cooldowns[index] = maxf(0.0, unit_cooldowns[index] - delta)
 		unit_lunge_timers[index] = maxf(0.0, unit_lunge_timers[index] - delta)
-		_find_target(index)
+		if unit_kinds[index] == UNIT_SIEGE:
+			if unit_cooldowns[index] <= 0.0:
+				_find_siege_target(index)
+				unit_siege_target_positions[index] = _found_target_position if _found_target_id != 0 else Vector2(-1.0, -1.0)
+			else:
+				_restore_siege_target(index)
+		else:
+			_find_target(index)
 		unit_target_ids[index] = _found_target_id
 		var position := unit_positions[index]
 		var attack_range := _unit_attack_range(unit_kinds[index], position)
-		var target_in_attack_range := _found_target_id != 0 and position.distance_squared_to(_found_target_position) <= attack_range * attack_range
+		var contact_range := attack_range + _found_target_radius()
+		var target_distance_squared := position.distance_squared_to(_found_target_position)
+		var target_in_attack_range := _found_target_id != 0 and target_distance_squared <= contact_range * contact_range
+		if unit_kinds[index] == UNIT_SIEGE:
+			target_in_attack_range = _found_target_id != 0 and target_distance_squared >= GameConfig.SIEGE_UNIT_MIN_RANGE * GameConfig.SIEGE_UNIT_MIN_RANGE and target_distance_squared <= attack_range * attack_range
 		if target_in_attack_range:
 			unit_states[index] = STATE_ATTACK
 			unit_lunge_directions[index] = position.direction_to(_found_target_position)
 			unit_velocities[index] = unit_velocities[index].move_toward(Vector2.ZERO, _unit_speed(unit_kinds[index]) * GameConfig.UNIT_TURN_RATE * delta)
 			if unit_cooldowns[index] <= 0.0:
-				_attack_target(index, _found_unit_index, _found_building_index)
+				if unit_kinds[index] == UNIT_SIEGE:
+					_launch_siege(index, _found_target_position)
+				else:
+					_attack_target(index, _found_unit_index, _found_building_index)
 		else:
 			var advance_direction := _advance_direction(index)
 			var seek_direction := Vector2.ZERO
@@ -484,7 +607,7 @@ func _update_enemy_ai(delta: float) -> void:
 			var cell := Vector2i(column, row)
 			if try_build_spawner(TEAM_ENEMY, cell, unit_kind):
 				_enemy_build_cursor = (column + 3) % GameConfig.GRID_COLUMNS
-				_enemy_next_unit_kind = UNIT_RANGED if unit_kind == UNIT_MELEE else UNIT_MELEE
+				_enemy_next_unit_kind = UNIT_RANGED if unit_kind == UNIT_MELEE else (UNIT_SIEGE if unit_kind == UNIT_RANGED else UNIT_MELEE)
 				return
 
 
@@ -550,6 +673,37 @@ func _rebuild_buckets() -> void:
 		)
 		var team_buckets := _enemy_buckets if unit_teams[index] == TEAM_ENEMY else _ally_buckets
 		team_buckets[_cell_index(cell)].append(index)
+	_rebuild_siege_density_fields()
+
+
+func _rebuild_siege_density_fields() -> void:
+	_enemy_siege_density.fill(0)
+	_ally_siege_density.fill(0)
+	for unit_index in unit_ids.size():
+		if unit_hp[unit_index] <= 0.0:
+			continue
+		var advance := Vector2.DOWN if unit_teams[unit_index] == TEAM_ENEMY else Vector2.UP
+		var predicted := _predicted_siege_target_position(unit_index, advance, GameConfig.SIEGE_FLIGHT_SECONDS)
+		_add_siege_density(unit_teams[unit_index], predicted, get_unit_radius(unit_kinds[unit_index]))
+	for building in buildings:
+		if bool(building.destroyed):
+			continue
+		_add_siege_density(int(building.team), Vector2(building.cell) + Vector2(0.5, 0.5), GameConfig.BUILDING_TARGET_RADIUS)
+
+
+func _add_siege_density(team: int, position: Vector2, target_radius: float) -> void:
+	var influence_radius := GameConfig.SIEGE_BLAST_RADIUS + target_radius
+	var cell_radius := ceili(influence_radius)
+	var center_cell := Vector2i(floori(position.x), floori(position.y))
+	for row in range(maxi(0, center_cell.y - cell_radius), mini(GameConfig.GRID_ROWS - 1, center_cell.y + cell_radius) + 1):
+		for column in range(maxi(0, center_cell.x - cell_radius), mini(GameConfig.GRID_COLUMNS - 1, center_cell.x + cell_radius) + 1):
+			var point := Vector2(float(column) + 0.5, float(row) + 0.5)
+			if point.distance_to(position) <= influence_radius:
+				var index := _cell_index(Vector2i(column, row))
+				if team == TEAM_ENEMY:
+					_enemy_siege_density[index] += 1
+				else:
+					_ally_siege_density[index] += 1
 
 
 func _density_from_buckets(buckets: Array[Array]) -> PackedInt32Array:
@@ -581,17 +735,18 @@ func _rebuild_flow_for_team(team: int) -> void:
 func _nearest_hostile_unit_index(team: int, position: Vector2, radius: float, can_target_air: bool = true) -> int:
 	var buckets := _ally_buckets if team == TEAM_ENEMY else _enemy_buckets
 	var cell := Vector2i(floori(position.x), floori(position.y))
-	var bucket_radius := ceili(radius)
-	var best_distance_squared := radius * radius
+	var bucket_radius := ceili(radius + GameConfig.DRAGON_UNIT_RADIUS)
+	var best_surface_distance := INF
 	var best_index := -1
 	for row in range(maxi(0, cell.y - bucket_radius), mini(GameConfig.GRID_ROWS - 1, cell.y + bucket_radius) + 1):
 		for column in range(maxi(0, cell.x - bucket_radius), mini(GameConfig.GRID_COLUMNS - 1, cell.x + bucket_radius) + 1):
 			for candidate_index in buckets[_cell_index(Vector2i(column, row))]:
 				if unit_hp[candidate_index] <= 0.0 or (not can_target_air and unit_kinds[candidate_index] == UNIT_DRAGON):
 					continue
-				var distance_squared := position.distance_squared_to(unit_positions[candidate_index])
-				if distance_squared <= best_distance_squared:
-					best_distance_squared = distance_squared
+				var center_distance := position.distance_to(unit_positions[candidate_index])
+				var surface_distance := maxf(0.0, center_distance - get_unit_radius(unit_kinds[candidate_index]))
+				if surface_distance <= radius and surface_distance <= best_surface_distance:
+					best_surface_distance = surface_distance
 					best_index = candidate_index
 	return best_index
 
@@ -636,6 +791,32 @@ func _find_target(unit_index: int) -> void:
 		_assign_hq_fallback(team, position)
 
 
+func _find_siege_target(unit_index: int) -> void:
+	siege_target_searches += 1
+	_found_unit_index = -1
+	_found_building_index = -1
+	_found_target_position = get_siege_target_point(unit_index)
+	# Density scoring already proved a hostile occupies the predicted blast footprint.
+	# Keep the ground point as the target even though moving troops have not reached it yet.
+	_found_target_id = -2147483647 if _found_target_position.x >= 0.0 else 0
+
+
+func _restore_siege_target(unit_index: int) -> void:
+	_found_target_id = 0
+	_found_unit_index = -1
+	_found_building_index = -1
+	_found_target_position = unit_siege_target_positions[unit_index]
+	if _found_target_position.x >= 0.0:
+		# SIEGE aims at a ground point. A nonzero sentinel keeps it stationary while reloading.
+		_found_target_id = -2147483647
+
+
+func _found_target_radius() -> float:
+	if _found_unit_index >= 0 and _found_unit_index < unit_kinds.size():
+		return get_unit_radius(unit_kinds[_found_unit_index])
+	return GameConfig.BUILDING_TARGET_RADIUS if _found_building_index >= 0 else 0.0
+
+
 func _seed_retained_target(target_id: int, team: int, position: Vector2, can_target_air: bool, detect_range: float) -> float:
 	var maximum_distance_sq := detect_range * detect_range
 	_found_target_id = 0
@@ -665,7 +846,11 @@ func _seed_retained_target(target_id: int, team: int, position: Vector2, can_tar
 
 
 func get_unit_detect_range(unit_kind: int) -> float:
-	return GameConfig.DRAGON_UNIT_DETECT_RANGE if unit_kind == UNIT_DRAGON else GameConfig.UNIT_DETECT_RANGE
+	if unit_kind == UNIT_DRAGON:
+		return GameConfig.DRAGON_UNIT_DETECT_RANGE
+	if unit_kind == UNIT_RANGED:
+		return GameConfig.RANGED_UNIT_DETECT_RANGE
+	return GameConfig.UNIT_DETECT_RANGE
 
 
 func _bucket_can_contain_nearer_target(position: Vector2, column: int, row: int, best_distance_sq: float) -> bool:
@@ -682,13 +867,14 @@ func _calculate_separation(unit_index: int) -> Vector2:
 	var team := unit_teams[unit_index]
 	var cell := Vector2i(floori(position.x), floori(position.y))
 	var separation := Vector2.ZERO
-	var radius_squared := GameConfig.UNIT_SEPARATION_RADIUS * GameConfig.UNIT_SEPARATION_RADIUS
 	var team_buckets := _enemy_buckets if team == TEAM_ENEMY else _ally_buckets
 	for row in range(maxi(0, cell.y - 1), mini(GameConfig.GRID_ROWS - 1, cell.y + 1) + 1):
 		for column in range(maxi(0, cell.x - 1), mini(GameConfig.GRID_COLUMNS - 1, cell.x + 1) + 1):
 			for candidate_index in team_buckets[row * GameConfig.GRID_COLUMNS + column]:
 				if candidate_index == unit_index or unit_hp[candidate_index] <= 0.0:
 					continue
+				var separation_distance := get_separation_distance(unit_kinds[unit_index], unit_kinds[candidate_index])
+				var radius_squared := separation_distance * separation_distance
 				var offset := position - unit_positions[candidate_index]
 				var distance_squared := offset.length_squared()
 				if distance_squared >= radius_squared:
@@ -698,7 +884,7 @@ func _calculate_separation(unit_index: int) -> Vector2:
 					separation += Vector2(pair_direction, 0.0)
 				else:
 					var distance := sqrt(distance_squared)
-					separation += offset / distance * (1.0 - distance / GameConfig.UNIT_SEPARATION_RADIUS)
+					separation += offset / distance * (1.0 - distance / separation_distance)
 	return separation.normalized() if separation.length_squared() > 0.000001 else Vector2.ZERO
 
 
@@ -829,6 +1015,46 @@ func _attack_target(attacker_index: int, target_unit_index: int, building_index:
 		apply_building_damage(int(buildings[building_index].id), _unit_attack_damage(unit_kind) * get_elevation_damage_multiplier(attacker_position, building_position), attacker_team)
 
 
+func _launch_siege(attacker_index: int, target_position: Vector2) -> void:
+	unit_cooldowns[attacker_index] = GameConfig.SIEGE_UNIT_ATTACK_INTERVAL
+	unit_lunge_timers[attacker_index] = GameConfig.UNIT_LUNGE_DURATION
+	var flight_seconds := get_siege_flight_seconds(unit_positions[attacker_index].distance_to(target_position))
+	schedule_siege_impact(unit_teams[attacker_index], unit_positions[attacker_index], target_position, GameConfig.SIEGE_UNIT_ATTACK_DAMAGE, flight_seconds)
+
+
+func _resolve_siege_impact(impact: Dictionary) -> void:
+	siege_impacts_resolved_this_tick += 1
+	var team := int(impact.team)
+	var origin := Vector2(impact.origin)
+	var target := Vector2(impact.target)
+	var base_damage := float(impact.damage)
+	var target_buckets := _ally_buckets if team == TEAM_ENEMY else _enemy_buckets
+	var target_cell := Vector2i(clampi(floori(target.x), 0, GameConfig.GRID_COLUMNS - 1), clampi(floori(target.y), 0, GameConfig.GRID_ROWS - 1))
+	var search_radius := ceili(GameConfig.SIEGE_BLAST_RADIUS + GameConfig.DRAGON_UNIT_RADIUS)
+	for row in range(maxi(0, target_cell.y - search_radius), mini(GameConfig.GRID_ROWS - 1, target_cell.y + search_radius) + 1):
+		for column in range(maxi(0, target_cell.x - search_radius), mini(GameConfig.GRID_COLUMNS - 1, target_cell.x + search_radius) + 1):
+			for candidate_index in target_buckets[_cell_index(Vector2i(column, row))]:
+				aoe_candidate_checks += 1
+				if unit_hp[candidate_index] <= 0.0:
+					continue
+				var damage := get_siege_damage_at_distance(target.distance_to(unit_positions[candidate_index]), get_unit_radius(unit_kinds[candidate_index]), base_damage)
+				if damage <= 0.0:
+					continue
+				var elevation_multiplier := get_elevation_damage_multiplier(origin, unit_positions[candidate_index])
+				unit_hp[candidate_index] -= damage * elevation_multiplier
+				unit_last_attacker_teams[candidate_index] = team
+				_events.append({"type": "hit", "team": unit_teams[candidate_index], "position": unit_positions[candidate_index], "high_ground": elevation_multiplier > 1.0})
+	for building_index in buildings.size():
+		var building := buildings[building_index]
+		if bool(building.destroyed) or int(building.team) == team:
+			continue
+		var building_position := Vector2(building.cell) + Vector2(0.5, 0.5)
+		var damage := get_siege_damage_at_distance(target.distance_to(building_position), GameConfig.BUILDING_TARGET_RADIUS, base_damage)
+		if damage > 0.0:
+			apply_building_damage(int(building.id), damage * get_elevation_damage_multiplier(origin, building_position), team)
+	_events.append({"type": "siege_impact", "team": team, "position": target, "radius": GameConfig.SIEGE_BLAST_RADIUS})
+
+
 func _remove_dead_units() -> void:
 	var index := unit_ids.size() - 1
 	var removed_any := false
@@ -867,6 +1093,7 @@ func _remove_unit_at(index: int) -> void:
 		unit_lunge_directions[index] = unit_lunge_directions[last]
 		unit_velocities[index] = unit_velocities[last]
 		unit_flow_bias_radians[index] = unit_flow_bias_radians[last]
+		unit_siege_target_positions[index] = unit_siege_target_positions[last]
 	unit_ids.resize(last)
 	unit_teams.resize(last)
 	unit_kinds.resize(last)
@@ -881,6 +1108,7 @@ func _remove_unit_at(index: int) -> void:
 	unit_lunge_directions.resize(last)
 	unit_velocities.resize(last)
 	unit_flow_bias_radians.resize(last)
+	unit_siege_target_positions.resize(last)
 
 
 func _rebuild_unit_index() -> void:
@@ -916,6 +1144,8 @@ func _add_building(team: int, kind: int, cell: Vector2i, unit_kind: int) -> int:
 
 
 func _spawner_cost(unit_kind: int) -> int:
+	if unit_kind == UNIT_SIEGE:
+		return GameConfig.SIEGE_SPAWNER_COST
 	return GameConfig.RANGED_SPAWNER_COST if unit_kind == UNIT_RANGED else GameConfig.SPAWNER_COST
 
 
@@ -923,6 +1153,8 @@ func _build_cost(build_kind: int) -> int:
 	match build_kind:
 		BUILD_RANGED_SPAWNER:
 			return GameConfig.RANGED_SPAWNER_COST
+		BUILD_SIEGE_SPAWNER:
+			return GameConfig.SIEGE_SPAWNER_COST
 		BUILD_DEFENSE_TOWER:
 			return GameConfig.DEFENSE_TOWER_COST
 		BUILD_DRAGON_LAIR:
@@ -934,12 +1166,16 @@ func _build_cost(build_kind: int) -> int:
 func _unit_max_hp(unit_kind: int) -> float:
 	if unit_kind == UNIT_DRAGON:
 		return GameConfig.DRAGON_UNIT_MAX_HP
+	if unit_kind == UNIT_SIEGE:
+		return GameConfig.SIEGE_UNIT_MAX_HP
 	return GameConfig.RANGED_UNIT_MAX_HP if unit_kind == UNIT_RANGED else GameConfig.UNIT_MAX_HP
 
 
 func _unit_speed(unit_kind: int) -> float:
 	if unit_kind == UNIT_DRAGON:
 		return GameConfig.DRAGON_UNIT_SPEED
+	if unit_kind == UNIT_SIEGE:
+		return GameConfig.SIEGE_UNIT_SPEED
 	return GameConfig.RANGED_UNIT_SPEED if unit_kind == UNIT_RANGED else GameConfig.UNIT_SPEED
 
 
@@ -949,18 +1185,24 @@ func _unit_attack_range(unit_kind: int, position: Vector2 = Vector2(-1.0, -1.0))
 	if unit_kind == UNIT_RANGED:
 		var high_ground_bonus := GameConfig.RANGED_HIGH_GROUND_RANGE_BONUS if position.x >= 0.0 and elevation_at_position(position) >= 1 else 0.0
 		return GameConfig.RANGED_UNIT_ATTACK_RANGE + high_ground_bonus
+	if unit_kind == UNIT_SIEGE:
+		return GameConfig.SIEGE_UNIT_ATTACK_RANGE
 	return GameConfig.UNIT_ATTACK_RANGE
 
 
 func _unit_attack_damage(unit_kind: int) -> float:
 	if unit_kind == UNIT_DRAGON:
 		return GameConfig.DRAGON_UNIT_ATTACK_DAMAGE
+	if unit_kind == UNIT_SIEGE:
+		return GameConfig.SIEGE_UNIT_ATTACK_DAMAGE
 	return GameConfig.RANGED_UNIT_ATTACK_DAMAGE if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_DAMAGE
 
 
 func _unit_attack_interval(unit_kind: int) -> float:
 	if unit_kind == UNIT_DRAGON:
 		return GameConfig.DRAGON_UNIT_ATTACK_INTERVAL
+	if unit_kind == UNIT_SIEGE:
+		return GameConfig.SIEGE_UNIT_ATTACK_INTERVAL
 	return GameConfig.RANGED_UNIT_ATTACK_INTERVAL if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_INTERVAL
 
 

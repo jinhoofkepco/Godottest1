@@ -204,11 +204,12 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	main.simulation.spawn_unit(main.simulation.TEAM_ENEMY, Vector2(5.5, 10.5), main.simulation.UNIT_RANGED)
 	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 32.5), main.simulation.UNIT_MELEE)
 	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(5.5, 32.5), main.simulation.UNIT_RANGED)
+	main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(6.5, 32.5), main.simulation.UNIT_SIEGE)
 	main.unit_renderer.sync()
 	var infantry = main.unit_renderer.get_node_or_null("InfantryUnits")
 	_expect(infantry is MultiMeshInstance2D, "all infantry share one MultiMesh batch")
 	if infantry is MultiMeshInstance2D:
-		_expect(infantry.multimesh.instance_count == 4, "global infantry batch receives both teams and classes")
+		_expect(infantry.multimesh.instance_count == 5, "global ground batch receives melee, ranged, and SIEGE from both teams")
 		_expect(infantry.multimesh.use_custom_data and infantry.multimesh.use_colors, "atlas selection and team layer use per-instance data")
 		_expect(infantry.material is ShaderMaterial, "infantry batch uses the texture-array atlas shader")
 		var previous_y := -INF
@@ -221,6 +222,17 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 			!= main.unit_renderer.get_unit_color(main.simulation.TEAM_ENEMY, main.simulation.UNIT_RANGED, 1),
 			"ranged soldiers use a distinct color treatment"
 		)
+		_expect(main.unit_renderer.get_atlas_layer(main.simulation.UNIT_SIEGE, main.simulation.TEAM_ALLY) == 2, "allied SIEGE selects its dedicated CC0 texture-array layer")
+		_expect(main.unit_renderer.get_atlas_layer(main.simulation.UNIT_SIEGE, main.simulation.TEAM_ENEMY) == 3, "enemy SIEGE selects its dedicated CC0 texture-array layer")
+	_expect(main.unit_renderer.has_method("get_unit_render_size"), "renderer derives each class size from simulation radius")
+	if main.unit_renderer.has_method("get_unit_render_size"):
+		var melee_size: Vector2 = main.unit_renderer.get_unit_render_size(main.simulation.UNIT_MELEE)
+		var ranged_size: Vector2 = main.unit_renderer.get_unit_render_size(main.simulation.UNIT_RANGED)
+		var siege_size: Vector2 = main.unit_renderer.get_unit_render_size(main.simulation.UNIT_SIEGE)
+		var dragon_size: Vector2 = main.unit_renderer.get_unit_render_size(main.simulation.UNIT_DRAGON)
+		_expect(melee_size.x >= GameConfig.ISO_TILE_WIDTH * 0.35 and melee_size.x <= GameConfig.ISO_TILE_WIDTH * 0.45, "melee width is 0.35-0.45 tile widths")
+		_expect(ranged_size.x < melee_size.x and siege_size.x > melee_size.x and dragon_size.x > siege_size.x, "render widths preserve the radius ordering")
+		_expect(is_equal_approx(siege_size.x / melee_size.x, 0.26 / 0.14), "SIEGE render width is exactly radius-proportional")
 
 	var ranged_spawner_id: int = main.simulation.add_building(
 		main.simulation.TEAM_ALLY,
@@ -234,6 +246,17 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	var displayed_kind := int(ranged_view.get("unit_kind")) if ranged_view != null and ranged_view_properties.has("unit_kind") else -1
 	_expect(displayed_kind == main.simulation.UNIT_RANGED, "spawner view carries the produced unit kind for its visual marker")
 	_expect(ranged_view != null and ranged_view.has_method("uses_baked_sprite") and ranged_view.uses_baked_sprite(), "building views use the baked CC0 world atlas")
+	var siege_spawner_id: int = main.simulation.add_building(
+		main.simulation.TEAM_ALLY,
+		main.simulation.BUILDING_SPAWNER,
+		Vector2i(7, 36),
+		main.simulation.UNIT_SIEGE
+	)
+	main._sync_building_views()
+	var siege_view = main.building_views.get(siege_spawner_id)
+	_expect(siege_view != null and int(siege_view.unit_kind) == main.simulation.UNIT_SIEGE, "SIEGE spawner view retains its artillery unit kind")
+	if siege_view != null:
+		_expect(siege_view._sprite_index() == 6, "allied SIEGE spawner uses the baked CC0 catapult building silhouette")
 
 	main.simulation.spawn_unit(main.simulation.TEAM_ENEMY, Vector2(8.5, 18.5), main.simulation.UNIT_DRAGON)
 	main.unit_renderer.sync()
@@ -241,6 +264,7 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	_expect(enemy_dragons is MultiMeshInstance2D and enemy_dragons.multimesh.mesh is QuadMesh, "dragon batch uses a sprite quad instead of a procedural silhouette")
 	if enemy_dragons is MultiMeshInstance2D:
 		_expect(enemy_dragons.multimesh.use_custom_data and enemy_dragons.material is ShaderMaterial, "dragon atlas frames are selected per packed instance")
+		_expect(bool(enemy_dragons.material.get_shader_parameter("flip_y")), "dragon atlas flips each frame vertically so the baked sprite renders upright")
 
 	var fx_properties := _property_names(main.fx)
 	var before_tracers: int = int(main.fx.get("ranged_shot_feedback_count")) if fx_properties.has("ranged_shot_feedback_count") else -1
@@ -252,7 +276,25 @@ func _test_ranged_presentation(tree: SceneTree, main_scene: PackedScene) -> void
 	}])
 	var after_tracers: int = int(main.fx.get("ranged_shot_feedback_count")) if fx_properties.has("ranged_shot_feedback_count") else -1
 	_expect(before_tracers >= 0 and after_tracers == before_tracers + 1, "ranged shot events route to a distinct tracer effect")
-	_expect(main.unit_renderer.get_child_count() == 4, "mixed ground and dragon armies still create no per-unit nodes")
+	_expect(fx_properties.has("siege_projectile_feedback_count") and fx_properties.has("siege_impact_feedback_count"), "SIEGE exposes distinct flight and blast feedback counters")
+	if fx_properties.has("siege_projectile_feedback_count") and fx_properties.has("siege_impact_feedback_count"):
+		var before_projectiles: int = main.fx.siege_projectile_feedback_count
+		var before_impacts: int = main.fx.siege_impact_feedback_count
+		main._consume_events([{
+			"type": "siege_projectile",
+			"team": main.simulation.TEAM_ALLY,
+			"origin": Vector2(5.5, 32.5),
+			"position": Vector2(5.5, 29.5),
+			"duration": 0.9,
+		}, {
+			"type": "siege_impact",
+			"team": main.simulation.TEAM_ALLY,
+			"position": Vector2(5.5, 29.5),
+			"radius": 0.9,
+		}])
+		_expect(main.fx.siege_projectile_feedback_count == before_projectiles + 1, "SIEGE launch routes to a persistent arc and telegraph")
+		_expect(main.fx.siege_impact_feedback_count == before_impacts + 1, "SIEGE landing routes to a distinct area blast")
+	_expect(main.unit_renderer.get_child_count() == 4, "mixed ground, SIEGE, and dragon armies still create no per-unit nodes")
 	main.queue_free()
 	await tree.process_frame
 
@@ -500,13 +542,16 @@ func _test_hud_spawner_selection(tree: SceneTree, main_scene: PackedScene) -> vo
 	tree.root.add_child(main)
 	await tree.process_frame
 	var hud_properties := _property_names(main.hud)
-	_expect(hud_properties.has("melee_button") and hud_properties.has("ranged_button") and hud_properties.has("tower_button") and hud_properties.has("dragon_button"), "HUD exposes all four build selectors")
-	if not hud_properties.has("melee_button") or not hud_properties.has("ranged_button") or not hud_properties.has("tower_button") or not hud_properties.has("dragon_button"):
+	_expect(hud_properties.has("melee_button") and hud_properties.has("ranged_button") and hud_properties.has("siege_button") and hud_properties.has("tower_button") and hud_properties.has("dragon_button"), "HUD exposes all five build selectors")
+	if not hud_properties.has("melee_button") or not hud_properties.has("ranged_button") or not hud_properties.has("siege_button") or not hud_properties.has("tower_button") or not hud_properties.has("dragon_button"):
 		main.queue_free()
 		await tree.process_frame
 		return
 	_expect(main.hud.melee_button.text == "MELEE 60" and main.hud.ranged_button.text == "RANGED 80", "HUD selectors show both ground spawner costs")
+	_expect(main.hud.siege_button.text == "SIEGE 140", "HUD selector shows the SIEGE spawner cost")
 	_expect(main.hud.tower_button.text == "TOWER 120" and main.hud.dragon_button.text == "DRAGON 220", "HUD selectors show tower and dragon costs")
+	for button in [main.hud.melee_button, main.hud.ranged_button, main.hud.siege_button, main.hud.tower_button, main.hud.dragon_button]:
+		_expect(button.position.x >= 0.0 and button.position.x + button.size.x <= 480.0, "each build selector remains inside the portrait control plate")
 	_expect(main.selected_build_kind == main.simulation.BUILD_MELEE_SPAWNER, "melee is selected by default")
 	main.hud.ranged_button.pressed.emit()
 	_expect(main.selected_build_kind == main.simulation.BUILD_RANGED_SPAWNER, "ranged HUD selection updates only the requested build kind")
@@ -523,6 +568,8 @@ func _test_hud_spawner_selection(tree: SceneTree, main_scene: PackedScene) -> vo
 	_expect(Vector2i(placed.cell) == ranged_cell and int(placed.unit_kind) == main.simulation.UNIT_RANGED, "selected ranged kind routes through the next exact tile tap")
 	_expect(main.simulation.ally_gold == GameConfig.START_GOLD - GameConfig.RANGED_SPAWNER_COST, "ranged placement spends 80 gold")
 	_expect("RANGED" in main.hud.message_label.text, "placement feedback names the selected spawner type")
+	main.hud.siege_button.pressed.emit()
+	_expect(main.selected_build_kind == main.simulation.BUILD_SIEGE_SPAWNER, "SIEGE HUD selection routes to the artillery spawner build kind")
 	main.hud.tower_button.pressed.emit()
 	_expect(main.selected_build_kind == main.simulation.BUILD_DEFENSE_TOWER, "tower HUD selection routes to the defense build kind")
 	main.hud.dragon_button.pressed.emit()

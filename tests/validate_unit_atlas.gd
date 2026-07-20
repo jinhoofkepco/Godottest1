@@ -12,6 +12,11 @@ const DRAGON_PATHS := [
 	"res://assets/world/dragon_blue.png",
 	"res://assets/world/dragon_red.png",
 ]
+const SIEGE_METADATA_PATH := "res://assets/units/siege_atlas.json"
+const SIEGE_PATHS := [
+	"res://assets/units/siege_blue.png",
+	"res://assets/units/siege_red.png",
+]
 
 
 func _initialize() -> void:
@@ -84,7 +89,9 @@ func _initialize() -> void:
 				return
 	if not _validate_world_atlas():
 		return
-	print("ATLAS VALIDATION PASS: shaded infantry, animated dragon, CC0 buildings and blockers")
+	if not _validate_siege_atlas():
+		return
+	print("ATLAS VALIDATION PASS: shaded infantry, upright animated dragon, CC0 SIEGE and buildings")
 	quit(0)
 
 
@@ -137,6 +144,40 @@ func _validate_world_atlas() -> bool:
 			direction_hashes[hash(frame.get_data())] = true
 		if direction_hashes.size() < 7:
 			_fail("dragon headings are not visually distinct: %s" % dragon_path)
+			return false
+	return true
+
+
+func _validate_siege_atlas() -> bool:
+	var metadata_file := FileAccess.open(SIEGE_METADATA_PATH, FileAccess.READ)
+	if metadata_file == null:
+		_fail("SIEGE atlas metadata is missing")
+		return false
+	var metadata = JSON.parse_string(metadata_file.get_as_text())
+	if not metadata is Dictionary or int(metadata.get("directions", 0)) != 8 or int(metadata.get("frames_per_direction", 0)) != 16:
+		_fail("SIEGE metadata must describe 8 directions x 16 frames")
+		return false
+	if Vector2i(int(metadata.atlas_size[0]), int(metadata.atlas_size[1])) != Vector2i(1536, 1536):
+		_fail("SIEGE atlas must be a 1536 square texture-array layer")
+		return false
+	for path in SIEGE_PATHS:
+		var image := Image.load_from_file(ProjectSettings.globalize_path(path))
+		if image == null or image.is_empty() or image.get_size() != Vector2i(1536, 1536):
+			_fail("invalid SIEGE atlas: %s" % path)
+			return false
+		var direction_hashes: Dictionary = {}
+		for direction_index in 8:
+			var linear_index := direction_index * 16 + 2
+			var origin := Vector2i((linear_index % 16) * 96, (linear_index / 16) * 96)
+			var frame := image.get_region(Rect2i(origin, Vector2i(96, 96)))
+			direction_hashes[hash(frame.get_data())] = true
+		if direction_hashes.size() < 7:
+			_fail("SIEGE headings are not visually distinct: %s" % path)
+			return false
+		var attack_a := image.get_region(Rect2i(Vector2i(8 * 96, 0), Vector2i(96, 96)))
+		var attack_b := image.get_region(Rect2i(Vector2i(11 * 96, 0), Vector2i(96, 96)))
+		if hash(attack_a.get_data()) == hash(attack_b.get_data()):
+			_fail("SIEGE attack frames do not show recoil: %s" % path)
 			return false
 	return true
 

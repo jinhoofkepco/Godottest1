@@ -18,6 +18,9 @@ func run() -> Array[String]:
 	_test_combat_and_kill_reward()
 	_test_cross_column_engagement()
 	_test_nearest_hostile_selection()
+	_test_unit_radius_contract()
+	_test_siege_rules()
+	_test_siege_balance_goals()
 	_test_ally_separation()
 	_test_lunge_state_contract()
 	_test_frontline_ownership()
@@ -155,7 +158,7 @@ func _test_config_values() -> void:
 	_expect(is_equal_approx(config.OCCUPANCY_WIN_RATIO, 0.9), "90 percent territory ends the match")
 	var constants: Dictionary = config.get_script_constant_map()
 	_expect(constants.has("UNIT_DETECT_RANGE"), "config exposes hostile detection range")
-	_expect(constants.has("UNIT_SEPARATION_RADIUS"), "config exposes ally separation radius")
+	_expect(constants.has("UNIT_SEPARATION_SPACING_MULTIPLIER"), "config exposes pair-radius separation multiplier")
 	_expect(constants.has("UNIT_SEEK_WEIGHT"), "config exposes seek steering weight")
 	_expect(constants.has("UNIT_LUNGE_DURATION"), "config exposes attack lunge duration")
 	for terrain_constant in [
@@ -163,26 +166,28 @@ func _test_config_values() -> void:
 		"HIGH_GROUND_DAMAGE_MULTIPLIER", "LOW_GROUND_DAMAGE_MULTIPLIER", "RANGED_HIGH_GROUND_RANGE_BONUS",
 	]:
 		_expect(constants.has(terrain_constant), "config exposes %s" % terrain_constant)
-	_expect(constants.has("BASE_UNIT_MAX_HP"), "config exposes neutral base HP for class ratios")
-	_expect(constants.has("BASE_UNIT_ATTACK_DAMAGE"), "config exposes neutral base damage for class ratios")
-	_expect(constants.has("BASE_UNIT_ATTACK_RANGE"), "config exposes neutral base range for class ratios")
-	if constants.has("BASE_UNIT_MAX_HP") and constants.has("BASE_UNIT_ATTACK_DAMAGE") and constants.has("BASE_UNIT_ATTACK_RANGE"):
-		var base_hp := float(constants.BASE_UNIT_MAX_HP)
-		var base_damage := float(constants.BASE_UNIT_ATTACK_DAMAGE)
-		var base_range := float(constants.BASE_UNIT_ATTACK_RANGE)
-		_expect(is_equal_approx(float(constants.get("UNIT_MAX_HP", -1.0)), base_hp * 2.0), "melee HP is exactly twice base")
-		_expect(is_equal_approx(float(constants.get("UNIT_ATTACK_DAMAGE", -1.0)), base_damage * 0.5), "melee damage is exactly half base")
-		_expect(is_equal_approx(float(constants.get("RANGED_UNIT_MAX_HP", -1.0)), base_hp * 0.5), "ranged HP is exactly half base")
-		_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_DAMAGE", -1.0)), base_damage * 1.5), "ranged damage is exactly 1.5 times base")
-		_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)), base_range * 2.0), "ranged range is exactly twice base")
-		_expect(is_equal_approx(float(constants.get("DRAGON_UNIT_ATTACK_RANGE", -1.0)), float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)) * 1.5), "dragon range is exactly 1.5 times ranged")
-		_expect(is_equal_approx(float(constants.get("DRAGON_UNIT_DETECT_RANGE", -1.0)), float(constants.get("UNIT_DETECT_RANGE", -1.0)) * 1.5), "dragon sight is exactly 1.5 times common sight")
+	for stat_contract in [
+		["UNIT_MAX_HP", 48.0], ["UNIT_ATTACK_DAMAGE", 10.0], ["UNIT_ATTACK_INTERVAL", 0.65], ["UNIT_ATTACK_RANGE", 0.72], ["UNIT_SPEED", 1.45],
+		["RANGED_UNIT_MAX_HP", 34.0], ["RANGED_UNIT_ATTACK_DAMAGE", 8.0], ["RANGED_UNIT_ATTACK_INTERVAL", 0.80], ["RANGED_UNIT_ATTACK_RANGE", 2.2], ["RANGED_UNIT_SPEED", 1.25],
+		["SIEGE_UNIT_MAX_HP", 40.0], ["SIEGE_UNIT_ATTACK_DAMAGE", 31.0], ["SIEGE_UNIT_ATTACK_INTERVAL", 3.2], ["SIEGE_UNIT_ATTACK_RANGE", 3.5], ["SIEGE_UNIT_MIN_RANGE", 1.2], ["SIEGE_UNIT_SPEED", 0.8],
+		["DRAGON_UNIT_MAX_HP", 260.0], ["DRAGON_UNIT_ATTACK_DAMAGE", 18.0], ["DRAGON_UNIT_ATTACK_INTERVAL", 0.90], ["DRAGON_UNIT_ATTACK_RANGE", 0.9], ["DRAGON_UNIT_SPEED", 1.70],
+	]:
+		_expect(is_equal_approx(float(constants.get(stat_contract[0], -1.0)), float(stat_contract[1])), "%s matches the locked balance table" % stat_contract[0])
 	_expect(constants.get("RANGED_SPAWNER_COST", -1) == 80, "ranged spawner costs 80 gold")
-	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_MAX_HP", -1.0)), 24.0), "ranged unit has 24 HP")
+	_expect(constants.get("SIEGE_SPAWNER_COST", -1) == 140, "siege spawner costs 140 gold")
+	_expect(is_equal_approx(float(constants.get("SPAWNER_PRODUCTION_INTERVAL", -1.0)), 1.6), "ground spawners produce every 1.6 seconds")
+	for radius_contract in [
+		["MELEE_UNIT_RADIUS", 0.14],
+		["RANGED_UNIT_RADIUS", 0.13],
+		["SIEGE_UNIT_RADIUS", 0.26],
+		["DRAGON_UNIT_RADIUS", 0.38],
+	]:
+		_expect(is_equal_approx(float(constants.get(radius_contract[0], -1.0)), float(radius_contract[1])), "%s matches the locked unit-radius table" % radius_contract[0])
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_MAX_HP", -1.0)), 34.0), "ranged unit has 34 HP")
 	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_SPEED", -1.0)), 1.25), "ranged unit speed is 1.25")
-	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)), 1.44), "ranged unit attack range is 1.44")
-	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_DAMAGE", -1.0)), 2.475), "ranged unit damage is 2.475")
-	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_INTERVAL", -1.0)), 0.90), "ranged unit attack interval is 0.90 seconds")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_RANGE", -1.0)), 2.2), "ranged unit attack range is 2.2")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_DAMAGE", -1.0)), 8.0), "ranged unit damage is 8")
+	_expect(is_equal_approx(float(constants.get("RANGED_UNIT_ATTACK_INTERVAL", -1.0)), 0.80), "ranged unit attack interval is 0.80 seconds")
 	_expect(constants.has("COLOR_TERRITORY_ALLY") and constants.has("COLOR_TERRITORY_ENEMY"), "config separates muted territory colors from vivid actor colors")
 	if constants.has("COLOR_TERRITORY_ALLY") and constants.has("COLOR_TERRITORY_ENEMY"):
 		var ally_ground := Color(constants.COLOR_TERRITORY_ALLY)
@@ -247,6 +252,7 @@ func _test_simulation_contract() -> void:
 	_expect(property_names.has("unit_speed_scales"), "unit speed variation uses one packed array")
 	_expect(property_names.has("unit_lunge_timers"), "unit lunge timers use one packed array")
 	_expect(property_names.has("unit_lunge_directions"), "unit lunge directions use one packed array")
+	_expect(property_names.has("unit_siege_target_positions") and typeof(simulation.unit_siege_target_positions) == TYPE_PACKED_VECTOR2_ARRAY, "SIEGE target points use one packed aligned array")
 	var unit_id: int = simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(4.5, 36.5))
 	_expect(unit_id > 0 and simulation.unit_ids.size() == 1, "spawn inserts one packed unit")
 	_expect(absf(simulation.unit_positions[0].x - 4.5) <= 0.3001 and is_equal_approx(simulation.unit_positions[0].y, 36.5), "spawn applies only bounded lateral variation")
@@ -348,6 +354,7 @@ func _test_ranged_data_and_combat() -> void:
 	swap_simulation.tick(1.0 / 30.0)
 	_expect(swap_simulation.unit_ids.size() == 2, "lethal hit swap-removes one packed unit")
 	_expect(swap_simulation.unit_kinds.size() == swap_simulation.unit_ids.size(), "unit kinds stay size-aligned after removal")
+	_expect(swap_simulation.unit_siege_target_positions.size() == swap_simulation.unit_ids.size(), "SIEGE target points stay size-aligned after swap-removal")
 	_expect(swap_simulation.unit_ids[1] == survivor_id and swap_simulation.unit_kinds[1] == swap_simulation.UNIT_RANGED, "swap-removal preserves the moved unit kind")
 
 	var melee_simulation = _new_simulation()
@@ -406,6 +413,26 @@ func _test_air_targeting_and_hq_defense() -> void:
 	var ranged_dragon_index: int = ranged_simulation.unit_ids.find(ranged_dragon_id)
 	_expect(ranged_dragon_index >= 0 and ranged_simulation.unit_hp[ranged_dragon_index] < ranged_dragon_hp, "ranged infantry can attack a flying dragon")
 
+	var high_range_simulation = _new_simulation()
+	high_range_simulation.elevation.fill(1)
+	var high_ranged_id: int = high_range_simulation.spawn_unit(high_range_simulation.TEAM_ALLY, Vector2(8.5, 22.5), high_range_simulation.UNIT_RANGED)
+	var edge_air_id: int = high_range_simulation.spawn_unit(high_range_simulation.TEAM_ENEMY, Vector2(8.5, 19.6), high_range_simulation.UNIT_DRAGON)
+	high_range_simulation.unit_positions[high_range_simulation.unit_ids.find(high_ranged_id)] = Vector2(8.5, 22.5)
+	high_range_simulation.unit_positions[high_range_simulation.unit_ids.find(edge_air_id)] = Vector2(8.5, 19.6)
+	var edge_air_hp: float = high_range_simulation.unit_hp[high_range_simulation.unit_ids.find(edge_air_id)]
+	high_range_simulation.tick(1.0 / float(config.SIM_TICK_RATE))
+	var edge_air_index: int = high_range_simulation.unit_ids.find(edge_air_id)
+	_expect(edge_air_index >= 0 and high_range_simulation.unit_hp[edge_air_index] < edge_air_hp, "high-ground ranged detection covers attack range plus the dragon radius")
+
+	var high_building_simulation = _new_simulation()
+	high_building_simulation.elevation.fill(1)
+	var edge_building_id: int = high_building_simulation.add_building(high_building_simulation.TEAM_ENEMY, high_building_simulation.BUILDING_SPAWNER, Vector2i(11, 22))
+	var building_ranged_id: int = high_building_simulation.spawn_unit(high_building_simulation.TEAM_ALLY, Vector2(8.38, 22.5), high_building_simulation.UNIT_RANGED)
+	high_building_simulation.unit_positions[high_building_simulation.unit_ids.find(building_ranged_id)] = Vector2(8.38, 22.5)
+	var edge_building_hp: float = _building_hp(high_building_simulation, edge_building_id)
+	high_building_simulation.tick(1.0 / float(config.SIM_TICK_RATE))
+	_expect(_building_hp(high_building_simulation, edge_building_id) < edge_building_hp, "high-ground ranged detection covers attack range plus the building radius")
+
 	var hq_simulation = _new_simulation()
 	var attacker_id: int = hq_simulation.spawn_unit(hq_simulation.TEAM_ALLY, Vector2(11.5, 2.5), hq_simulation.UNIT_DRAGON)
 	var attacker_index: int = hq_simulation.unit_ids.find(attacker_id)
@@ -419,6 +446,15 @@ func _test_air_targeting_and_hq_defense() -> void:
 		if String(event.get("type", "")) == "hq_shot":
 			saw_hq_shot = true
 	_expect(saw_hq_shot, "HQ attack emits a distinct tracer event")
+
+	var radius_simulation = _new_simulation()
+	var edge_dragon_id: int = radius_simulation.spawn_unit(radius_simulation.TEAM_ALLY, Vector2(15.25, 0.5), radius_simulation.UNIT_DRAGON)
+	var edge_dragon_index: int = radius_simulation.unit_ids.find(edge_dragon_id)
+	radius_simulation.unit_positions[edge_dragon_index] = Vector2(15.25, 0.5)
+	var edge_hp_before: float = radius_simulation.unit_hp[edge_dragon_index]
+	radius_simulation.tick(1.0 / float(config.SIM_TICK_RATE))
+	edge_dragon_index = radius_simulation.unit_ids.find(edge_dragon_id)
+	_expect(edge_dragon_index >= 0 and radius_simulation.unit_hp[edge_dragon_index] < edge_hp_before, "static defense range includes the target unit radius")
 
 	var sight_simulation = _new_simulation()
 	_expect(sight_simulation != null and sight_simulation.has_method("get_unit_detect_range"), "simulation exposes per-kind detection range")
@@ -460,6 +496,13 @@ func _test_enemy_ai_kind_funding() -> void:
 	enemy_spawners = _spawners_for_team(simulation, simulation.TEAM_ENEMY)
 	_expect(enemy_spawners.size() == 2 and int(enemy_spawners[1].unit_kind) == simulation.UNIT_RANGED, "enemy AI alternates successful builds independently from skipped placement columns")
 	_expect(simulation.enemy_gold == 0, "enemy ranged build charges ranged cost")
+
+	simulation.enemy_gold = simulation.config.SIEGE_SPAWNER_COST
+	simulation._enemy_build_timer = 0.0
+	simulation.tick(1.0 / 30.0)
+	enemy_spawners = _spawners_for_team(simulation, simulation.TEAM_ENEMY)
+	_expect(enemy_spawners.size() == 3 and int(enemy_spawners[2].unit_kind) == simulation.UNIT_SIEGE, "enemy AI mixes SIEGE into its third production lane")
+	_expect(simulation.enemy_gold == 0, "enemy SIEGE build charges artillery cost")
 
 
 func _test_combat_and_kill_reward() -> void:
@@ -539,6 +582,165 @@ func _test_ally_separation() -> void:
 	for tick_index in 30:
 		simulation.tick(1.0 / 30.0)
 	_expect(simulation.unit_positions[0].distance_to(simulation.unit_positions[1]) >= 0.20, "overlapping allies separate into individually readable positions")
+
+
+func _test_unit_radius_contract() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	_expect(simulation.has_method("get_unit_radius"), "simulation exposes unit radius as the single size source")
+	if not simulation.has_method("get_unit_radius"):
+		return
+	_expect(is_equal_approx(simulation.get_unit_radius(simulation.UNIT_MELEE), 0.14), "melee simulation radius is 0.14")
+	_expect(is_equal_approx(simulation.get_unit_radius(simulation.UNIT_RANGED), 0.13), "ranged simulation radius is 0.13")
+	var constants: Dictionary = simulation.get_script().get_script_constant_map()
+	var siege_kind := int(constants.get("UNIT_SIEGE", -1))
+	_expect(siege_kind >= 0 and is_equal_approx(simulation.get_unit_radius(siege_kind), 0.26), "siege simulation radius is 0.26")
+	_expect(is_equal_approx(simulation.get_unit_radius(simulation.UNIT_DRAGON), 0.38), "dragon simulation radius is 0.38")
+	_expect(simulation.has_method("get_separation_distance"), "simulation exposes pair-radius separation distance")
+	if simulation.has_method("get_separation_distance") and siege_kind >= 0:
+		_expect(is_equal_approx(simulation.get_separation_distance(simulation.UNIT_MELEE, siege_kind), (0.14 + 0.26) * 1.2), "melee/siege separation is radius sum times 1.2")
+
+
+func _test_siege_rules() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	var constants: Dictionary = simulation.get_script().get_script_constant_map()
+	var siege_kind := int(constants.get("UNIT_SIEGE", -1))
+	var siege_build_kind := int(constants.get("BUILD_SIEGE_SPAWNER", -1))
+	_expect(siege_kind >= 0 and siege_build_kind >= 0, "simulation exposes SIEGE unit and build kinds")
+	_expect(simulation.has_method("get_siege_target_point"), "SIEGE exposes deterministic bucket-density targeting")
+	_expect(simulation.has_method("schedule_siege_impact") and simulation.has_method("advance_siege_impacts"), "SIEGE exposes delayed data-only impacts")
+	_expect(simulation.has_method("get_siege_damage_at_distance"), "SIEGE exposes radius-aware linear blast falloff")
+	_expect(simulation.has_method("get_siege_flight_seconds"), "SIEGE exposes range-proportional projectile flight time")
+	if siege_kind < 0 or siege_build_kind < 0 or not simulation.has_method("get_siege_target_point") or not simulation.has_method("schedule_siege_impact") or not simulation.has_method("advance_siege_impacts") or not simulation.has_method("get_siege_damage_at_distance") or not simulation.has_method("get_siege_flight_seconds"):
+		return
+	_expect(simulation.get_siege_flight_seconds(simulation.config.SIEGE_UNIT_MIN_RANGE) < simulation.config.SIEGE_FLIGHT_SECONDS, "minimum-range SIEGE flight is shorter than the nominal 0.9 seconds")
+	_expect(simulation.get_siege_flight_seconds(simulation.config.SIEGE_UNIT_ATTACK_RANGE) > simulation.config.SIEGE_FLIGHT_SECONDS, "maximum-range SIEGE flight is longer than the nominal 0.9 seconds")
+
+	simulation.ally_gold = 200
+	_expect(simulation.try_build(simulation.TEAM_ALLY, Vector2i(3, 35), siege_build_kind), "ally can build a SIEGE spawner on owned territory")
+	_expect(simulation.ally_gold == 60, "SIEGE spawner spends 140 gold")
+	var siege_building: Dictionary = simulation.buildings.back()
+	_expect(int(siege_building.unit_kind) == siege_kind, "SIEGE spawner stores the produced packed kind")
+
+	var targeting = _new_simulation()
+	var siege_id: int = targeting.spawn_unit(targeting.TEAM_ALLY, Vector2(10.5, 24.5), siege_kind)
+	var close_id: int = targeting.spawn_unit(targeting.TEAM_ENEMY, Vector2(10.5, 23.7), targeting.UNIT_MELEE)
+	for index in 5:
+		targeting.spawn_unit(targeting.TEAM_ENEMY, Vector2(12.15 + float(index % 2) * 0.12, 23.2 + float(index / 2) * 0.10), targeting.UNIT_MELEE)
+	targeting._rebuild_buckets()
+	var siege_index: int = targeting.unit_ids.find(siege_id)
+	var target_point: Vector2 = targeting.get_siege_target_point(siege_index)
+	_expect(target_point.distance_to(targeting.unit_positions[siege_index]) >= targeting.config.SIEGE_UNIT_MIN_RANGE, "SIEGE ignores enemies inside its 1.2 minimum range")
+	_expect(absf(target_point.x - 12.2) < absf(target_point.x - targeting.unit_positions[targeting.unit_ids.find(close_id)].x), "SIEGE chooses the densest hostile area instead of the nearest unit")
+	_expect(close_id > 0, "minimum-range fixture includes a live close enemy")
+	var lateral = _new_simulation()
+	var lateral_siege_id: int = lateral.spawn_unit(lateral.TEAM_ALLY, Vector2(10.5, 25.5), siege_kind)
+	for index in 4:
+		var lateral_enemy_id: int = lateral.spawn_unit(lateral.TEAM_ENEMY, Vector2(11.7 + float(index % 2) * 0.12, 23.4 + float(index / 2) * 0.1), lateral.UNIT_MELEE)
+		var lateral_enemy_index: int = lateral.unit_ids.find(lateral_enemy_id)
+		lateral.unit_positions[lateral_enemy_index] = Vector2(11.7 + float(index % 2) * 0.12, 23.4 + float(index / 2) * 0.1)
+		lateral.unit_velocities[lateral_enemy_index] = Vector2.RIGHT * lateral.config.UNIT_SPEED
+	lateral._rebuild_buckets()
+	var lateral_point: Vector2 = lateral.get_siege_target_point(lateral.unit_ids.find(lateral_siege_id))
+	_expect(lateral_point.x > 12.4, "SIEGE density scoring predicts the cluster's actual lateral motion instead of applying a fixed vertical offset")
+	targeting.tick(1.0 / float(targeting.config.SIM_TICK_RATE))
+	var target_searches_after_launch: int = int(targeting.get("siege_target_searches"))
+	targeting.tick(1.0 / float(targeting.config.SIM_TICK_RATE))
+	_expect(target_searches_after_launch > 0 and int(targeting.get("siege_target_searches")) == target_searches_after_launch, "SIEGE reuses its target point while reloading instead of rescanning every tick")
+
+	var blast = _new_simulation()
+	var impact_point := Vector2(10.5, 20.5)
+	var victim_ids: Array[int] = []
+	for offset in [Vector2.ZERO, Vector2(0.25, 0.0), Vector2(-0.25, 0.0), Vector2(0.0, 0.28), Vector2(0.0, -0.28)]:
+		victim_ids.append(blast.spawn_unit(blast.TEAM_ENEMY, impact_point + offset, blast.UNIT_MELEE))
+	var edge_id: int = blast.spawn_unit(blast.TEAM_ENEMY, impact_point + Vector2(blast.config.SIEGE_BLAST_RADIUS + blast.config.MELEE_UNIT_RADIUS - 0.01, 0.0), blast.UNIT_MELEE)
+	var ally_id: int = blast.spawn_unit(blast.TEAM_ALLY, impact_point, blast.UNIT_MELEE)
+	var building_id: int = blast.add_building(blast.TEAM_ENEMY, blast.BUILDING_SPAWNER, Vector2i(10, 20), blast.UNIT_MELEE)
+	blast._rebuild_buckets()
+	var hp_before: Dictionary = {}
+	for victim_id in victim_ids + [edge_id, ally_id]:
+		var victim_index: int = blast.unit_ids.find(victim_id)
+		hp_before[victim_id] = blast.unit_hp[victim_index]
+	var building_hp_before := float(blast.buildings[blast._building_index_from_id(building_id)].hp)
+	blast.schedule_siege_impact(blast.TEAM_ALLY, Vector2(10.5, 24.0), impact_point, blast.config.SIEGE_UNIT_ATTACK_DAMAGE, 0.9)
+	blast.advance_siege_impacts(0.45)
+	for victim_id in victim_ids:
+		var victim_index: int = blast.unit_ids.find(victim_id)
+		_expect(is_equal_approx(blast.unit_hp[victim_index], float(hp_before[victim_id])), "SIEGE does not damage clustered targets before flight completes")
+	blast.advance_siege_impacts(0.46)
+	for victim_id in victim_ids:
+		var victim_index: int = blast.unit_ids.find(victim_id)
+		_expect(blast.unit_hp[victim_index] < float(hp_before[victim_id]), "SIEGE blast damages every unit in the five-target cluster")
+	var edge_index: int = blast.unit_ids.find(edge_id)
+	_expect(blast.unit_hp[edge_index] < float(hp_before[edge_id]), "AoE includes a target whose radius overlaps the blast edge")
+	var ally_index: int = blast.unit_ids.find(ally_id)
+	_expect(is_equal_approx(blast.unit_hp[ally_index], float(hp_before[ally_id])), "SIEGE blast never damages allies")
+	_expect(float(blast.buildings[blast._building_index_from_id(building_id)].hp) < building_hp_before, "SIEGE blast damages hostile buildings")
+	var center_damage: float = blast.get_siege_damage_at_distance(0.0, blast.config.MELEE_UNIT_RADIUS, 26.0)
+	var edge_damage: float = blast.get_siege_damage_at_distance(blast.config.SIEGE_BLAST_RADIUS + blast.config.MELEE_UNIT_RADIUS, blast.config.MELEE_UNIT_RADIUS, 26.0)
+	_expect(is_equal_approx(center_damage, 26.0), "SIEGE blast center deals 100 percent damage")
+	_expect(is_equal_approx(edge_damage, 26.0 * blast.config.SIEGE_EDGE_DAMAGE_MULTIPLIER), "SIEGE blast edge deals 40 percent damage")
+	var events: Array = blast.drain_events()
+	_expect(_has_event(events, "siege_projectile") and _has_event(events, "siege_impact"), "SIEGE launch and impact emit distinct readable events")
+
+
+func _test_siege_balance_goals() -> void:
+	var clustered = _new_simulation()
+	clustered.elevation.fill(0)
+	clustered.blocked.fill(0)
+	var clustered_ids: Array[int] = [
+		clustered.spawn_unit(clustered.TEAM_ENEMY, Vector2(10.4, 20.5), clustered.UNIT_MELEE),
+		clustered.spawn_unit(clustered.TEAM_ENEMY, Vector2(10.6, 20.5), clustered.UNIT_MELEE),
+	]
+	clustered._rebuild_buckets()
+	clustered.schedule_siege_impact(clustered.TEAM_ALLY, Vector2(10.5, 24.0), Vector2(10.5, 20.5), clustered.config.SIEGE_UNIT_ATTACK_DAMAGE, 0.1)
+	clustered.advance_siege_impacts(0.11)
+	var clustered_damage := 0.0
+	for unit_id in clustered_ids:
+		clustered_damage += clustered.config.UNIT_MAX_HP - clustered.unit_hp[clustered.unit_ids.find(unit_id)]
+	_expect(clustered_damage > clustered.config.SIEGE_UNIT_MAX_HP, "near-equal-cost clustered melee takes a SIEGE-favorable damage trade before contact")
+
+	var spread = _new_simulation()
+	spread.elevation.fill(0)
+	spread.blocked.fill(0)
+	var spread_ids: Array[int] = [
+		spread.spawn_unit(spread.TEAM_ENEMY, Vector2(9.0, 20.5), spread.UNIT_MELEE),
+		spread.spawn_unit(spread.TEAM_ENEMY, Vector2(12.0, 20.5), spread.UNIT_MELEE),
+	]
+	spread._rebuild_buckets()
+	spread.schedule_siege_impact(spread.TEAM_ALLY, Vector2(9.0, 24.0), Vector2(9.0, 20.5), spread.config.SIEGE_UNIT_ATTACK_DAMAGE, 0.1)
+	spread.advance_siege_impacts(0.11)
+	var spread_damage := 0.0
+	for unit_id in spread_ids:
+		spread_damage += spread.config.UNIT_MAX_HP - spread.unit_hp[spread.unit_ids.find(unit_id)]
+	_expect(spread_damage < spread.config.SIEGE_UNIT_MAX_HP, "spread melee keeps the favorable damage trade against one SIEGE shell")
+
+	var close = _new_simulation()
+	close.elevation.fill(0)
+	close.blocked.fill(0)
+	close._enemy_build_timer = 999.0
+	close.spawn_unit(close.TEAM_ALLY, Vector2(10.5, 23.0), close.UNIT_SIEGE)
+	var melee_id: int = close.spawn_unit(close.TEAM_ENEMY, Vector2(10.5, 22.4), close.UNIT_MELEE)
+	for tick_index in 360:
+		close.tick(1.0 / float(close.config.SIM_TICK_RATE))
+	_expect(close.unit_ids.find(melee_id) >= 0 and close.unit_kinds.count(close.UNIT_SIEGE) == 0, "melee inside minimum range defeats SIEGE")
+
+	var air = _new_simulation()
+	air.elevation.fill(0)
+	air.blocked.fill(0)
+	air._enemy_build_timer = 999.0
+	var dragon_id: int = air.spawn_unit(air.TEAM_ALLY, Vector2(10.5, 24.5), air.UNIT_DRAGON)
+	air.spawn_unit(air.TEAM_ENEMY, Vector2(10.5, 21.5), air.UNIT_SIEGE)
+	for tick_index in 34:
+		air.tick(1.0 / float(air.config.SIM_TICK_RATE))
+	var dragon_index: int = air.unit_ids.find(dragon_id)
+	_expect(dragon_index >= 0 and air.unit_hp[dragon_index] < air.config.DRAGON_UNIT_MAX_HP, "dragon is caught by the opening SIEGE splash")
+	for tick_index in 416:
+		air.tick(1.0 / float(air.config.SIM_TICK_RATE))
+	_expect(air.unit_ids.find(dragon_id) >= 0 and air.unit_kinds.count(air.UNIT_SIEGE) == 0, "dragon wins the one-to-one exchange against SIEGE")
 
 
 func _test_lunge_state_contract() -> void:

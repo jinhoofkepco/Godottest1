@@ -13,6 +13,7 @@ const BUILDING_DEFENSE_TOWER := 2
 const BUILDING_DRAGON_LAIR := 3
 const UNIT_MELEE := 0
 const UNIT_RANGED := 1
+const UNIT_SIEGE := 3
 
 var building_id := 0
 var team := TEAM_ALLY
@@ -87,6 +88,8 @@ func _sprite_index() -> int:
 	if kind == BUILDING_HQ:
 		return team_offset
 	if kind == BUILDING_SPAWNER:
+		if unit_kind == UNIT_SIEGE:
+			return 6 + team_offset
 		return (4 if unit_kind == UNIT_RANGED else 2) + team_offset
 	if kind == BUILDING_DEFENSE_TOWER:
 		return 6 + team_offset

@@ -32,3 +32,11 @@ godot --display-driver macos --rendering-method gl_compatibility --audio-driver 
 ```
 
 This produces a 512×512 static atlas, two 1536×768 animated dragon atlases, and `world_atlas.json`.
+
+SIEGE catapult bake (vendored KayKit CC0 team models, eight headings, procedural walk/recoil/death motion):
+
+```bash
+godot --display-driver macos --rendering-method gl_compatibility --audio-driver Dummy --path . -s tools/sprite_baker/bake_siege_sprites.gd
+```
+
+This produces two 1536×1536 texture-array layers plus `assets/units/siege_atlas.json`.

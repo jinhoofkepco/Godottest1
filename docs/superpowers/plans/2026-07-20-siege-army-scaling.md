@@ -22,9 +22,9 @@
 
 **Files:** `tests/test_rules.gd`, `tests/test_game_flow.gd`, `scripts/game_config.gd`, `scripts/unit_renderer.gd`
 
-- [ ] Add failing tests for four radii, pair separation distance, radius-inclusive attack contact, radius-derived rendering, and a negative dragon transform Y basis.
-- [ ] Run rules/game-flow tests and confirm failures identify missing radius/SIEGE constants and the positive dragon Y basis.
-- [ ] Add the balance constants and minimally flip dragon transforms vertically.
+- [ ] Add failing tests for four radii, pair separation distance, radius-inclusive attack contact, radius-derived rendering, and a dragon-only vertical atlas UV flip.
+- [ ] Run rules/game-flow tests and confirm failures identify missing radius/SIEGE constants and the absent dragon flip parameter.
+- [ ] Add the balance constants and minimally flip only dragon frame UV vertically.
 - [ ] Re-run both tests and commit the isolated dragon fix with the radius contract.
 
 ### Task 2: Add packed SIEGE production and delayed combat
