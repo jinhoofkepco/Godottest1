@@ -105,6 +105,6 @@ Godot 4.5 .NET 에디터와 .NET SDK 9 이상이 필요합니다. `run_dotnet_po
 
 ## Android debug APK 받기
 
-항상 같은 주소에서 최신 APK를 바로 받을 수 있습니다: [godottest1.apk 직접 다운로드](https://raw.githubusercontent.com/jinhoofkepco/Godottest1/main/apk/godottest1.apk)
+이 버전의 GitHub Actions 검증 APK를 바로 받을 수 있습니다: [godottest1 v1.0.0 APK 직접 다운로드](https://github.com/jinhoofkepco/Godottest1/releases/download/v1.0.0/godottest1.apk)
 
 GitHub Actions 경로는 **Actions → Android Debug APK → 최신 성공 실행 → Artifacts → `godottest1-debug-apk` → `build/godottest1.apk`**입니다. 워크플로가 Godot 4.5 stable, Android SDK/build-tools, export template과 임시 debug keystore를 준비하므로 로컬 Android SDK나 저장소 Secret이 필요하지 않습니다.
