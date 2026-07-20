@@ -59,7 +59,7 @@ jobs:
           godot --headless --path . -s tests/run_rules.gd
           godot --headless --path . -s tests/run_game_flow.gd
           godot --headless --path . -s tests/validate_unit_atlas.gd
-          STRESS_TICK_BUDGET_MS=30.0 STRESS_P95_BUDGET_MS=55.0 godot --headless --path . -s tests/run_stress.gd
+          STRESS_TICK_BUDGET_MS=30.0 STRESS_P95_BUDGET_MS=55.0 STRESS_RENDER_BUDGET_MS=10.0 godot --headless --path . -s tests/run_stress.gd
           godot --headless --path . --scene res://scenes/main.tscn --quit-after 180
 
       - name: Run unattended visual QA
