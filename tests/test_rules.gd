@@ -11,6 +11,9 @@ func run() -> Array[String]:
 	_test_grid_projection_and_dynamic_building()
 	_test_simulation_contract()
 	_test_profiling_contract()
+	_test_territory_update_cache()
+	_test_decision_staggering()
+	_test_packed_event_channels()
 	_test_initial_territory()
 	_test_build_and_economy()
 	_test_ranged_data_and_combat()
@@ -47,6 +50,86 @@ func _test_profiling_contract() -> void:
 	]:
 		_expect(properties.has(property_name), "performance pass exposes %s" % property_name)
 	_expect(simulation.has_method("reset_profile_counters"), "performance counters can be reset for repeatable stress samples")
+
+
+func _test_territory_update_cache() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	_expect(is_equal_approx(simulation.config.TERRITORY_UPDATE_INTERVAL, 0.2), "territory refresh interval is 0.2 seconds")
+	var properties := _property_names(simulation)
+	_expect(properties.has("territory_update_count"), "territory refreshes expose a regression counter")
+	var contested_cell := Vector2i(5, 30)
+	var contested_index: int = contested_cell.y * int(simulation.config.GRID_COLUMNS) + contested_cell.x
+	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(contested_cell) + Vector2(0.5, 0.5))
+	simulation.tick(1.0 / float(simulation.config.SIM_TICK_RATE))
+	_expect(simulation.get_ownership()[contested_index] == simulation.TEAM_ALLY, "territory does not recompute on the first fixed tick")
+	for tick_index in 5:
+		simulation.tick(1.0 / float(simulation.config.SIM_TICK_RATE))
+	_expect(simulation.get_ownership()[contested_index] == simulation.TEAM_ENEMY, "territory refreshes when the 0.2-second interval elapses")
+	var updates_before_build: int = simulation.territory_update_count if properties.has("territory_update_count") else 0
+	simulation.ally_gold = 999
+	_expect(simulation.try_build_spawner(simulation.TEAM_ALLY, Vector2i(4, 36)), "territory cache fixture can construct a building")
+	if properties.has("territory_update_count"):
+		_expect(simulation.territory_update_count == updates_before_build + 1, "building construction forces one immediate territory refresh")
+
+
+func _test_decision_staggering() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	_expect(simulation.config.DECISION_GROUP_COUNT == 3, "unit decisions rotate through three groups")
+	var properties := _property_names(simulation)
+	for property_name in ["decision_refresh_count", "decision_group_cursor", "unit_cached_target_positions", "unit_cached_target_radii", "unit_cached_steering", "unit_cached_waiting"]:
+		_expect(properties.has(property_name), "decision staggering exposes %s" % property_name)
+	if not properties.has("unit_cached_steering"):
+		return
+	for index in 6:
+		simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(float(index * 3) + 0.5, 34.5))
+		simulation.unit_cooldowns[index] = 0.5
+	var before_positions: PackedVector2Array = simulation.unit_positions.duplicate()
+	simulation.tick(1.0 / float(simulation.config.SIM_TICK_RATE))
+	_expect(simulation.decision_refresh_count == 2, "first fixed tick refreshes exactly one third of six unit decisions")
+	_expect(simulation.decision_group_cursor == 1, "decision group advances after a fixed tick")
+	for index in simulation.unit_ids.size():
+		_expect(simulation.unit_cooldowns[index] < 0.5, "all cooldowns update outside the active decision group")
+		_expect(simulation.unit_positions[index] != before_positions[index], "all units integrate cached movement every fixed tick")
+	simulation.tick(1.0 / float(simulation.config.SIM_TICK_RATE))
+	simulation.tick(1.0 / float(simulation.config.SIM_TICK_RATE))
+	_expect(simulation.decision_refresh_count == 6, "three fixed ticks refresh every unit decision exactly once")
+
+	var validity = _new_simulation()
+	var ally_id: int = validity.spawn_unit(validity.TEAM_ALLY, Vector2(5.5, 24.5))
+	var enemy_id: int = validity.spawn_unit(validity.TEAM_ENEMY, Vector2(5.5, 23.8))
+	validity.unit_target_ids[0] = enemy_id
+	validity.unit_cached_target_positions[0] = validity.unit_positions[1]
+	validity.unit_hp[1] = 0.0
+	validity.tick(1.0 / float(validity.config.SIM_TICK_RATE))
+	var ally_index: int = validity.unit_ids.find(ally_id)
+	_expect(ally_index >= 0 and validity.unit_target_ids[ally_index] == 0, "dead cached targets are invalidated every fixed tick")
+
+
+func _test_packed_event_channels() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	_expect(simulation.has_method("drain_event_channels"), "simulation exposes packed high-frequency event transfer")
+	if not simulation.has_method("drain_event_channels"):
+		return
+	simulation.spawn_unit(simulation.TEAM_ENEMY, Vector2(5.5, 10.2))
+	simulation.spawn_unit(simulation.TEAM_ALLY, Vector2(5.5, 10.7))
+	simulation.unit_positions[0] = Vector2(5.5, 10.2)
+	simulation.unit_positions[1] = Vector2(5.5, 10.7)
+	simulation.unit_hp[1] = 0.5
+	simulation.tick(1.0 / float(simulation.config.SIM_TICK_RATE))
+	var channels: Dictionary = simulation.drain_event_channels()
+	_expect(typeof(channels.get("hit_unit_ids")) == TYPE_PACKED_INT32_ARRAY, "hit ids transfer through PackedInt32Array")
+	_expect(typeof(channels.get("hit_positions")) == TYPE_PACKED_VECTOR2_ARRAY, "hit positions transfer through PackedVector2Array")
+	_expect(typeof(channels.get("shot_origins")) == TYPE_PACKED_VECTOR2_ARRAY, "shot origins transfer through PackedVector2Array")
+	_expect(typeof(channels.get("death_positions")) == TYPE_PACKED_VECTOR2_ARRAY, "death positions transfer through PackedVector2Array")
+	_expect(channels.hit_positions.size() == 1 and channels.death_positions.size() == 1, "lethal combat transfers one packed hit and death")
+	var drained_again: Dictionary = simulation.drain_event_channels()
+	_expect(drained_again.hit_positions.is_empty() and drained_again.death_positions.is_empty(), "packed channels transfer ownership and leave empty producers")
 
 
 func _test_grid_projection_and_dynamic_building() -> void:
@@ -572,7 +655,8 @@ func _test_nearest_hostile_selection() -> void:
 	_expect(retarget_simulation.unit_target_ids[0] == far_enemy_id, "unit initially acquires the only detected hostile")
 	var near_enemy_id: int = retarget_simulation.spawn_unit(retarget_simulation.TEAM_ENEMY, Vector2(5.8, 11.8))
 	retarget_simulation.unit_positions[2] = Vector2(5.8, 11.8)
-	retarget_simulation.tick(1.0 / 30.0)
+	for tick_index in retarget_simulation.config.DECISION_GROUP_COUNT:
+		retarget_simulation.tick(1.0 / 30.0)
 	_expect(retarget_simulation.unit_target_ids[0] == near_enemy_id, "unit switches to a newly detected nearer hostile")
 
 	var building_simulation = _new_simulation()
@@ -830,7 +914,8 @@ func _test_terminal_results() -> void:
 	var territory_sim = _new_simulation()
 	for column in territory_sim.config.GRID_COLUMNS:
 		territory_sim.spawn_unit(territory_sim.TEAM_ALLY, Vector2(float(column) + 0.5, 1.2))
-	territory_sim.tick(1.0 / 30.0)
+	for tick_index in ceili(territory_sim.config.TERRITORY_UPDATE_INTERVAL * territory_sim.config.SIM_TICK_RATE):
+		territory_sim.tick(1.0 / float(territory_sim.config.SIM_TICK_RATE))
 	_expect(territory_sim.get_occupancy(territory_sim.TEAM_ALLY) >= 0.9, "blue formation can reach 90 percent territory")
 	_expect(territory_sim.result == "VICTORY", "90 percent blue territory wins immediately")
 

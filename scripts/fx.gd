@@ -38,11 +38,13 @@ var last_feedback_mode := ""
 var last_placement_cell := Vector2i(-1, -1)
 var last_placement_valid := false
 var last_hit_high_ground := false
+var minor_effects_dropped_this_frame := 0
 
 var _grid: GridBoard
 var _effects: Array[Dictionary] = []
 var _fragments: Array[Dictionary] = []
 var _rng := RandomNumberGenerator.new()
+var _minor_effects_created_this_frame := 0
 
 
 func _ready() -> void:
@@ -57,6 +59,19 @@ func setup(board: GridBoard) -> void:
 	queue_redraw()
 
 
+func begin_frame() -> void:
+	_minor_effects_created_this_frame = 0
+	minor_effects_dropped_this_frame = 0
+
+
+func _reserve_minor_effect() -> bool:
+	if _minor_effects_created_this_frame >= GameConfig.FX_MAX_PER_FRAME:
+		minor_effects_dropped_this_frame += 1
+		return false
+	_minor_effects_created_this_frame += 1
+	return true
+
+
 func show_placement(cell: Vector2i, is_valid: bool) -> void:
 	last_placement_cell = cell
 	last_placement_valid = is_valid
@@ -66,6 +81,8 @@ func show_placement(cell: Vector2i, is_valid: bool) -> void:
 
 
 func show_hit(grid_position: Vector2, high_ground: bool = false) -> void:
+	if not _reserve_minor_effect():
+		return
 	last_hit_high_ground = high_ground
 	_add_effect("hit", grid_position, 0, hit_duration, {"high_ground": high_ground})
 	hit_feedback_count += 1
@@ -73,6 +90,8 @@ func show_hit(grid_position: Vector2, high_ground: bool = false) -> void:
 
 
 func show_ranged_shot(origin: Vector2, grid_position: Vector2, team: int) -> void:
+	if not _reserve_minor_effect():
+		return
 	_add_effect("ranged_shot", grid_position, team, ranged_shot_duration, {"origin": origin})
 	ranged_shot_feedback_count += 1
 	last_feedback_mode = "ranged_shot"
@@ -92,6 +111,8 @@ func show_siege_impact(grid_position: Vector2, team: int, radius: float) -> void
 
 
 func show_unit_death(grid_position: Vector2, team: int) -> void:
+	if not _reserve_minor_effect():
+		return
 	_add_effect("unit_death", grid_position, team, death_duration)
 	_spawn_fragments(grid_position, team, fragment_count, 70.0, 125.0, 2.0, 4.0)
 	unit_death_feedback_count += 1

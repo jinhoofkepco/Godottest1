@@ -1,4 +1,5 @@
 {
+	"assembly": "CC0 KayKit catapult turret on a procedural low wheeled cart",
 	"atlas_size": [
 		1536,
 		1536
@@ -29,6 +30,7 @@
 	},
 	"rows": 16,
 	"schema": 1,
+	"silhouette": "mobile_wheeled_catapult",
 	"sources": [
 		{
 			"name": "blue",

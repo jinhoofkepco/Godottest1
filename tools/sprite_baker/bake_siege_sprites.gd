@@ -54,6 +54,8 @@ func _run() -> void:
 		"rows": ROWS,
 		"atlas_size": [COLUMNS * CELL, ROWS * CELL],
 		"transparent_background": true,
+		"silhouette": "mobile_wheeled_catapult",
+		"assembly": "CC0 KayKit catapult turret on a procedural low wheeled cart",
 		"lighting": {"key": "upper-left 45 degrees", "key_energy": 1.55, "ambient_energy": 0.22},
 	}
 	var metadata_file := FileAccess.open(output_dir.path_join("siege_atlas.json"), FileAccess.WRITE)
@@ -73,7 +75,20 @@ func _bake_team(rig: Dictionary, source: Dictionary, output_dir: String) -> bool
 		return false
 	var model := packed.instantiate() as Node3D
 	rig.stage.add_child(model)
-	var arm := _find_named_node(model, "catapult_arm")
+	var tower_base := _find_named_node(model, "building_tower_catapult")
+	if tower_base is MeshInstance3D:
+		# Keep the CC0 throwing mechanism but remove the immobile stone tower.
+		tower_base.mesh = null
+	var turret := _find_named_node(model, "catapult_turret")
+	if turret != null:
+		turret.position.y = 0.38
+	if turret is MeshInstance3D:
+		# The original turret is another stone pedestal. Only its throwing arm is mobile-unit art.
+		turret.mesh = null
+	var team_color := Color("287eea") if String(source.name) == "blue" else Color("e24a57")
+	var cart_rig := _add_mobile_cart(model, team_color)
+	var wheels: Array = cart_rig.wheels
+	var arm: Node3D = cart_rig.arm
 	var arm_base_rotation := arm.rotation if arm != null else Vector3.ZERO
 	var atlas := Image.create_empty(COLUMNS * CELL, ROWS * CELL, false, Image.FORMAT_RGBA8)
 	atlas.fill(Color.TRANSPARENT)
@@ -85,6 +100,8 @@ func _bake_team(rig: Dictionary, source: Dictionary, output_dir: String) -> bool
 				var phase := float(frame_index) / float(maxi(1, frame_count - 1))
 				model.position.y = sin(phase * TAU) * (0.035 if state == "walk" else 0.012)
 				model.rotation.z = deg_to_rad(phase * 12.0) if state == "death" else 0.0
+				for wheel in wheels:
+					wheel.rotation.x = phase * TAU if state == "walk" else 0.0
 				if arm != null:
 					arm.rotation = arm_base_rotation
 					if state == "attack":
@@ -122,11 +139,11 @@ func _create_capture_rig() -> Dictionary:
 	viewport.add_child(stage)
 	var camera := Camera3D.new()
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-	camera.size = 4.6
+	camera.size = 2.75
 	camera.current = true
 	var pitch := deg_to_rad(30.0)
 	var distance := 7.0
-	camera.look_at_from_position(Vector3(distance * cos(pitch), distance * sin(pitch), distance * cos(pitch)), Vector3(0.0, 1.0, 0.0), Vector3.UP)
+	camera.look_at_from_position(Vector3(distance * cos(pitch), distance * sin(pitch), distance * cos(pitch)), Vector3(0.0, 0.58, 0.0), Vector3.UP)
 	stage.add_child(camera)
 	var key := DirectionalLight3D.new()
 	key.rotation_degrees = Vector3(-52.0, -38.0, 0.0)
@@ -147,6 +164,76 @@ func _create_capture_rig() -> Dictionary:
 	world_environment.environment = environment
 	stage.add_child(world_environment)
 	return {"viewport": viewport, "stage": stage}
+
+
+func _add_mobile_cart(parent: Node3D, team_color: Color) -> Dictionary:
+	var cart := Node3D.new()
+	cart.name = "mobile_wheeled_cart"
+	parent.add_child(cart)
+	var wood := StandardMaterial3D.new()
+	wood.albedo_color = Color("6b412c")
+	wood.roughness = 0.86
+	var metal := StandardMaterial3D.new()
+	metal.albedo_color = Color("283644")
+	metal.roughness = 0.72
+	var accent := StandardMaterial3D.new()
+	accent.albedo_color = team_color.darkened(0.12)
+	accent.roughness = 0.78
+	_add_box(cart, Vector3(0.92, 0.18, 1.05), Vector3(0.0, 0.30, 0.0), wood)
+	_add_box(cart, Vector3(0.12, 0.16, 1.42), Vector3(-0.31, 0.46, -0.18), accent)
+	_add_box(cart, Vector3(0.12, 0.16, 1.42), Vector3(0.31, 0.46, -0.18), accent)
+	_add_box(cart, Vector3(0.18, 0.20, 0.36), Vector3(0.0, 0.51, 0.55), metal)
+	var left_support := _add_box(cart, Vector3(0.13, 0.72, 0.13), Vector3(-0.26, 0.61, 0.02), accent)
+	left_support.rotation_degrees.z = -18.0
+	var right_support := _add_box(cart, Vector3(0.13, 0.72, 0.13), Vector3(0.26, 0.61, 0.02), accent)
+	right_support.rotation_degrees.z = 18.0
+	var axle := MeshInstance3D.new()
+	var axle_mesh := CylinderMesh.new()
+	axle_mesh.top_radius = 0.10
+	axle_mesh.bottom_radius = 0.10
+	axle_mesh.height = 0.72
+	axle_mesh.radial_segments = 12
+	axle.mesh = axle_mesh
+	axle.material_override = metal
+	axle.position = Vector3(0.0, 0.78, 0.02)
+	axle.rotation_degrees.z = 90.0
+	cart.add_child(axle)
+	var arm_pivot := Node3D.new()
+	arm_pivot.name = "mobile_throwing_arm"
+	arm_pivot.position = Vector3(0.0, 0.78, 0.12)
+	arm_pivot.rotation_degrees.x = -24.0
+	cart.add_child(arm_pivot)
+	_add_box(arm_pivot, Vector3(0.14, 0.14, 1.48), Vector3(0.0, 0.0, -0.28), wood)
+	_add_box(arm_pivot, Vector3(0.40, 0.22, 0.30), Vector3(0.0, 0.0, -1.02), metal)
+	_add_box(arm_pivot, Vector3(0.34, 0.30, 0.34), Vector3(0.0, -0.08, 0.53), accent)
+	var wheels: Array[MeshInstance3D] = []
+	for x in [-0.53, 0.53]:
+		for z in [-0.36, 0.36]:
+			var wheel := MeshInstance3D.new()
+			wheel.name = "cart_wheel"
+			var cylinder := CylinderMesh.new()
+			cylinder.top_radius = 0.23
+			cylinder.bottom_radius = 0.23
+			cylinder.height = 0.14
+			cylinder.radial_segments = 12
+			wheel.mesh = cylinder
+			wheel.material_override = metal
+			wheel.position = Vector3(x, 0.23, z)
+			wheel.rotation_degrees.z = 90.0
+			cart.add_child(wheel)
+			wheels.append(wheel)
+	return {"wheels": wheels, "arm": arm_pivot}
+
+
+func _add_box(parent: Node3D, size: Vector3, position: Vector3, material: Material) -> MeshInstance3D:
+	var instance := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = size
+	instance.mesh = box
+	instance.material_override = material
+	instance.position = position
+	parent.add_child(instance)
+	return instance
 
 
 func _find_named_node(node: Node, fragment: String) -> Node3D:

@@ -5,6 +5,7 @@ signal collapse_finished(building_id: int)
 
 const GameConfig = preload("res://scripts/game_config.gd")
 const WORLD_ATLAS = preload("res://assets/world/world_atlas.png")
+const WORLD_METADATA_PATH := "res://assets/world/world_atlas.json"
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const BUILDING_HQ := 0
@@ -24,6 +25,8 @@ var hp := 1.0
 var max_hp := 1.0
 var _flash_left := 0.0
 var _collapse_left := 0.0
+static var _opaque_bounds_by_name: Dictionary = {}
+static var _metadata_loaded := false
 
 
 func setup(board: GridBoard, record: Dictionary) -> void:
@@ -67,14 +70,15 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	var color := GameConfig.COLOR_ALLY.lightened(0.18) if team == TEAM_ALLY else GameConfig.COLOR_ENEMY.lightened(0.12)
+	_draw_ground_plinth(color)
 	_draw_soft_shadow()
-	var sprite_size := _sprite_size()
-	var destination := Rect2(Vector2(-sprite_size.x * 0.5, -sprite_size.y + 10.0), sprite_size)
+	var destination := _sprite_destination()
 	var source := _sprite_region()
 	var modulate := Color(1.85, 1.85, 1.85, 1.0) if _flash_left > 0.0 else Color.WHITE
 	draw_texture_rect_region(WORLD_ATLAS, destination, source, modulate)
 	var ratio := clampf(hp / maxf(max_hp, 1.0), 0.0, 1.0)
-	var bar_y := -60.0 if kind == BUILDING_HQ else -57.0
+	var bounds := _sprite_opaque_bounds()
+	var bar_y := destination.position.y + float(bounds.position.y) / float(GameConfig.WORLD_ATLAS_CELL_SIZE) * destination.size.y - 7.0
 	draw_rect(Rect2(Vector2(-22, bar_y), Vector2(44, 5)), Color("0b101b"))
 	draw_rect(Rect2(Vector2(-21, bar_y + 1.0), Vector2(42 * ratio, 3)), color.lightened(0.3))
 
@@ -112,6 +116,65 @@ func _sprite_size() -> Vector2:
 	return Vector2(72, 72)
 
 
+func get_ground_contact_y() -> float:
+	return GameConfig.BUILDING_GROUND_CONTACT_Y
+
+
+func get_sprite_opaque_bottom_y() -> float:
+	var destination := _sprite_destination()
+	var bounds := _sprite_opaque_bounds()
+	var opaque_bottom := float(bounds.position.y + bounds.size.y)
+	return destination.position.y + opaque_bottom / float(GameConfig.WORLD_ATLAS_CELL_SIZE) * destination.size.y
+
+
+func _sprite_destination() -> Rect2:
+	var sprite_size := _sprite_size()
+	var bounds := _sprite_opaque_bounds()
+	var opaque_bottom := float(bounds.position.y + bounds.size.y)
+	var top := get_ground_contact_y() - opaque_bottom / float(GameConfig.WORLD_ATLAS_CELL_SIZE) * sprite_size.y
+	return Rect2(Vector2(-sprite_size.x * 0.5, top), sprite_size)
+
+
+func _sprite_opaque_bounds() -> Rect2i:
+	_ensure_world_metadata()
+	var values: Array = _opaque_bounds_by_name.get(_sprite_name(), [0, 0, GameConfig.WORLD_ATLAS_CELL_SIZE, GameConfig.WORLD_ATLAS_CELL_SIZE])
+	if values.size() != 4:
+		return Rect2i(Vector2i.ZERO, Vector2i.ONE * GameConfig.WORLD_ATLAS_CELL_SIZE)
+	return Rect2i(int(values[0]), int(values[1]), int(values[2]), int(values[3]))
+
+
+func _sprite_name() -> String:
+	var names := [
+		"blue_hq", "red_hq", "blue_melee_spawner", "red_melee_spawner",
+		"blue_ranged_spawner", "red_ranged_spawner", "blue_tower", "red_tower",
+		"blue_dragon_lair", "red_dragon_lair",
+	]
+	return names[_sprite_index()]
+
+
+static func _ensure_world_metadata() -> void:
+	if _metadata_loaded:
+		return
+	_metadata_loaded = true
+	var metadata_file := FileAccess.open(WORLD_METADATA_PATH, FileAccess.READ)
+	if metadata_file == null:
+		return
+	var metadata = JSON.parse_string(metadata_file.get_as_text())
+	if metadata is Dictionary:
+		_opaque_bounds_by_name = metadata.get("opaque_bounds", {})
+
+
+func _draw_ground_plinth(color: Color) -> void:
+	var center_y := get_ground_contact_y() + 1.0
+	var points := PackedVector2Array([
+		Vector2(-24, center_y), Vector2(0, center_y + 7),
+		Vector2(24, center_y), Vector2(0, center_y - 7),
+	])
+	draw_colored_polygon(points, Color(color.darkened(0.62), 0.92))
+	points.append(points[0])
+	draw_polyline(points, Color(color.lightened(0.08), 0.72), 1.5, true)
+
+
 func _draw_soft_shadow() -> void:
 	for ring in 3:
 		var points := PackedVector2Array()
@@ -119,5 +182,5 @@ func _draw_soft_shadow() -> void:
 		var height := 13.0 - float(ring) * 2.0
 		for index in 20:
 			var angle := TAU * float(index) / 20.0
-			points.append(Vector2(cos(angle) * width * 0.5, sin(angle) * height * 0.5 + 2.0))
-		draw_colored_polygon(points, Color(0.02, 0.03, 0.05, 0.08 + float(ring) * 0.04))
+			points.append(Vector2(cos(angle) * width * 0.5, sin(angle) * height * 0.5 + get_ground_contact_y()))
+		draw_colored_polygon(points, Color(0.02, 0.03, 0.05, 0.10 + float(ring) * 0.05))

@@ -61,6 +61,7 @@ func _run() -> void:
 	var world_atlas := Image.create_empty(512, 512, false, Image.FORMAT_RGBA8)
 	world_atlas.fill(Color.TRANSPARENT)
 	var sprite_metadata: Dictionary = {}
+	var opaque_bounds: Dictionary = {}
 	for index in STATIC_MODELS.size():
 		var spec: Dictionary = STATIC_MODELS[index]
 		var frame: Image = await _capture_static(rig, spec)
@@ -69,6 +70,7 @@ func _run() -> void:
 		var destination := Vector2i((index % 4) * STATIC_CELL, (index / 4) * STATIC_CELL)
 		world_atlas.blit_rect(frame, Rect2i(Vector2i.ZERO, Vector2i.ONE * STATIC_CELL), destination)
 		sprite_metadata[String(spec.name)] = [destination.x, destination.y, STATIC_CELL, STATIC_CELL]
+		opaque_bounds[String(spec.name)] = _opaque_bounds(frame)
 	var world_error := world_atlas.save_png(output_dir.path_join("world_atlas.png"))
 	if world_error != OK:
 		_fail("could not save world atlas")
@@ -82,6 +84,7 @@ func _run() -> void:
 		"static_cell_size": [STATIC_CELL, STATIC_CELL],
 		"world_atlas_size": [512, 512],
 		"sprites": sprite_metadata,
+		"opaque_bounds": opaque_bounds,
 		"dragon_source": "res://assets/source/quaternius_monsters/Dragon.fbx",
 		"dragon_directions": DIRECTIONS,
 		"dragon_frames_per_direction": FRAMES_PER_DIRECTION,
@@ -121,6 +124,22 @@ func _capture_static(rig: Dictionary, spec: Dictionary) -> Image:
 	model.queue_free()
 	await process_frame
 	return frame
+
+
+func _opaque_bounds(image: Image) -> Array[int]:
+	var minimum := Vector2i(image.get_width(), image.get_height())
+	var maximum := Vector2i(-1, -1)
+	for y in image.get_height():
+		for x in image.get_width():
+			if image.get_pixel(x, y).a <= 0.04:
+				continue
+			minimum.x = mini(minimum.x, x)
+			minimum.y = mini(minimum.y, y)
+			maximum.x = maxi(maximum.x, x)
+			maximum.y = maxi(maximum.y, y)
+	if maximum.x < minimum.x or maximum.y < minimum.y:
+		return [0, 0, 0, 0]
+	return [minimum.x, minimum.y, maximum.x - minimum.x + 1, maximum.y - minimum.y + 1]
 
 
 func _bake_dragon_team(rig: Dictionary, team: Dictionary, output_dir: String) -> bool:

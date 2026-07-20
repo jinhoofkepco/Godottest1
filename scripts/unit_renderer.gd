@@ -27,8 +27,9 @@ var _ally_dragons: MultiMeshInstance2D
 var _shadows: MultiMeshInstance2D
 var _death_ghosts: Array[Dictionary] = []
 var _animation_clock := 0.0
-var _last_hp_by_id: Dictionary = {}
 var _hp_bar_time_by_id: Dictionary = {}
+var bulk_upload_count := 0
+var last_sync_usec := 0
 
 
 func _ready() -> void:
@@ -59,7 +60,11 @@ func setup(board: GridBoard, simulation) -> void:
 func advance_visuals(delta: float) -> void:
 	_animation_clock += delta
 	for unit_id in _hp_bar_time_by_id.keys():
-		_hp_bar_time_by_id[unit_id] = maxf(0.0, float(_hp_bar_time_by_id[unit_id]) - delta)
+		var remaining := maxf(0.0, float(_hp_bar_time_by_id[unit_id]) - delta)
+		if remaining <= 0.0:
+			_hp_bar_time_by_id.erase(unit_id)
+		else:
+			_hp_bar_time_by_id[unit_id] = remaining
 	var index := _death_ghosts.size() - 1
 	while index >= 0:
 		_death_ghosts[index].remaining = float(_death_ghosts[index].remaining) - delta
@@ -94,15 +99,65 @@ func get_shadow_batch_count() -> int:
 	return int(_shadows != null)
 
 
+func reset_bulk_upload_count() -> void:
+	bulk_upload_count = 0
+
+
+func note_damage(unit_id: int) -> void:
+	if unit_id > 0:
+		_hp_bar_time_by_id[unit_id] = GameConfig.UNIT_HP_BAR_VISIBLE_SECONDS
+		queue_redraw()
+
+
 func sync() -> void:
 	if not is_instance_valid(_grid) or _simulation == null or _infantry_units == null:
 		return
-	_update_hp_bar_visibility()
+	var started := Time.get_ticks_usec()
 	_sync_infantry_batch()
 	_sync_dragon_batch(_enemy_dragons, TEAM_ENEMY)
 	_sync_dragon_batch(_ally_dragons, TEAM_ALLY)
 	_sync_shadows()
 	queue_redraw()
+	last_sync_usec = Time.get_ticks_usec() - started
+
+
+func _new_multimesh_buffer(multimesh: MultiMesh, count: int) -> PackedFloat32Array:
+	var stride := 8 + (4 if multimesh.use_colors else 0) + (4 if multimesh.use_custom_data else 0)
+	var buffer := PackedFloat32Array()
+	buffer.resize(count * stride)
+	return buffer
+
+
+func _write_multimesh_record(buffer: PackedFloat32Array, multimesh: MultiMesh, index: int, transform: Transform2D, color: Color = Color.WHITE, custom_data: Color = Color.TRANSPARENT) -> void:
+	var stride := 8 + (4 if multimesh.use_colors else 0) + (4 if multimesh.use_custom_data else 0)
+	var offset := index * stride
+	buffer[offset] = transform.x.x
+	buffer[offset + 1] = transform.y.x
+	buffer[offset + 2] = 0.0
+	buffer[offset + 3] = transform.origin.x
+	buffer[offset + 4] = transform.x.y
+	buffer[offset + 5] = transform.y.y
+	buffer[offset + 6] = 0.0
+	buffer[offset + 7] = transform.origin.y
+	offset += 8
+	if multimesh.use_colors:
+		buffer[offset] = color.r
+		buffer[offset + 1] = color.g
+		buffer[offset + 2] = color.b
+		buffer[offset + 3] = color.a
+		offset += 4
+	if multimesh.use_custom_data:
+		buffer[offset] = custom_data.r
+		buffer[offset + 1] = custom_data.g
+		buffer[offset + 2] = custom_data.b
+		buffer[offset + 3] = custom_data.a
+
+
+func _upload_multimesh(multimesh: MultiMesh, count: int, buffer: PackedFloat32Array) -> void:
+	multimesh.instance_count = count
+	if count > 0:
+		RenderingServer.multimesh_set_buffer(multimesh.get_rid(), buffer)
+	bulk_upload_count += 1
 
 
 func _make_batch(node_name: String, mesh: Mesh, use_colors: bool, use_custom_data: bool) -> MultiMeshInstance2D:
@@ -115,6 +170,9 @@ func _make_batch(node_name: String, mesh: Mesh, use_colors: bool, use_custom_dat
 	multimesh.use_colors = use_colors
 	multimesh.use_custom_data = use_custom_data
 	multimesh.mesh = mesh
+	# Bulk buffer uploads do not touch per-instance setters, so keep culling bounds
+	# explicit instead of relying on setter-driven AABB invalidation.
+	multimesh.custom_aabb = AABB(Vector3(-2048.0, -2048.0, -1.0), Vector3(4096.0, 4096.0, 2.0))
 	multimesh.instance_count = 0
 	instance.multimesh = multimesh
 	add_child(instance)
@@ -219,7 +277,8 @@ func _sync_infantry_batch() -> void:
 		var ghost: Dictionary = _death_ghosts[ghost_index]
 		entries.append({"ghost_index": ghost_index, "y": _grid.position_to_world(Vector2(ghost.position)).y})
 	entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a.y) < float(b.y))
-	_infantry_units.multimesh.instance_count = entries.size()
+	var multimesh := _infantry_units.multimesh
+	var buffer := _new_multimesh_buffer(multimesh, entries.size())
 	for draw_index in entries.size():
 		var entry := entries[draw_index]
 		var screen_position := Vector2.ZERO
@@ -270,9 +329,15 @@ func _sync_infantry_batch() -> void:
 		var render_size := get_unit_render_size(unit_kind)
 		var render_scale := render_size / GameConfig.INFANTRY_RENDER_SIZE
 		var atlas_layer := get_atlas_layer(unit_kind, team)
-		_infantry_units.multimesh.set_instance_transform_2d(draw_index, Transform2D(0.0, render_scale, 0.0, screen_position))
-		_infantry_units.multimesh.set_instance_custom_data(draw_index, Color(float(cell_x) / float(GameConfig.INFANTRY_ATLAS_COLUMNS - 1), float(cell_y) / float(GameConfig.INFANTRY_ATLAS_ROWS - 1), float(atlas_layer) / 3.0, 1.0))
-		_infantry_units.multimesh.set_instance_color(draw_index, Color(1.0, brightness, 0.0, alpha))
+		_write_multimesh_record(
+			buffer,
+			multimesh,
+			draw_index,
+			Transform2D(0.0, render_scale, 0.0, screen_position),
+			Color(1.0, brightness, 0.0, alpha),
+			Color(float(cell_x) / float(GameConfig.INFANTRY_ATLAS_COLUMNS - 1), float(cell_y) / float(GameConfig.INFANTRY_ATLAS_ROWS - 1), float(atlas_layer) / 3.0, 1.0)
+		)
+	_upload_multimesh(multimesh, entries.size(), buffer)
 
 
 func _sync_dragon_batch(instance: MultiMeshInstance2D, team: int) -> void:
@@ -281,7 +346,8 @@ func _sync_dragon_batch(instance: MultiMeshInstance2D, team: int) -> void:
 		if _simulation.unit_teams[index] == team and _simulation.unit_kinds[index] == UNIT_DRAGON and _simulation.unit_hp[index] > 0.0:
 			indices.append(index)
 	indices.sort_custom(func(a: int, b: int) -> bool: return _grid.position_to_world(_simulation.unit_positions[a]).y < _grid.position_to_world(_simulation.unit_positions[b]).y)
-	instance.multimesh.instance_count = indices.size()
+	var multimesh := instance.multimesh
+	var buffer := _new_multimesh_buffer(multimesh, indices.size())
 	for draw_index in indices.size():
 		var unit_index := indices[draw_index]
 		var direction: Vector2 = _simulation.unit_velocities[unit_index]
@@ -302,9 +368,15 @@ func _sync_dragon_batch(instance: MultiMeshInstance2D, team: int) -> void:
 		var cell_y: int = linear_index / GameConfig.DRAGON_ATLAS_COLUMNS
 		var hp_ratio := clampf(_simulation.unit_hp[unit_index] / GameConfig.DRAGON_UNIT_MAX_HP, 0.0, 1.0)
 		var brightness := lerpf(0.62, 1.0, hp_ratio)
-		instance.multimesh.set_instance_transform_2d(draw_index, Transform2D(0.0, get_unit_render_position(unit_index)))
-		instance.multimesh.set_instance_custom_data(draw_index, Color(float(cell_x) / float(GameConfig.DRAGON_ATLAS_COLUMNS - 1), float(cell_y) / float(GameConfig.DRAGON_ATLAS_ROWS - 1), 0.0, 1.0))
-		instance.multimesh.set_instance_color(draw_index, Color(brightness, brightness, brightness, 1.0))
+		_write_multimesh_record(
+			buffer,
+			multimesh,
+			draw_index,
+			Transform2D(0.0, get_unit_render_position(unit_index)),
+			Color(brightness, brightness, brightness, 1.0),
+			Color(float(cell_x) / float(GameConfig.DRAGON_ATLAS_COLUMNS - 1), float(cell_y) / float(GameConfig.DRAGON_ATLAS_ROWS - 1), 0.0, 1.0)
+		)
+	_upload_multimesh(multimesh, indices.size(), buffer)
 
 
 func _sync_shadows() -> void:
@@ -315,15 +387,22 @@ func _sync_shadows() -> void:
 		positions.append({"position": _simulation.unit_positions[index], "kind": _simulation.unit_kinds[index]})
 	for ghost in _death_ghosts:
 		positions.append({"position": ghost.position, "kind": int(ghost.kind)})
-	_shadows.multimesh.instance_count = positions.size()
+	var multimesh := _shadows.multimesh
+	var buffer := _new_multimesh_buffer(multimesh, positions.size())
 	for index in positions.size():
 		var entry: Dictionary = positions[index]
 		var unit_kind := int(entry.kind)
 		var radius_scale: float = _simulation.get_unit_radius(unit_kind) / GameConfig.MELEE_UNIT_RADIUS
 		var scale := Vector2(radius_scale, radius_scale * (0.82 if unit_kind == UNIT_DRAGON else 1.0))
 		var at := _grid.position_to_world(Vector2(entry.position)) + Vector2(0, 2)
-		_shadows.multimesh.set_instance_transform_2d(index, Transform2D(0.0, scale, 0.0, at))
-		_shadows.multimesh.set_instance_color(index, Color(0.02, 0.03, 0.05, 0.24 if unit_kind == UNIT_DRAGON else 0.35))
+		_write_multimesh_record(
+			buffer,
+			multimesh,
+			index,
+			Transform2D(0.0, scale, 0.0, at),
+			Color(0.02, 0.03, 0.05, 0.24 if unit_kind == UNIT_DRAGON else 0.35)
+		)
+	_upload_multimesh(multimesh, positions.size(), buffer)
 
 
 func get_direction_index(direction: Vector2, team: int) -> int:
@@ -389,25 +468,6 @@ func _unit_attack_interval(unit_kind: int) -> float:
 	if unit_kind == UNIT_SIEGE:
 		return GameConfig.SIEGE_UNIT_ATTACK_INTERVAL
 	return GameConfig.RANGED_UNIT_ATTACK_INTERVAL if unit_kind == UNIT_RANGED else GameConfig.UNIT_ATTACK_INTERVAL
-
-
-func _update_hp_bar_visibility() -> void:
-	var living_ids: Dictionary = {}
-	for index in _simulation.unit_ids.size():
-		var unit_id: int = _simulation.unit_ids[index]
-		living_ids[unit_id] = true
-		var current_hp: float = _simulation.unit_hp[index]
-		var maximum_hp := _unit_max_hp(_simulation.unit_kinds[index])
-		var previous_hp: float = float(_last_hp_by_id.get(unit_id, maximum_hp))
-		if current_hp + 0.0001 < previous_hp:
-			_hp_bar_time_by_id[unit_id] = GameConfig.UNIT_HP_BAR_VISIBLE_SECONDS
-		elif current_hp >= maximum_hp - 0.0001:
-			_hp_bar_time_by_id[unit_id] = 0.0
-		_last_hp_by_id[unit_id] = current_hp
-	for unit_id in _last_hp_by_id.keys():
-		if not living_ids.has(unit_id):
-			_last_hp_by_id.erase(unit_id)
-			_hp_bar_time_by_id.erase(unit_id)
 
 
 func get_hp_bar_alpha(unit_id: int) -> float:

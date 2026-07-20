@@ -60,7 +60,8 @@ func _run() -> void:
 	for warmup in WARMUP_TICKS:
 		simulation.tick(1.0 / 30.0)
 		main.unit_renderer.sync()
-		for event in simulation.drain_events():
+		var warmup_channels: Dictionary = simulation.drain_event_channels()
+		for event in warmup_channels.events:
 			siege_projectiles += int(String(event.get("type", "")) == "siege_projectile")
 			siege_impacts += int(String(event.get("type", "")) == "siege_impact")
 	simulation.reset_profile_counters()
@@ -76,7 +77,8 @@ func _run() -> void:
 		maximum_impacts_in_one_tick = maxi(maximum_impacts_in_one_tick, simulation.siege_impacts_resolved_this_tick)
 		if simulation.siege_impacts_resolved_this_tick > 0:
 			maximum_aoe_candidates_per_impact = maxf(maximum_aoe_candidates_per_impact, float(simulation.aoe_candidate_checks) / float(simulation.siege_impacts_resolved_this_tick))
-		for event in simulation.drain_events():
+		var measured_channels: Dictionary = simulation.drain_event_channels()
+		for event in measured_channels.events:
 			siege_projectiles += int(String(event.get("type", "")) == "siege_projectile")
 			siege_impacts += int(String(event.get("type", "")) == "siege_impact")
 	var sorted_samples := Array(samples)

@@ -34,6 +34,92 @@
 		"key": "upper-left 45 degrees",
 		"key_energy": 1.55
 	},
+	"opaque_bounds": {
+		"blue_dragon_lair": [
+			44,
+			23,
+			40,
+			73
+		],
+		"blue_hq": [
+			37,
+			0,
+			54,
+			95
+		],
+		"blue_melee_spawner": [
+			34,
+			36,
+			60,
+			60
+		],
+		"blue_ranged_spawner": [
+			35,
+			38,
+			60,
+			55
+		],
+		"blue_tower": [
+			49,
+			36,
+			31,
+			59
+		],
+		"crate": [
+			46,
+			54,
+			36,
+			36
+		],
+		"red_dragon_lair": [
+			44,
+			23,
+			40,
+			73
+		],
+		"red_hq": [
+			37,
+			0,
+			54,
+			95
+		],
+		"red_melee_spawner": [
+			34,
+			36,
+			60,
+			60
+		],
+		"red_ranged_spawner": [
+			35,
+			38,
+			60,
+			55
+		],
+		"red_tower": [
+			49,
+			36,
+			31,
+			59
+		],
+		"rock_a": [
+			46,
+			71,
+			35,
+			19
+		],
+		"rock_b": [
+			45,
+			65,
+			34,
+			25
+		],
+		"rock_c": [
+			45,
+			58,
+			37,
+			33
+		]
+	},
 	"schema": 1,
 	"sprites": {
 		"blue_dragon_lair": [

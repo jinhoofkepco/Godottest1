@@ -25,6 +25,9 @@ const BUILD_SIEGE_SPAWNER := 4
 const STATE_ADVANCE := 0
 const STATE_ATTACK := 1
 const STATE_WAIT := 2
+const SHOT_RANGED := 0
+const SHOT_TOWER := 1
+const SHOT_HQ := 2
 
 var unit_ids := PackedInt32Array()
 var unit_teams := PackedInt32Array()
@@ -41,6 +44,10 @@ var unit_lunge_directions := PackedVector2Array()
 var unit_velocities := PackedVector2Array()
 var unit_flow_bias_radians := PackedFloat32Array()
 var unit_siege_target_positions := PackedVector2Array()
+var unit_cached_target_positions := PackedVector2Array()
+var unit_cached_target_radii := PackedFloat32Array()
+var unit_cached_steering := PackedVector2Array()
+var unit_cached_waiting := PackedByteArray()
 
 var buildings: Array[Dictionary] = []
 var ownership := PackedByteArray()
@@ -56,6 +63,9 @@ var target_candidate_checks := 0
 var aoe_candidate_checks := 0
 var siege_impacts_resolved_this_tick := 0
 var siege_target_searches := 0
+var territory_update_count := 0
+var decision_refresh_count := 0
+var decision_group_cursor := 0
 var profiling_enabled := false
 var profile_target_usec := 0
 var profile_separation_usec := 0
@@ -78,7 +88,23 @@ var _enemy_build_cursor := 0
 var _enemy_next_unit_kind := UNIT_MELEE
 var _congestion_rebuild_timer := 0.0
 var _next_flow_rebuild_team := TEAM_ENEMY
+var _territory_update_timer := GameConfig.TERRITORY_UPDATE_INTERVAL
+var _ally_occupancy := 0.5
+var _enemy_occupancy := 0.5
 var _events: Array[Dictionary] = []
+var _hit_unit_ids := PackedInt32Array()
+var _hit_teams := PackedInt32Array()
+var _hit_positions := PackedVector2Array()
+var _hit_high_ground := PackedByteArray()
+var _shot_kinds := PackedByteArray()
+var _shot_teams := PackedInt32Array()
+var _shot_origins := PackedVector2Array()
+var _shot_targets := PackedVector2Array()
+var _death_unit_ids := PackedInt32Array()
+var _death_teams := PackedInt32Array()
+var _death_kinds := PackedInt32Array()
+var _death_positions := PackedVector2Array()
+var _death_directions := PackedVector2Array()
 var _enemy_buckets: Array[Array] = []
 var _ally_buckets: Array[Array] = []
 var _enemy_siege_density := PackedInt32Array()
@@ -107,6 +133,10 @@ func reset() -> void:
 	unit_velocities.clear()
 	unit_flow_bias_radians.clear()
 	unit_siege_target_positions.clear()
+	unit_cached_target_positions.clear()
+	unit_cached_target_radii.clear()
+	unit_cached_steering.clear()
+	unit_cached_waiting.clear()
 	buildings.clear()
 	ownership.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	for row in GameConfig.GRID_ROWS:
@@ -135,6 +165,9 @@ func reset() -> void:
 	aoe_candidate_checks = 0
 	siege_impacts_resolved_this_tick = 0
 	siege_target_searches = 0
+	territory_update_count = 0
+	decision_refresh_count = 0
+	decision_group_cursor = 0
 	reset_profile_counters()
 	siege_impacts.clear()
 	_next_unit_id = 1
@@ -147,8 +180,24 @@ func reset() -> void:
 	_enemy_next_unit_kind = UNIT_MELEE
 	_congestion_rebuild_timer = 0.0
 	_next_flow_rebuild_team = TEAM_ENEMY
+	_territory_update_timer = GameConfig.TERRITORY_UPDATE_INTERVAL
+	_ally_occupancy = 0.5
+	_enemy_occupancy = 0.5
 	_rng.seed = 731942
 	_events.clear()
+	_hit_unit_ids.clear()
+	_hit_teams.clear()
+	_hit_positions.clear()
+	_hit_high_ground.clear()
+	_shot_kinds.clear()
+	_shot_teams.clear()
+	_shot_origins.clear()
+	_shot_targets.clear()
+	_death_unit_ids.clear()
+	_death_teams.clear()
+	_death_kinds.clear()
+	_death_positions.clear()
+	_death_directions.clear()
 	_enemy_buckets.clear()
 	_ally_buckets.clear()
 	_unit_index_by_id.clear()
@@ -201,6 +250,10 @@ func spawn_unit(team: int, position: Vector2, unit_kind: int = UNIT_MELEE) -> in
 	unit_velocities.append(Vector2.ZERO)
 	unit_flow_bias_radians.append(deg_to_rad(_rng.randf_range(-GameConfig.FLOW_NOISE_DEGREES, GameConfig.FLOW_NOISE_DEGREES)))
 	unit_siege_target_positions.append(Vector2(-1.0, -1.0))
+	unit_cached_target_positions.append(Vector2(-1.0, -1.0))
+	unit_cached_target_radii.append(0.0)
+	unit_cached_steering.append(Vector2.DOWN if team == TEAM_ENEMY else Vector2.UP)
+	unit_cached_waiting.append(0)
 	_unit_index_by_id[unit_id] = unit_ids.size() - 1
 	return unit_id
 
@@ -426,16 +479,16 @@ func advance_siege_impacts(delta: float) -> void:
 
 
 func get_occupancy(team: int) -> float:
-	if ownership.is_empty():
-		return 0.0
-	var count := 0
-	for owner in ownership:
-		if owner == team:
-			count += 1
-	return float(count) / float(ownership.size())
+	if team == TEAM_ALLY:
+		return _ally_occupancy
+	if team == TEAM_ENEMY:
+		return _enemy_occupancy
+	return 0.0
 
 
-func recalculate_territory(emit_changes: bool = true) -> void:
+func recalculate_territory(emit_changes: bool = true, refresh_buckets: bool = true) -> void:
+	if refresh_buckets:
+		_rebuild_buckets()
 	var previous := ownership.duplicate()
 	var red_fronts := PackedInt32Array()
 	var blue_fronts := PackedInt32Array()
@@ -443,17 +496,14 @@ func recalculate_territory(emit_changes: bool = true) -> void:
 	blue_fronts.resize(GameConfig.GRID_COLUMNS)
 	red_fronts.fill(-1)
 	blue_fronts.fill(GameConfig.GRID_ROWS)
-	for index in unit_ids.size():
-		if unit_hp[index] <= 0.0:
-			continue
-		var column := floori(unit_positions[index].x)
-		if column < 0 or column >= GameConfig.GRID_COLUMNS:
-			continue
-		var row := floori(unit_positions[index].y)
-		if unit_teams[index] == TEAM_ENEMY:
-			red_fronts[column] = maxi(red_fronts[column], row)
-		elif unit_teams[index] == TEAM_ALLY:
-			blue_fronts[column] = mini(blue_fronts[column], row)
+	for bucket_index in _enemy_buckets.size():
+		if not _enemy_buckets[bucket_index].is_empty():
+			var column := bucket_index % GameConfig.GRID_COLUMNS
+			red_fronts[column] = maxi(red_fronts[column], bucket_index / GameConfig.GRID_COLUMNS)
+	for bucket_index in _ally_buckets.size():
+		if not _ally_buckets[bucket_index].is_empty():
+			var column := bucket_index % GameConfig.GRID_COLUMNS
+			blue_fronts[column] = mini(blue_fronts[column], bucket_index / GameConfig.GRID_COLUMNS)
 	for building in buildings:
 		if bool(building.get("destroyed", false)):
 			continue
@@ -480,6 +530,13 @@ func recalculate_territory(emit_changes: bool = true) -> void:
 				owner = TEAM_ALLY
 			if owner != TEAM_NONE:
 				ownership[row * GameConfig.GRID_COLUMNS + column] = owner
+	var ally_cells := 0
+	for owner in ownership:
+		ally_cells += int(owner == TEAM_ALLY)
+	_ally_occupancy = float(ally_cells) / float(ownership.size()) if not ownership.is_empty() else 0.0
+	_enemy_occupancy = 1.0 - _ally_occupancy
+	_territory_update_timer = GameConfig.TERRITORY_UPDATE_INTERVAL
+	territory_update_count += 1
 	if emit_changes:
 		for index in ownership.size():
 			if previous[index] == ownership[index]:
@@ -512,10 +569,94 @@ func apply_building_damage(building_id: int, damage: float, attacker_team: int) 
 		recalculate_territory()
 
 
+func drain_event_channels() -> Dictionary:
+	var started := Time.get_ticks_usec() if profiling_enabled else 0
+	var channels := {
+		"events": _events,
+		"hit_unit_ids": _hit_unit_ids,
+		"hit_teams": _hit_teams,
+		"hit_positions": _hit_positions,
+		"hit_high_ground": _hit_high_ground,
+		"shot_kinds": _shot_kinds,
+		"shot_teams": _shot_teams,
+		"shot_origins": _shot_origins,
+		"shot_targets": _shot_targets,
+		"death_unit_ids": _death_unit_ids,
+		"death_teams": _death_teams,
+		"death_kinds": _death_kinds,
+		"death_positions": _death_positions,
+		"death_directions": _death_directions,
+	}
+	_events = []
+	_hit_unit_ids = PackedInt32Array()
+	_hit_teams = PackedInt32Array()
+	_hit_positions = PackedVector2Array()
+	_hit_high_ground = PackedByteArray()
+	_shot_kinds = PackedByteArray()
+	_shot_teams = PackedInt32Array()
+	_shot_origins = PackedVector2Array()
+	_shot_targets = PackedVector2Array()
+	_death_unit_ids = PackedInt32Array()
+	_death_teams = PackedInt32Array()
+	_death_kinds = PackedInt32Array()
+	_death_positions = PackedVector2Array()
+	_death_directions = PackedVector2Array()
+	if profiling_enabled:
+		profile_event_usec += Time.get_ticks_usec() - started
+	return channels
+
+
 func drain_events() -> Array:
-	var drained: Array = _events.duplicate(true)
-	_events.clear()
+	# Compatibility adapter for rule tests and tooling. The live game consumes packed channels.
+	var channels := drain_event_channels()
+	var drained: Array = channels.events
+	for index in channels.hit_positions.size():
+		drained.append({
+			"type": "hit",
+			"unit_id": channels.hit_unit_ids[index],
+			"team": channels.hit_teams[index],
+			"position": channels.hit_positions[index],
+			"high_ground": channels.hit_high_ground[index] == 1,
+		})
+	for index in channels.shot_origins.size():
+		var event_type := "ranged_shot"
+		if channels.shot_kinds[index] == SHOT_TOWER:
+			event_type = "tower_shot"
+		elif channels.shot_kinds[index] == SHOT_HQ:
+			event_type = "hq_shot"
+		drained.append({"type": event_type, "team": channels.shot_teams[index], "origin": channels.shot_origins[index], "position": channels.shot_targets[index]})
+	for index in channels.death_positions.size():
+		drained.append({
+			"type": "unit_death",
+			"unit_id": channels.death_unit_ids[index],
+			"team": channels.death_teams[index],
+			"unit_kind": channels.death_kinds[index],
+			"position": channels.death_positions[index],
+			"direction": channels.death_directions[index],
+		})
 	return drained
+
+
+func _queue_hit(unit_id: int, team: int, position: Vector2, high_ground: bool) -> void:
+	_hit_unit_ids.append(unit_id)
+	_hit_teams.append(team)
+	_hit_positions.append(position)
+	_hit_high_ground.append(int(high_ground))
+
+
+func _queue_shot(kind: int, team: int, origin: Vector2, target: Vector2) -> void:
+	_shot_kinds.append(kind)
+	_shot_teams.append(team)
+	_shot_origins.append(origin)
+	_shot_targets.append(target)
+
+
+func _queue_death(unit_id: int, team: int, unit_kind: int, position: Vector2, direction: Vector2) -> void:
+	_death_unit_ids.append(unit_id)
+	_death_teams.append(team)
+	_death_kinds.append(unit_kind)
+	_death_positions.append(position)
+	_death_directions.append(direction)
 
 
 func _step(delta: float) -> void:
@@ -543,18 +684,22 @@ func _step(delta: float) -> void:
 			continue
 		unit_cooldowns[index] = maxf(0.0, unit_cooldowns[index] - delta)
 		unit_lunge_timers[index] = maxf(0.0, unit_lunge_timers[index] - delta)
+		var refresh_decision := (unit_ids[index] - 1) % GameConfig.DECISION_GROUP_COUNT == decision_group_cursor
 		var target_started := Time.get_ticks_usec() if profiling_enabled else 0
-		if unit_kinds[index] == UNIT_SIEGE:
-			if unit_cooldowns[index] <= 0.0:
-				_find_siege_target(index)
-				unit_siege_target_positions[index] = _found_target_position if _found_target_id != 0 else Vector2(-1.0, -1.0)
+		if refresh_decision:
+			decision_refresh_count += 1
+			if unit_kinds[index] == UNIT_SIEGE:
+				if unit_cooldowns[index] <= 0.0:
+					_find_siege_target(index)
+				else:
+					_restore_cached_target(index)
 			else:
-				_restore_siege_target(index)
+				_find_target(index)
+			_cache_found_target(index)
 		else:
-			_find_target(index)
+			_restore_cached_target(index)
 		if profiling_enabled:
 			profile_target_usec += Time.get_ticks_usec() - target_started
-		unit_target_ids[index] = _found_target_id
 		var position := unit_positions[index]
 		var attack_range := _unit_attack_range(unit_kinds[index], position)
 		var contact_range := attack_range + _found_target_radius()
@@ -573,17 +718,22 @@ func _step(delta: float) -> void:
 					_attack_target(index, _found_unit_index, _found_building_index)
 		else:
 			var separation_started := Time.get_ticks_usec() if profiling_enabled else 0
-			var advance_direction := _advance_direction(index)
-			var seek_direction := Vector2.ZERO
-			if _found_target_id != 0:
-				seek_direction = position.direction_to(_found_target_position)
-			var separation_direction := _calculate_separation(index)
-			var waiting := unit_kinds[index] != UNIT_DRAGON and _should_wait(index, advance_direction)
-			var steering := separation_direction * (GameConfig.WAIT_SEPARATION_WEIGHT if waiting else GameConfig.UNIT_SEPARATION_WEIGHT)
-			if not waiting:
-				steering += advance_direction * GameConfig.UNIT_ADVANCE_WEIGHT + seek_direction * GameConfig.UNIT_SEEK_WEIGHT
-				if unit_kinds[index] != UNIT_DRAGON:
-					steering += _calculate_obstacle_repulsion(position) * GameConfig.GROUND_BLOCK_REPULSION_WEIGHT
+			if refresh_decision:
+				var advance_direction := _advance_direction(index)
+				var seek_direction := Vector2.ZERO
+				if _found_target_id != 0:
+					seek_direction = position.direction_to(_found_target_position)
+				var separation_direction := _calculate_separation(index)
+				var refreshed_waiting := unit_kinds[index] != UNIT_DRAGON and _should_wait(index, advance_direction)
+				var refreshed_steering := separation_direction * (GameConfig.WAIT_SEPARATION_WEIGHT if refreshed_waiting else GameConfig.UNIT_SEPARATION_WEIGHT)
+				if not refreshed_waiting:
+					refreshed_steering += advance_direction * GameConfig.UNIT_ADVANCE_WEIGHT + seek_direction * GameConfig.UNIT_SEEK_WEIGHT
+					if unit_kinds[index] != UNIT_DRAGON:
+						refreshed_steering += _calculate_obstacle_repulsion(position) * GameConfig.GROUND_BLOCK_REPULSION_WEIGHT
+				unit_cached_steering[index] = refreshed_steering
+				unit_cached_waiting[index] = int(refreshed_waiting)
+			var waiting := unit_cached_waiting[index] == 1
+			var steering := unit_cached_steering[index]
 			unit_states[index] = STATE_WAIT if waiting else STATE_ADVANCE
 			var maximum_speed := _unit_speed(unit_kinds[index]) * unit_speed_scales[index]
 			if unit_kinds[index] != UNIT_DRAGON and steering.length_squared() > 0.000001:
@@ -598,18 +748,80 @@ func _step(delta: float) -> void:
 				unit_positions[index] = _move_without_entering_blocked(position, unit_velocities[index] * delta)
 			if profiling_enabled:
 				profile_separation_usec += Time.get_ticks_usec() - separation_started
+	decision_group_cursor = (decision_group_cursor + 1) % GameConfig.DECISION_GROUP_COUNT
 	event_started = Time.get_ticks_usec() if profiling_enabled else 0
 	_remove_dead_units()
 	if profiling_enabled:
 		profile_event_usec += Time.get_ticks_usec() - event_started
-	var territory_started := Time.get_ticks_usec() if profiling_enabled else 0
-	recalculate_territory()
-	if profiling_enabled:
-		profile_territory_usec += Time.get_ticks_usec() - territory_started
+	_territory_update_timer -= delta
+	if _territory_update_timer <= 0.000001:
+		var territory_started := Time.get_ticks_usec() if profiling_enabled else 0
+		recalculate_territory(true, false)
+		if profiling_enabled:
+			profile_territory_usec += Time.get_ticks_usec() - territory_started
 	_check_terminal_state()
 	if profiling_enabled:
 		profile_tick_usec += Time.get_ticks_usec() - tick_started
 		profile_tick_count += 1
+
+
+func _cache_found_target(unit_index: int) -> void:
+	unit_target_ids[unit_index] = _found_target_id
+	unit_cached_target_positions[unit_index] = _found_target_position if _found_target_id != 0 else Vector2(-1.0, -1.0)
+	unit_cached_target_radii[unit_index] = _found_target_radius() if _found_target_id != 0 else 0.0
+	if unit_kinds[unit_index] == UNIT_SIEGE:
+		unit_siege_target_positions[unit_index] = unit_cached_target_positions[unit_index]
+
+
+func _restore_cached_target(unit_index: int) -> void:
+	_found_target_id = 0
+	_found_unit_index = -1
+	_found_building_index = -1
+	_found_target_position = Vector2.ZERO
+	var target_id := unit_target_ids[unit_index]
+	if unit_kinds[unit_index] == UNIT_SIEGE:
+		var siege_point := unit_cached_target_positions[unit_index]
+		if target_id != 0 and siege_point.x >= 0.0:
+			_found_target_id = target_id
+			_found_target_position = siege_point
+			return
+		_clear_cached_target(unit_index)
+		return
+	var position := unit_positions[unit_index]
+	var team := unit_teams[unit_index]
+	var detect_range := get_unit_detect_range(unit_kinds[unit_index])
+	var maximum_distance_sq := detect_range * detect_range
+	if target_id > 0 and _unit_index_by_id.has(target_id):
+		var target_index := int(_unit_index_by_id[target_id])
+		var can_target_air := unit_kinds[unit_index] != UNIT_MELEE
+		if unit_hp[target_index] > 0.0 and unit_teams[target_index] != team and (can_target_air or unit_kinds[target_index] != UNIT_DRAGON) and position.distance_squared_to(unit_positions[target_index]) <= maximum_distance_sq:
+			_found_target_id = target_id
+			_found_unit_index = target_index
+			_found_target_position = unit_positions[target_index]
+			unit_cached_target_positions[unit_index] = _found_target_position
+			unit_cached_target_radii[unit_index] = get_unit_radius(unit_kinds[target_index])
+			return
+	elif target_id < 0:
+		var building_index := _building_index_from_id(-target_id)
+		if building_index >= 0:
+			var building := buildings[building_index]
+			var building_position := Vector2(building.cell) + Vector2(0.5, 0.5)
+			if not bool(building.destroyed) and int(building.team) != team and position.distance_squared_to(building_position) <= maximum_distance_sq:
+				_found_target_id = target_id
+				_found_building_index = building_index
+				_found_target_position = building_position
+				unit_cached_target_positions[unit_index] = building_position
+				unit_cached_target_radii[unit_index] = GameConfig.BUILDING_TARGET_RADIUS
+				return
+	_clear_cached_target(unit_index)
+
+
+func _clear_cached_target(unit_index: int) -> void:
+	unit_target_ids[unit_index] = 0
+	unit_cached_target_positions[unit_index] = Vector2(-1.0, -1.0)
+	unit_cached_target_radii[unit_index] = 0.0
+	if unit_kinds[unit_index] == UNIT_SIEGE:
+		unit_siege_target_positions[unit_index] = Vector2(-1.0, -1.0)
 
 
 func _apply_income(delta: float) -> void:
@@ -690,8 +902,8 @@ func _update_static_defenses(delta: float) -> void:
 		var damage_multiplier := get_elevation_damage_multiplier(origin, unit_positions[target_index])
 		unit_hp[target_index] -= base_damage * damage_multiplier
 		unit_last_attacker_teams[target_index] = int(building.team)
-		_events.append({"type": "hq_shot" if building_kind == BUILDING_HQ else "tower_shot", "team": int(building.team), "origin": origin, "position": unit_positions[target_index]})
-		_events.append({"type": "hit", "team": unit_teams[target_index], "position": unit_positions[target_index], "high_ground": damage_multiplier > 1.0})
+		_queue_shot(SHOT_HQ if building_kind == BUILDING_HQ else SHOT_TOWER, int(building.team), origin, unit_positions[target_index])
+		_queue_hit(unit_ids[target_index], unit_teams[target_index], unit_positions[target_index], damage_multiplier > 1.0)
 		buildings[building_index] = building
 
 
@@ -1038,16 +1250,16 @@ func _attack_target(attacker_index: int, target_unit_index: int, building_index:
 	var attacker_position := unit_positions[attacker_index]
 	if target_unit_index >= 0 and target_unit_index < unit_ids.size():
 		if unit_kind == UNIT_RANGED:
-			_events.append({"type": "ranged_shot", "team": attacker_team, "origin": unit_positions[attacker_index], "position": unit_positions[target_unit_index]})
+			_queue_shot(SHOT_RANGED, attacker_team, unit_positions[attacker_index], unit_positions[target_unit_index])
 		var damage_multiplier := get_elevation_damage_multiplier(attacker_position, unit_positions[target_unit_index])
 		unit_hp[target_unit_index] -= _unit_attack_damage(unit_kind) * damage_multiplier
 		unit_last_attacker_teams[target_unit_index] = attacker_team
-		_events.append({"type": "hit", "team": unit_teams[target_unit_index], "position": unit_positions[target_unit_index], "high_ground": damage_multiplier > 1.0})
+		_queue_hit(unit_ids[target_unit_index], unit_teams[target_unit_index], unit_positions[target_unit_index], damage_multiplier > 1.0)
 		return
 	if building_index >= 0 and building_index < buildings.size():
 		var building_position := Vector2(buildings[building_index].cell) + Vector2(0.5, 0.5)
 		if unit_kind == UNIT_RANGED:
-			_events.append({"type": "ranged_shot", "team": attacker_team, "origin": attacker_position, "position": building_position})
+			_queue_shot(SHOT_RANGED, attacker_team, attacker_position, building_position)
 		apply_building_damage(int(buildings[building_index].id), _unit_attack_damage(unit_kind) * get_elevation_damage_multiplier(attacker_position, building_position), attacker_team)
 
 
@@ -1079,7 +1291,7 @@ func _resolve_siege_impact(impact: Dictionary) -> void:
 				var elevation_multiplier := get_elevation_damage_multiplier(origin, unit_positions[candidate_index])
 				unit_hp[candidate_index] -= damage * elevation_multiplier
 				unit_last_attacker_teams[candidate_index] = team
-				_events.append({"type": "hit", "team": unit_teams[candidate_index], "position": unit_positions[candidate_index], "high_ground": elevation_multiplier > 1.0})
+				_queue_hit(unit_ids[candidate_index], unit_teams[candidate_index], unit_positions[candidate_index], elevation_multiplier > 1.0)
 	for building_index in buildings.size():
 		var building := buildings[building_index]
 		if bool(building.destroyed) or int(building.team) == team:
@@ -1103,7 +1315,7 @@ func _remove_dead_units() -> void:
 			if dead_direction.length_squared() <= 0.000001:
 				dead_direction = unit_lunge_directions[index]
 			var killer_team := unit_last_attacker_teams[index]
-			_events.append({"type": "unit_death", "team": dead_team, "position": dead_position, "unit_kind": dead_kind, "direction": dead_direction})
+			_queue_death(unit_ids[index], dead_team, dead_kind, dead_position, dead_direction)
 			_award_kill(killer_team)
 			_remove_unit_at(index)
 			removed_any = true
@@ -1130,6 +1342,10 @@ func _remove_unit_at(index: int) -> void:
 		unit_velocities[index] = unit_velocities[last]
 		unit_flow_bias_radians[index] = unit_flow_bias_radians[last]
 		unit_siege_target_positions[index] = unit_siege_target_positions[last]
+		unit_cached_target_positions[index] = unit_cached_target_positions[last]
+		unit_cached_target_radii[index] = unit_cached_target_radii[last]
+		unit_cached_steering[index] = unit_cached_steering[last]
+		unit_cached_waiting[index] = unit_cached_waiting[last]
 	unit_ids.resize(last)
 	unit_teams.resize(last)
 	unit_kinds.resize(last)
@@ -1145,6 +1361,10 @@ func _remove_unit_at(index: int) -> void:
 	unit_velocities.resize(last)
 	unit_flow_bias_radians.resize(last)
 	unit_siege_target_positions.resize(last)
+	unit_cached_target_positions.resize(last)
+	unit_cached_target_radii.resize(last)
+	unit_cached_steering.resize(last)
+	unit_cached_waiting.resize(last)
 
 
 func _rebuild_unit_index() -> void:

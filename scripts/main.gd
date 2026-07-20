@@ -67,15 +67,38 @@ func try_build_spawner(cell: Vector2i) -> bool:
 func step_simulation(delta: float) -> void:
 	if simulation == null:
 		return
+	fx.begin_frame()
 	if game_result == "":
 		simulation.tick(delta)
 	_sync_building_views()
 	unit_renderer.advance_visuals(delta)
 	unit_renderer.sync()
-	_consume_events(simulation.drain_events())
+	_consume_event_channels(simulation.drain_event_channels())
 	_update_hud()
 	if game_result == "" and simulation.result != "":
 		_finish_match(simulation.result)
+
+
+func _consume_event_channels(channels: Dictionary) -> void:
+	_consume_events(Array(channels.get("events", [])))
+	var hit_unit_ids: PackedInt32Array = channels.get("hit_unit_ids", PackedInt32Array())
+	var hit_positions: PackedVector2Array = channels.get("hit_positions", PackedVector2Array())
+	var hit_high_ground: PackedByteArray = channels.get("hit_high_ground", PackedByteArray())
+	for index in hit_positions.size():
+		unit_renderer.note_damage(hit_unit_ids[index])
+		fx.show_hit(hit_positions[index], hit_high_ground[index] == 1)
+	var shot_origins: PackedVector2Array = channels.get("shot_origins", PackedVector2Array())
+	var shot_targets: PackedVector2Array = channels.get("shot_targets", PackedVector2Array())
+	var shot_teams: PackedInt32Array = channels.get("shot_teams", PackedInt32Array())
+	for index in shot_origins.size():
+		fx.show_ranged_shot(shot_origins[index], shot_targets[index], shot_teams[index])
+	var death_positions: PackedVector2Array = channels.get("death_positions", PackedVector2Array())
+	var death_teams: PackedInt32Array = channels.get("death_teams", PackedInt32Array())
+	var death_kinds: PackedInt32Array = channels.get("death_kinds", PackedInt32Array())
+	var death_directions: PackedVector2Array = channels.get("death_directions", PackedVector2Array())
+	for index in death_positions.size():
+		unit_renderer.queue_death(death_positions[index], death_teams[index], death_kinds[index], death_directions[index])
+		fx.show_unit_death(death_positions[index], death_teams[index])
 
 
 func _consume_events(events: Array) -> void:

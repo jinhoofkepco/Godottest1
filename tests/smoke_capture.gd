@@ -14,6 +14,7 @@ const OUTPUTS := [
 	"res://build/smoke_high_ground_combat.png",
 	"res://build/smoke_large_army.png",
 	"res://build/smoke_siege_impact.png",
+	"res://build/smoke_siege_closeup.png",
 ]
 
 
@@ -51,7 +52,7 @@ func _run() -> void:
 			return
 		main.queue_free()
 		await process_frame
-	print("SMOKE CAPTURE PASS: opening / advantage / disadvantage / cluster / persistent flank / flow split / infantry closeup / visual hierarchy / elevation overview / high-ground combat / 200-unit army / SIEGE impact (540x960)")
+	print("SMOKE CAPTURE PASS: opening / advantage / disadvantage / cluster / persistent flank / flow split / infantry closeup / visual hierarchy / elevation overview / high-ground combat / 200-unit army / SIEGE impact / SIEGE+building closeup (540x960)")
 	quit(0)
 
 
@@ -104,8 +105,10 @@ func _stage_scenario(main: Node, scenario: int) -> bool:
 		return _stage_high_ground_combat(main)
 	elif scenario == 10:
 		return _stage_large_army(main)
-	else:
+	elif scenario == 11:
 		return _stage_siege_impact(main)
+	else:
+		return _stage_siege_closeup(main)
 	return true
 
 
@@ -226,8 +229,9 @@ func _stage_visual_hierarchy(main: Node) -> bool:
 		var unit_index: int = simulation.unit_ids.find(unit_id)
 		if unit_index >= 0:
 			simulation.unit_hp[unit_index] *= 0.58
+			main.unit_renderer.note_damage(unit_id)
 	main.unit_renderer.sync()
-	main.hud.show_message("MUTED FIELD // SHADED ACTORS", GameConfig.COLOR_TEAL)
+	main.hud.show_message("GROUNDED BUILDINGS // SHADED ACTORS", GameConfig.COLOR_TEAL)
 	main.fx.show_ranged_shot(Vector2(8.5, middle_row + 1.7), Vector2(10.5, middle_row - 1.2), simulation.TEAM_ALLY)
 	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, middle_row), 3.15)
 	return dragon_id > 0 and not damaged_ids.is_empty() and main.unit_renderer.get_hp_bar_alpha(damaged_ids[0]) > 0.0
@@ -314,9 +318,35 @@ func _stage_siege_impact(main: Node) -> bool:
 	main.unit_renderer.sync()
 	main.fx.show_siege_projectile(center + Vector2(-1.2, 3.0), center, simulation.TEAM_ALLY, GameConfig.SIEGE_FLIGHT_SECONDS)
 	main.fx.show_siege_impact(center + Vector2(1.3, 0.2), simulation.TEAM_ALLY, GameConfig.SIEGE_BLAST_RADIUS)
-	main.hud.show_message("SIEGE // TELEGRAPH + ARC + BLAST", GameConfig.COLOR_ORANGE)
+	main.hud.show_message("WHEELED SIEGE // TELEGRAPH + ARC", GameConfig.COLOR_ORANGE)
 	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), 3.4)
 	return simulation.unit_kinds.count(simulation.UNIT_SIEGE) == 3 and main.fx.siege_impact_feedback_count == 1
+
+
+func _stage_siege_closeup(main: Node) -> bool:
+	var simulation = main.simulation
+	var center := Vector2(float(GameConfig.GRID_COLUMNS) * 0.5, float(GameConfig.GRID_ROWS) * 0.5)
+	var directions := [Vector2.UP, Vector2.RIGHT, Vector2.DOWN, Vector2.LEFT]
+	for index in directions.size():
+		var team: int = simulation.TEAM_ALLY if index < 2 else simulation.TEAM_ENEMY
+		var position := center + Vector2(float(index % 2) * 1.25 - 0.65, float(index / 2) * 1.4 - 0.7)
+		var unit_id: int = simulation.spawn_unit(team, position, simulation.UNIT_SIEGE)
+		var unit_index: int = simulation.unit_ids.find(unit_id)
+		simulation.unit_positions[unit_index] = position
+		simulation.unit_velocities[unit_index] = directions[index] * GameConfig.SIEGE_UNIT_SPEED
+		simulation.unit_states[unit_index] = simulation.STATE_ADVANCE
+		# Keep the art close-up free of auto-fired telegraphs; impact readability
+		# is covered by the preceding dedicated SIEGE scenario.
+		simulation.unit_cooldowns[unit_index] = 999.0
+	var blue_building := Vector2i(GameConfig.GRID_COLUMNS / 2 - 3, GameConfig.GRID_ROWS / 2 + 2)
+	var red_building := Vector2i(GameConfig.GRID_COLUMNS / 2 + 3, GameConfig.GRID_ROWS / 2 - 2)
+	simulation.add_building(simulation.TEAM_ALLY, simulation.BUILDING_SPAWNER, blue_building, simulation.UNIT_SIEGE)
+	simulation.add_building(simulation.TEAM_ENEMY, simulation.BUILDING_DRAGON_LAIR, red_building, simulation.UNIT_DRAGON)
+	main._sync_building_views()
+	main.unit_renderer.sync()
+	main.hud.show_message("MOBILE CATAPULT // GROUNDED BASES", GameConfig.COLOR_TEAL)
+	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), 6.0)
+	return simulation.unit_kinds.count(simulation.UNIT_SIEGE) == 4
 
 
 func _nearest_clear_cell(simulation, desired: Vector2i, excluded: Array = []) -> Vector2i:

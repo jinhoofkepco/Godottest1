@@ -38,9 +38,11 @@ func run(tree: SceneTree) -> Array[String]:
 	await _test_scene_contract(tree, main_scene)
 	await _test_elevated_projection_and_feedback(tree, main_scene)
 	await _test_dynamic_building(tree, main_scene)
+	await _test_building_grounding(tree, main_scene)
 	await _test_production_and_feedback(tree, main_scene)
 	await _test_ranged_presentation(tree, main_scene)
 	await _test_damage_hp_bar_policy(tree, main_scene)
+	await _test_packed_event_consumption_and_fx_budget(tree, main_scene)
 	await _test_map_view_transform_and_input(tree, main_scene)
 	await _test_emulated_mouse_stream_filter(tree, main_scene)
 	await _test_finished_map_interaction_gate(tree, main_scene)
@@ -66,12 +68,39 @@ func _test_damage_hp_bar_policy(tree: SceneTree, main_scene: PackedScene) -> voi
 	var unit_index: int = main.simulation.unit_ids.find(unit_id)
 	main.simulation.unit_hp[unit_index] -= 1.0
 	main.unit_renderer.sync()
+	_expect(is_zero_approx(main.unit_renderer.get_hp_bar_alpha(unit_id)), "HP polling no longer scans every living unit each frame")
+	main.unit_renderer.note_damage(unit_id)
 	_expect(is_equal_approx(main.unit_renderer.get_hp_bar_alpha(unit_id), 1.0), "taking damage shows the HP bar at full alpha")
 	main.unit_renderer.advance_visuals(2.7)
 	var fade_alpha: float = main.unit_renderer.get_hp_bar_alpha(unit_id)
 	_expect(fade_alpha > 0.0 and fade_alpha < 1.0, "unit HP bar fades during the end of its three-second window")
 	main.unit_renderer.advance_visuals(0.4)
 	_expect(is_zero_approx(main.unit_renderer.get_hp_bar_alpha(unit_id)), "unit HP bar disappears after three seconds")
+	main.queue_free()
+	await tree.process_frame
+
+
+func _test_packed_event_consumption_and_fx_budget(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	_expect(main.has_method("_consume_event_channels"), "main consumes packed simulation event channels")
+	_expect(main.fx.has_method("begin_frame"), "FX exposes a per-frame budget reset")
+	var properties := _property_names(main.fx)
+	_expect(properties.has("minor_effects_dropped_this_frame"), "FX reports dropped minor feedback")
+	if not main.fx.has_method("begin_frame"):
+		main.queue_free()
+		await tree.process_frame
+		return
+	main.fx.begin_frame()
+	var accepted_before: int = main.fx.hit_feedback_count
+	for index in GameConfig.FX_MAX_PER_FRAME + 5:
+		main.fx.show_hit(Vector2(5.5, 20.5))
+	_expect(main.fx.hit_feedback_count - accepted_before == GameConfig.FX_MAX_PER_FRAME, "minor hit feedback is capped at 40 creations per frame")
+	_expect(main.fx.minor_effects_dropped_this_frame == 5, "FX records the five dropped minor effects")
+	var siege_before: int = main.fx.siege_impact_feedback_count
+	main.fx.show_siege_impact(Vector2(5.5, 20.5), main.simulation.TEAM_ALLY, GameConfig.SIEGE_BLAST_RADIUS)
+	_expect(main.fx.siege_impact_feedback_count == siege_before + 1, "SIEGE impact bypasses the minor-effect cap")
 	main.queue_free()
 	await tree.process_frame
 
@@ -96,6 +125,24 @@ func _test_grid_draw_ownership_snapshot(tree: SceneTree) -> void:
 	await tree.process_frame
 
 
+func _test_building_grounding(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = main_scene.instantiate()
+	tree.root.add_child(main)
+	await tree.process_frame
+	main.simulation.add_building(main.simulation.TEAM_ALLY, main.simulation.BUILDING_SPAWNER, Vector2i(4, 36), main.simulation.UNIT_MELEE)
+	main.simulation.add_building(main.simulation.TEAM_ALLY, main.simulation.BUILDING_SPAWNER, Vector2i(6, 36), main.simulation.UNIT_RANGED)
+	main.simulation.add_building(main.simulation.TEAM_ALLY, main.simulation.BUILDING_DEFENSE_TOWER, Vector2i(8, 41))
+	main.simulation.add_building(main.simulation.TEAM_ALLY, main.simulation.BUILDING_DRAGON_LAIR, Vector2i(14, 36), main.simulation.UNIT_DRAGON)
+	main._sync_building_views()
+	for view in main.building_views.values():
+		_expect(view.has_method("get_ground_contact_y"), "every building exposes its grounded contact line")
+		_expect(view.has_method("get_sprite_opaque_bottom_y"), "every building resolves its opaque sprite bottom")
+		if view.has_method("get_ground_contact_y") and view.has_method("get_sprite_opaque_bottom_y"):
+			_expect(is_equal_approx(view.get_sprite_opaque_bottom_y(), view.get_ground_contact_y()), "building opaque bottom touches its tile contact line")
+	main.queue_free()
+	await tree.process_frame
+
+
 func _test_scene_contract(tree: SceneTree, main_scene: PackedScene) -> void:
 	var main = main_scene.instantiate()
 	tree.root.add_child(main)
@@ -108,6 +155,24 @@ func _test_scene_contract(tree: SceneTree, main_scene: PackedScene) -> void:
 	main.unit_renderer.sync()
 	_expect(main.unit_renderer.get_child_count() == 4, "spawning data creates only three unit batches plus one shared shadow batch")
 	_expect(main.unit_renderer.get_shadow_batch_count() == 1, "all units share one blob-shadow MultiMesh")
+	_expect(main.unit_renderer._infantry_units.multimesh.custom_aabb.size.x > 0.0, "bulk unit batch owns an explicit culling AABB")
+	_expect(main.unit_renderer.has_method("reset_bulk_upload_count"), "renderer exposes bulk-upload instrumentation")
+	if main.unit_renderer.has_method("reset_bulk_upload_count"):
+		main.unit_renderer.reset_bulk_upload_count()
+		main.unit_renderer.sync()
+		_expect(main.unit_renderer.bulk_upload_count == 4, "one sync performs exactly four MultiMesh buffer assignments")
+		_expect(main.unit_renderer.last_sync_usec > 0, "renderer records bulk sync duration")
+	var layout_mesh := MultiMesh.new()
+	layout_mesh.transform_format = MultiMesh.TRANSFORM_2D
+	layout_mesh.use_colors = true
+	layout_mesh.use_custom_data = true
+	var layout_buffer: PackedFloat32Array = main.unit_renderer._new_multimesh_buffer(layout_mesh, 1)
+	var layout_transform := Transform2D(0.37, Vector2(1.2, 0.8), 0.11, Vector2(7.0, 9.0))
+	main.unit_renderer._write_multimesh_record(layout_buffer, layout_mesh, 0, layout_transform, Color.WHITE, Color.TRANSPARENT)
+	_expect(is_equal_approx(layout_buffer[0], layout_transform.x.x), "bulk 2D record stores basis x.x first")
+	_expect(is_equal_approx(layout_buffer[1], layout_transform.y.x), "bulk 2D record stores basis y.x second")
+	_expect(is_equal_approx(layout_buffer[4], layout_transform.x.y), "bulk 2D record stores basis x.y on the second row")
+	_expect(is_equal_approx(layout_buffer[5], layout_transform.y.y), "bulk 2D record stores basis y.y on the second row")
 	_expect(main.grid.has_method("has_elevation_side_walls") and main.grid.has_elevation_side_walls(), "grid renders dedicated elevation side walls instead of prop blockers")
 	_expect(main.buildings_layer.y_sort_enabled, "low-count building layer uses y sorting")
 	_expect(main.fx.z_index > main.unit_renderer.z_index, "FX overlay stays above units and buildings")
@@ -189,7 +254,10 @@ func _test_production_and_feedback(tree: SceneTree, main_scene: PackedScene) -> 
 	var red_id: int = main.simulation.spawn_unit(main.simulation.TEAM_ENEMY, Vector2(4.5, 10.2))
 	var blue_id: int = main.simulation.spawn_unit(main.simulation.TEAM_ALLY, Vector2(4.5, 10.7))
 	main.simulation.unit_hp[main.simulation.unit_ids.find(blue_id)] = 0.5
-	main.step_simulation(1.0 / 30.0)
+	for tick_index in GameConfig.DECISION_GROUP_COUNT:
+		main.step_simulation(1.0 / 30.0)
+		if main.fx.unit_death_feedback_count > 0:
+			break
 	_expect(red_id > 0 and main.fx.hit_feedback_count > 0, "melee strike routes hit spark")
 	_expect(main.fx.unit_death_feedback_count > 0, "lethal strike routes death pop")
 	main.queue_free()

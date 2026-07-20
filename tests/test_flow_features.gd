@@ -112,12 +112,16 @@ func _test_wait_enter_and_release() -> void:
 	simulation.unit_positions[follower] = Vector2(10.5, 29.88)
 	simulation.unit_velocities[leader] = Vector2.ZERO
 	simulation.rebuild_flow_fields()
-	simulation.tick(1.0 / 30.0)
+	for tick_index in 2:
+		simulation.tick(1.0 / 30.0)
+		simulation.unit_positions[leader] = Vector2(10.5, 29.5)
+		simulation.unit_velocities[leader] = Vector2.ZERO
 	_expect(simulation.unit_states[follower] == simulation.STATE_WAIT, "slow ally ahead puts follower into WAIT")
 	simulation.unit_positions[leader] = Vector2(13.5, 29.5)
 	simulation.rebuild_flow_fields()
-	simulation.tick(1.0 / 30.0)
-	_expect(simulation.unit_states[follower] != simulation.STATE_WAIT, "cleared lane releases WAIT immediately")
+	for tick_index in simulation.config.DECISION_GROUP_COUNT:
+		simulation.tick(1.0 / 30.0)
+	_expect(simulation.unit_states[follower] != simulation.STATE_WAIT, "cleared lane releases WAIT on its next staggered decision")
 
 
 func _test_defense_tower_rules_and_attack() -> void:

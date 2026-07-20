@@ -120,10 +120,16 @@ func _validate_world_atlas() -> bool:
 		return false
 	var required_sprites := ["blue_hq", "red_hq", "blue_melee_spawner", "red_melee_spawner", "blue_ranged_spawner", "red_ranged_spawner", "blue_tower", "red_tower", "blue_dragon_lair", "red_dragon_lair", "rock_a", "rock_b", "rock_c", "crate"]
 	var sprites: Dictionary = metadata.get("sprites", {})
+	var opaque_bounds: Dictionary = metadata.get("opaque_bounds", {})
 	for sprite_name in required_sprites:
 		if not sprites.has(sprite_name):
 			_fail("world atlas is missing sprite %s" % sprite_name)
 			return false
+		if sprite_name.begins_with("blue_") or sprite_name.begins_with("red_"):
+			var bounds: Array = opaque_bounds.get(sprite_name, [])
+			if bounds.size() != 4 or int(bounds[2]) <= 0 or int(bounds[3]) <= 0 or int(bounds[1]) + int(bounds[3]) > 128:
+				_fail("world building sprite lacks valid opaque bounds: %s" % sprite_name)
+				return false
 	var world_image := Image.load_from_file(ProjectSettings.globalize_path(WORLD_ATLAS_PATH))
 	if world_image == null or world_image.is_empty() or world_image.get_size() != Vector2i(512, 512):
 		_fail("world atlas must be a 512x512 image")
@@ -156,6 +162,9 @@ func _validate_siege_atlas() -> bool:
 	var metadata = JSON.parse_string(metadata_file.get_as_text())
 	if not metadata is Dictionary or int(metadata.get("directions", 0)) != 8 or int(metadata.get("frames_per_direction", 0)) != 16:
 		_fail("SIEGE metadata must describe 8 directions x 16 frames")
+		return false
+	if String(metadata.get("silhouette", "")) != "mobile_wheeled_catapult":
+		_fail("SIEGE silhouette is not identified as a mobile wheeled catapult")
 		return false
 	if Vector2i(int(metadata.atlas_size[0]), int(metadata.atlas_size[1])) != Vector2i(1536, 1536):
 		_fail("SIEGE atlas must be a 1536 square texture-array layer")
