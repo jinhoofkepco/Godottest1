@@ -10,6 +10,7 @@ func run() -> Array[String]:
 	_test_expanded_grid_and_terrain()
 	_test_grid_projection_and_dynamic_building()
 	_test_simulation_contract()
+	_test_profiling_contract()
 	_test_initial_territory()
 	_test_build_and_economy()
 	_test_ranged_data_and_combat()
@@ -29,6 +30,23 @@ func run() -> Array[String]:
 	_test_balance_paths()
 	_test_bucket_search_scale()
 	return failures
+
+
+func _test_profiling_contract() -> void:
+	var simulation = _new_simulation()
+	if simulation == null:
+		return
+	var properties := _property_names(simulation)
+	for property_name in [
+		"profile_target_usec",
+		"profile_separation_usec",
+		"profile_territory_usec",
+		"profile_event_usec",
+		"profile_tick_usec",
+		"profile_tick_count",
+	]:
+		_expect(properties.has(property_name), "performance pass exposes %s" % property_name)
+	_expect(simulation.has_method("reset_profile_counters"), "performance counters can be reset for repeatable stress samples")
 
 
 func _test_grid_projection_and_dynamic_building() -> void:

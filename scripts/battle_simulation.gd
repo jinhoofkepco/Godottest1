@@ -56,6 +56,13 @@ var target_candidate_checks := 0
 var aoe_candidate_checks := 0
 var siege_impacts_resolved_this_tick := 0
 var siege_target_searches := 0
+var profiling_enabled := false
+var profile_target_usec := 0
+var profile_separation_usec := 0
+var profile_territory_usec := 0
+var profile_event_usec := 0
+var profile_tick_usec := 0
+var profile_tick_count := 0
 var siege_impacts: Array[Dictionary] = []
 var enemy_flow: FlowField
 var ally_flow: FlowField
@@ -128,6 +135,7 @@ func reset() -> void:
 	aoe_candidate_checks = 0
 	siege_impacts_resolved_this_tick = 0
 	siege_target_searches = 0
+	reset_profile_counters()
 	siege_impacts.clear()
 	_next_unit_id = 1
 	_next_building_id = 1
@@ -156,6 +164,15 @@ func reset() -> void:
 	ally_flow = FlowFieldScript.new(GameConfig.GRID_COLUMNS, GameConfig.GRID_ROWS)
 	rebuild_flow_fields()
 	recalculate_territory(false)
+
+
+func reset_profile_counters() -> void:
+	profile_target_usec = 0
+	profile_separation_usec = 0
+	profile_territory_usec = 0
+	profile_event_usec = 0
+	profile_tick_usec = 0
+	profile_tick_count = 0
 
 
 func spawn_unit(team: int, position: Vector2, unit_kind: int = UNIT_MELEE) -> int:
@@ -502,6 +519,7 @@ func drain_events() -> Array:
 
 
 func _step(delta: float) -> void:
+	var tick_started := Time.get_ticks_usec() if profiling_enabled else 0
 	_apply_income(delta)
 	time_remaining = maxf(0.0, time_remaining - delta)
 	_update_enemy_ai(delta)
@@ -509,7 +527,10 @@ func _step(delta: float) -> void:
 	_rebuild_buckets()
 	aoe_candidate_checks = 0
 	siege_impacts_resolved_this_tick = 0
+	var event_started := Time.get_ticks_usec() if profiling_enabled else 0
 	advance_siege_impacts(delta)
+	if profiling_enabled:
+		profile_event_usec += Time.get_ticks_usec() - event_started
 	_congestion_rebuild_timer -= delta
 	if _congestion_rebuild_timer <= 0.0:
 		_rebuild_flow_for_team(_next_flow_rebuild_team)
@@ -522,6 +543,7 @@ func _step(delta: float) -> void:
 			continue
 		unit_cooldowns[index] = maxf(0.0, unit_cooldowns[index] - delta)
 		unit_lunge_timers[index] = maxf(0.0, unit_lunge_timers[index] - delta)
+		var target_started := Time.get_ticks_usec() if profiling_enabled else 0
 		if unit_kinds[index] == UNIT_SIEGE:
 			if unit_cooldowns[index] <= 0.0:
 				_find_siege_target(index)
@@ -530,6 +552,8 @@ func _step(delta: float) -> void:
 				_restore_siege_target(index)
 		else:
 			_find_target(index)
+		if profiling_enabled:
+			profile_target_usec += Time.get_ticks_usec() - target_started
 		unit_target_ids[index] = _found_target_id
 		var position := unit_positions[index]
 		var attack_range := _unit_attack_range(unit_kinds[index], position)
@@ -548,6 +572,7 @@ func _step(delta: float) -> void:
 				else:
 					_attack_target(index, _found_unit_index, _found_building_index)
 		else:
+			var separation_started := Time.get_ticks_usec() if profiling_enabled else 0
 			var advance_direction := _advance_direction(index)
 			var seek_direction := Vector2.ZERO
 			if _found_target_id != 0:
@@ -571,9 +596,20 @@ func _step(delta: float) -> void:
 				unit_positions[index] = _move_flying(position, unit_velocities[index] * delta)
 			else:
 				unit_positions[index] = _move_without_entering_blocked(position, unit_velocities[index] * delta)
+			if profiling_enabled:
+				profile_separation_usec += Time.get_ticks_usec() - separation_started
+	event_started = Time.get_ticks_usec() if profiling_enabled else 0
 	_remove_dead_units()
+	if profiling_enabled:
+		profile_event_usec += Time.get_ticks_usec() - event_started
+	var territory_started := Time.get_ticks_usec() if profiling_enabled else 0
 	recalculate_territory()
+	if profiling_enabled:
+		profile_territory_usec += Time.get_ticks_usec() - territory_started
 	_check_terminal_state()
+	if profiling_enabled:
+		profile_tick_usec += Time.get_ticks_usec() - tick_started
+		profile_tick_count += 1
 
 
 func _apply_income(delta: float) -> void:
