@@ -12,15 +12,20 @@ public partial class BattleSimulation : Node
     public const int TeamEnemy = 1;
     public const int TeamAlly = 2;
     public const int BuildingHq = 0;
-    public const int BuildingBarracks = 1;
+    public const int BuildingSpawner = 1;
     public const int BuildingDefenseTower = 2;
     public const int BuildingDragonLair = 3;
+    public const int BuildingRallyPoint = 4;
     public const int UnitMelee = 0;
     public const int UnitRanged = 1;
     public const int UnitDragon = 2;
     public const int UnitSiege = 3;
+    public const int BuildMeleeSpawner = 0;
+    public const int BuildRangedSpawner = 1;
     public const int BuildDefenseTower = 2;
-    public const int BuildBarracks = 0;
+    public const int BuildDragonLair = 3;
+    public const int BuildSiegeSpawner = 4;
+    public const int BuildRallyPoint = 5;
     public const int StateAdvance = 0;
     public const int StateAttack = 1;
     public const int StateWait = 2;
@@ -46,14 +51,10 @@ public partial class BattleSimulation : Node
         public float SpawnTimer;
         public float AttackCooldown;
         public bool Destroyed;
-        public int MeleeCount;
-        public int RangedCount;
-        public int SiegeCount;
-        public int DragonCount;
+        public int RallyMode;
         public int Formation;
         public int ActiveLegionId;
-        public Vector2 Waypoint;
-        public bool HasWaypoint;
+        public int WaitingCount;
     }
 
     private struct SiegeImpact
@@ -104,6 +105,7 @@ public partial class BattleSimulation : Node
     private readonly float[] _hpBarTimers = new float[MaxUnits];
     private readonly byte[] _cachedWaiting = new byte[MaxUnits];
     private readonly int[] _legionIds = new int[MaxUnits];
+    private readonly int[] _rallyPointIds = new int[MaxUnits];
     private readonly Vector2[] _slotOffsets = new Vector2[MaxUnits];
     private int _unitCount;
 
@@ -147,10 +149,6 @@ public partial class BattleSimulation : Node
     private int _enemyGold;
     private float _allyIncomeRemainder;
     private float _enemyIncomeRemainder;
-    private float _enemyBuildTimer;
-    private int _enemyBuildCursor;
-    private int _enemyNextUnitKind;
-    private bool _enemyAiEnabled = true;
     private float _congestionTimer;
     private int _nextFlowTeam;
     private float _territoryTimer;
@@ -239,10 +237,7 @@ public partial class BattleSimulation : Node
         _enemyGold = BattleConfig.EnemyStartGold;
         _allyIncomeRemainder = 0f;
         _enemyIncomeRemainder = 0f;
-        _enemyBuildTimer = BattleConfig.EnemyBuildInterval;
-        _enemyBuildCursor = 0;
-        _enemyNextUnitKind = UnitMelee;
-        _enemyAiEnabled = true;
+        ResetAiControllers();
         _congestionTimer = 0f;
         _nextFlowTeam = TeamEnemy;
         _territoryTimer = BattleConfig.TerritoryUpdateInterval;
@@ -307,9 +302,7 @@ public partial class BattleSimulation : Node
 
     public bool TryBuild(int team, Vector2I cell, int buildKind)
     {
-        if (buildKind == BuildBarracks)
-            return TryBuildBarracks(team, cell, PresetTemplate(0), FormationLine);
-        if (_result.Length != 0 || buildKind != BuildDefenseTower || !Valid(cell) || IsBlocked(cell))
+        if (_result.Length != 0 || buildKind < BuildMeleeSpawner || buildKind > BuildRallyPoint || !Valid(cell) || IsBlocked(cell))
             return false;
         if (_ownership[Index(cell)] != team || BuildingAt(cell) >= 0)
             return false;
@@ -328,8 +321,13 @@ public partial class BattleSimulation : Node
         }
         else return false;
 
-        int kind = BuildingDefenseTower;
+        int kind = BuildingSpawner;
         int unitKind = UnitMelee;
+        if (buildKind == BuildRangedSpawner) unitKind = UnitRanged;
+        else if (buildKind == BuildSiegeSpawner) unitKind = UnitSiege;
+        else if (buildKind == BuildDefenseTower) kind = BuildingDefenseTower;
+        else if (buildKind == BuildDragonLair) { kind = BuildingDragonLair; unitKind = UnitDragon; }
+        else if (buildKind == BuildRallyPoint) kind = BuildingRallyPoint;
         int id = AddBuildingInternal(team, kind, cell, unitKind);
         if (id == 0)
         {
@@ -373,6 +371,7 @@ public partial class BattleSimulation : Node
         _cachedWaiting[index] = 0;
         _hpBarTimers[index] = 0f;
         _legionIds[index] = legionId;
+        _rallyPointIds[index] = -1;
         _slotOffsets[index] = slotOffset;
         _indexById[id] = index;
         return id;
@@ -384,21 +383,27 @@ public partial class BattleSimulation : Node
             return 0;
         float maximumHp = kind switch
         {
-            BuildingBarracks => BattleConfig.BarracksMaxHp,
+            BuildingSpawner => BattleConfig.SpawnerMaxHp,
             BuildingDefenseTower => BattleConfig.DefenseTowerMaxHp,
             BuildingDragonLair => BattleConfig.DragonLairMaxHp,
+            BuildingRallyPoint => BattleConfig.RallyPointMaxHp,
             _ => BattleConfig.HqMaxHp,
         };
-        float production = kind == BuildingBarracks ? BattleConfig.BarracksProductionInterval : 0f;
+        float production = kind == BuildingDragonLair ? BattleConfig.DragonProductionInterval
+            : kind == BuildingSpawner && unitKind == UnitSiege ? BattleConfig.SiegeProductionInterval
+            : kind == BuildingSpawner ? BattleConfig.SpawnerProductionInterval : 0f;
         int id = _nextBuildingId++;
         _buildings[_buildingCount++] = new Building
         {
-            Id = id, Team = team, Kind = kind, UnitKind = unitKind, Cell = cell,
-            Hp = maximumHp, MaxHp = maximumHp, SpawnTimer = production,
-            MeleeCount = kind == BuildingBarracks ? 7 : 0,
-            RangedCount = kind == BuildingBarracks ? 4 : 0,
-            SiegeCount = kind == BuildingBarracks ? 1 : 0,
-            DragonCount = 0,
+            Id = id,
+            Team = team,
+            Kind = kind,
+            UnitKind = unitKind,
+            Cell = cell,
+            Hp = maximumHp,
+            MaxHp = maximumHp,
+            SpawnTimer = production,
+            RallyMode = RallyAdvance,
             Formation = FormationLine,
             ActiveLegionId = -1,
         };

@@ -12,6 +12,7 @@ const BUILDING_HQ := 0
 const BUILDING_SPAWNER := 1
 const BUILDING_DEFENSE_TOWER := 2
 const BUILDING_DRAGON_LAIR := 3
+const BUILDING_RALLY_POINT := 4
 const UNIT_MELEE := 0
 const UNIT_RANGED := 1
 const UNIT_SIEGE := 3
@@ -23,6 +24,9 @@ var unit_kind := UNIT_MELEE
 var cell := Vector2i.ZERO
 var hp := 1.0
 var max_hp := 1.0
+var rally_mode := 0
+var formation := 0
+var waiting_count := 0
 var _flash_left := 0.0
 var _collapse_left := 0.0
 static var _opaque_bounds_by_name: Dictionary = {}
@@ -35,6 +39,9 @@ func setup(board: GridBoard, record: Dictionary) -> void:
 	kind = int(record.kind)
 	unit_kind = int(record.get("unit_kind", UNIT_MELEE))
 	cell = Vector2i(record.cell)
+	if kind == BUILDING_RALLY_POINT:
+		z_as_relative = false
+		z_index = 45
 	position = board.cell_to_world(cell)
 	update_from_data(record)
 	queue_redraw()
@@ -43,6 +50,9 @@ func setup(board: GridBoard, record: Dictionary) -> void:
 func update_from_data(record: Dictionary) -> void:
 	hp = float(record.hp)
 	max_hp = float(record.max_hp)
+	rally_mode = int(record.get("rally_mode", 0))
+	formation = int(record.get("formation", 0))
+	waiting_count = int(record.get("waiting_count", 0))
 	queue_redraw()
 
 
@@ -72,19 +82,42 @@ func _draw() -> void:
 	var color := GameConfig.COLOR_ALLY.lightened(0.18) if team == TEAM_ALLY else GameConfig.COLOR_ENEMY.lightened(0.12)
 	_draw_ground_plinth(color)
 	_draw_soft_shadow()
+	if kind == BUILDING_RALLY_POINT:
+		_draw_rally_point(color)
+		_draw_hp_bar(color, -40.0)
+		return
 	var destination := _sprite_destination()
 	var source := _sprite_region()
 	var modulate := Color(1.85, 1.85, 1.85, 1.0) if _flash_left > 0.0 else Color.WHITE
 	draw_texture_rect_region(WORLD_ATLAS, destination, source, modulate)
-	var ratio := clampf(hp / maxf(max_hp, 1.0), 0.0, 1.0)
 	var bounds := _sprite_opaque_bounds()
 	var bar_y := destination.position.y + float(bounds.position.y) / float(GameConfig.WORLD_ATLAS_CELL_SIZE) * destination.size.y - 7.0
-	draw_rect(Rect2(Vector2(-22, bar_y), Vector2(44, 5)), Color("0b101b"))
-	draw_rect(Rect2(Vector2(-21, bar_y + 1.0), Vector2(42 * ratio, 3)), color.lightened(0.3))
+	_draw_hp_bar(color, bar_y)
 
 
 func uses_baked_sprite() -> bool:
-	return WORLD_ATLAS != null
+	return WORLD_ATLAS != null and kind != BUILDING_RALLY_POINT
+
+
+func _draw_rally_point(color: Color) -> void:
+	var ground_y := get_ground_contact_y()
+	draw_line(Vector2(-7, ground_y), Vector2(-7, ground_y - 34), Color("d8e2ef"), 3.0, true)
+	if rally_mode == 0:
+		draw_colored_polygon(PackedVector2Array([Vector2(-5, ground_y - 33), Vector2(21, ground_y - 26), Vector2(-5, ground_y - 18)]), color.lightened(0.25))
+		draw_line(Vector2(6, ground_y - 10), Vector2(20, ground_y - 10), color.lightened(0.45), 3.0, true)
+		draw_colored_polygon(PackedVector2Array([Vector2(20, ground_y - 15), Vector2(29, ground_y - 10), Vector2(20, ground_y - 5)]), color.lightened(0.45))
+	else:
+		draw_circle(Vector2(3, ground_y - 19), 17.0, Color(color, 0.18))
+		draw_arc(Vector2(3, ground_y - 19), 17.0, 0.0, TAU, 24, color.lightened(0.35), 3.0, true)
+		draw_colored_polygon(PackedVector2Array([Vector2(3, ground_y - 31), Vector2(14, ground_y - 26), Vector2(11, ground_y - 12), Vector2(3, ground_y - 5), Vector2(-5, ground_y - 12), Vector2(-8, ground_y - 26)]), Color(color.darkened(0.18), 0.92))
+	var label := "%d" % waiting_count
+	draw_string(ThemeDB.fallback_font, Vector2(-7 - label.length() * 3, ground_y + 19), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color.WHITE)
+
+
+func _draw_hp_bar(color: Color, bar_y: float) -> void:
+	var ratio := clampf(hp / maxf(max_hp, 1.0), 0.0, 1.0)
+	draw_rect(Rect2(Vector2(-22, bar_y), Vector2(44, 5)), Color("0b101b"))
+	draw_rect(Rect2(Vector2(-21, bar_y + 1.0), Vector2(42 * ratio, 3)), color.lightened(0.3))
 
 
 func _sprite_index() -> int:

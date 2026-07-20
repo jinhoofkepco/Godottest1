@@ -9,7 +9,7 @@ var failures: Array[String] = []
 func run_all(tree: SceneTree) -> Array[String]:
 	run_siege_contracts()
 	await _test_determinism_fixture(tree)
-	await _test_legion_production_and_render_flag(tree)
+	await _test_spawner_rally_and_render_flag(tree)
 	await _test_board_delta_boundary(tree)
 	_test_bulk_boundary_contract()
 	return failures
@@ -18,7 +18,13 @@ func run_all(tree: SceneTree) -> Array[String]:
 func run_siege_contracts() -> Array[String]:
 	_expect(is_equal_approx(GameConfig.SIEGE_UNIT_ATTACK_RANGE, 7.0), "SIEGE maximum range is doubled to 7.0 cells")
 	_expect(is_equal_approx(GameConfig.SIEGE_UNIT_ATTACK_DAMAGE, 55.8), "SIEGE base damage is multiplied by 1.8")
-	_expect(is_equal_approx(GameConfig.BARRACKS_PRODUCTION_INTERVAL, 1.2), "all legion roles share the barracks 1.2 second production cadence")
+	_expect(is_equal_approx(GameConfig.MATCH_DURATION, 420.0), "the slower match timer is seven minutes")
+	_expect(is_equal_approx(GameConfig.OCCUPANCY_WIN_RATIO, 0.92), "territory victory requires ninety-two percent")
+	_expect(is_equal_approx(GameConfig.PASSIVE_INCOME_PER_SECOND, 2.25), "passive income is reduced to seventy-five percent")
+	_expect(is_equal_approx(GameConfig.HQ_MAX_HP, 2400.0), "both HQs use the locked 2400 HP")
+	_expect(is_equal_approx(GameConfig.UNIT_SPEED, 1.015) and is_equal_approx(GameConfig.RANGED_UNIT_SPEED, 0.875) and is_equal_approx(GameConfig.SIEGE_UNIT_SPEED, 0.56) and is_equal_approx(GameConfig.DRAGON_UNIT_SPEED, 1.19), "all class speeds are reduced to seventy percent")
+	_expect(is_equal_approx(GameConfig.SPAWNER_PRODUCTION_INTERVAL, 2.88) and is_equal_approx(GameConfig.SIEGE_PRODUCTION_INTERVAL, 8.64) and is_equal_approx(GameConfig.DRAGON_PRODUCTION_INTERVAL, 22.5), "restored spawner production periods are slowed by 1.8x")
+	_expect(GameConfig.RALLY_LAUNCH_SIZE == 10 and GameConfig.RALLY_DEFENSE_CAPACITY == 14, "rally launch and defense thresholds are fixed at ten and fourteen")
 	var renderer_source := FileAccess.get_file_as_string("res://scripts/unit_renderer.gd")
 	_expect(renderer_source.contains("atlas_data.a") and renderer_source.contains("1.0 - UV.y"), "shared atlas shader supports a per-instance vertical flip")
 	var snapshot_source := FileAccess.get_file_as_string("res://scripts/BattleSimulation.Snapshots.cs")
@@ -29,38 +35,40 @@ func run_siege_contracts() -> Array[String]:
 func _test_determinism_fixture(tree: SceneTree) -> void:
 	var first = await _new_simulation(tree)
 	var second = await _new_simulation(tree)
-	var template := {"melee": 4, "ranged": 4, "siege": 1, "dragon": 1}
 	for simulation in [first, second]:
 		simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000, "enemy": 1000})
 		simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
-		_expect(simulation.call("TryBuildBarracks", 2, Vector2i(6, 35), template, 0), "determinism setup accepts the same barracks input")
-		_expect(simulation.call("TryBuildBarracks", 1, Vector2i(15, 8), template, 2), "determinism setup accepts the mirrored enemy barracks")
+		_expect(simulation.call("TryBuild", 2, Vector2i(6, 35), 0) and simulation.call("TryBuild", 2, Vector2i(6, 32), 5), "determinism setup accepts the same ally spawner and rally")
+		_expect(simulation.call("TryBuild", 1, Vector2i(15, 8), 0) and simulation.call("TryBuild", 1, Vector2i(15, 11), 5), "determinism setup accepts the mirrored enemy spawner and rally")
 	for tick in 450:
 		first.call("Step", 1.0 / 30.0)
 		second.call("Step", 1.0 / 30.0)
 	var a: Dictionary = first.call("GetDebugSnapshot")
 	var b: Dictionary = second.call("GetDebugSnapshot")
-	_expect(a.unit_ids == b.unit_ids and a.unit_kinds == b.unit_kinds and a.unit_legion_ids == b.unit_legion_ids, "same seed and inputs produce identical legion membership after 450 ticks")
+	_expect(a.unit_ids == b.unit_ids and a.unit_kinds == b.unit_kinds and a.unit_legion_ids == b.unit_legion_ids and a.unit_rally_ids == b.unit_rally_ids, "same seed and inputs produce identical rally and legion membership after 450 ticks")
 	_expect(a.unit_positions == b.unit_positions and a.legion_anchors == b.legion_anchors, "same seed and inputs produce identical unit and legion positions")
 	_expect(int(a.ally_gold) == int(b.ally_gold) and is_equal_approx(float(a.ally_occupancy), float(b.ally_occupancy)), "same seed preserves economic and territory state")
 	first.queue_free()
 	second.queue_free()
 
 
-func _test_legion_production_and_render_flag(tree: SceneTree) -> void:
+func _test_spawner_rally_and_render_flag(tree: SceneTree) -> void:
 	var simulation = await _new_simulation(tree)
 	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000})
 	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
-	var template := {"melee": 2, "ranged": 1, "siege": 1, "dragon": 0}
-	_expect(simulation.call("TryBuildBarracks", 2, Vector2i(8, 35), template, 0), "configured barracks is added")
-	for tick in range(37):
+	_expect(simulation.call("TryBuild", 2, Vector2i(8, 35), 0), "continuous MELEE spawner is added")
+	_expect(simulation.call("TryBuild", 2, Vector2i(8, 32), 5), "advance rally is added")
+	for tick in range(88):
 		simulation.call("Step", 1.0 / 30.0)
 	var after_first: Dictionary = simulation.call("GetDebugSnapshot")
-	_expect(_count_units(after_first, 2, 0) == 1, "barracks produces the first template member after 1.2 seconds")
-	for tick in range(108):
-		simulation.call("Step", 1.0 / 30.0)
-	var completed: Dictionary = simulation.call("GetDebugSnapshot")
-	_expect(_count_units(completed, 2, 0) == 2 and _count_units(completed, 2, 1) == 1 and _count_units(completed, 2, 3) == 1, "barracks produces the complete role-ordered legion template")
+	_expect(_count_units(after_first, 2, 0) == 1 and int(after_first.unit_rally_ids[0]) > 0, "spawner produces one member and assigns its nearest rally after 2.88 seconds")
+	for index in 10:
+		simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 2, "kind": index % 2, "position": Vector2(8.2 + float(index % 3) * 0.1, 31.7 + float(index / 3) * 0.1), "exact": true})
+	for tick in 8: simulation.call("Step", 1.0 / 30.0)
+	_expect(simulation.call("TryBuild", 2, Vector2i(12, 35), 4), "SIEGE spawner is added")
+	var siege_building_id := _building_id_at(simulation.call("GetDebugSnapshot").buildings, Vector2i(12, 35))
+	simulation.call("ApplyDebugCommand", {"op": "set_building_spawn_timer", "id": siege_building_id, "value": 0.0})
+	simulation.call("Step", 1.0 / 30.0)
 	var render: Dictionary = simulation.call("GetRenderSnapshot")
 	var unit_buffer: PackedFloat32Array = render.infantry_buffer
 	var flipped_siege_found := false
@@ -137,6 +145,13 @@ func _building_hp(buildings: Array, building_id: int) -> float:
 		if int(building.id) == building_id:
 			return float(building.hp)
 	return 0.0
+
+
+func _building_id_at(buildings: Array, cell: Vector2i) -> int:
+	for building: Dictionary in buildings:
+		if Vector2i(building.cell) == cell:
+			return int(building.id)
+	return -1
 
 
 func _expect(condition: bool, message: String) -> void:

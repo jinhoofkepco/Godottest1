@@ -39,11 +39,13 @@ func _run() -> void:
 	await _capture_siege_impact()
 	await _capture_closeup("smoke_siege_closeup.png", true)
 	await _capture_legion_gathering()
+	await _capture_rally_mode("smoke_rally_defend.png", 1)
+	await _capture_rally_mode("smoke_rally_advance.png", 0)
 	await _capture_legion_formation("smoke_legion_line.png", 0)
 	await _capture_legion_formation("smoke_legion_wedge.png", 1)
 	await _capture_legion_engaged()
 	await _capture_legion_formation("smoke_legion_loose.png", 2)
-	print("SMOKE CAPTURE PASS: 19 frames")
+	print("SMOKE CAPTURE PASS: 21 frames")
 	quit(0)
 
 
@@ -204,13 +206,37 @@ func _capture_legion_gathering() -> void:
 	_reset()
 	main.simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000, "enemy": 0})
 	main.simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
-	main.simulation.call("TryBuildBarracks", TEAM_ALLY, Vector2i(10, 35), {"melee": 6, "ranged": 3, "siege": 1, "dragon": 0}, 0)
-	for tick in 230: main.simulation.call("Step", 1.0 / 30.0)
+	main.simulation.call("TryBuild", TEAM_ALLY, Vector2i(10, 35), 5)
+	main.simulation.call("TryBuild", TEAM_ALLY, Vector2i(7, 37), 0)
+	main.simulation.call("TryBuild", TEAM_ALLY, Vector2i(10, 37), 0)
+	main.simulation.call("TryBuild", TEAM_ALLY, Vector2i(13, 37), 1)
+	for tick in 360: main.simulation.call("Step", 1.0 / 30.0)
 	main._sync_board_and_buildings(true)
 	main.unit_renderer.sync()
 	var focus: Vector2 = main.map_view.to_global(main.grid.position_to_world(Vector2(10.5, 33.8)))
 	main.map_view.set_zoom_at(8.0, focus)
 	await _save("smoke_legion_gathering.png")
+
+
+func _capture_rally_mode(file_name: String, mode: int) -> void:
+	_reset()
+	main.simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000, "enemy": 0})
+	main.simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	main.simulation.call("TryBuild", TEAM_ALLY, Vector2i(10, 35), 5)
+	var board: Dictionary = main.simulation.call("GetBoardSnapshot")
+	var rally_id := -1
+	for building in Array(board.buildings):
+		if int(building.kind) == 4 and int(building.team) == TEAM_ALLY: rally_id = int(building.id)
+	main.simulation.call("ConfigureRally", rally_id, mode, 0 if mode == 1 else 1)
+	var count := 14 if mode == 1 else 10
+	for index in count:
+		_spawn(TEAM_ALLY, UNIT_MELEE if index < 7 else UNIT_RANGED, Vector2(8.6 + float(index % 5) * 0.65, 33.0 + float(index / 5) * 0.35))
+	for tick in 45: main.simulation.call("Step", 1.0 / 30.0)
+	main._sync_board_and_buildings(true)
+	main.unit_renderer.sync()
+	var focus: Vector2 = main.map_view.to_global(main.grid.position_to_world(Vector2(10.5, 33.8)))
+	main.map_view.set_zoom_at(7.0, focus)
+	await _save(file_name)
 
 
 func _capture_legion_formation(file_name: String, formation: int) -> void:

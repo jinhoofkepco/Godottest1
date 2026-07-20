@@ -91,21 +91,13 @@ public partial class BattleSimulation
                 ["hp"] = building.Hp,
                 ["max_hp"] = building.MaxHp,
                 ["destroyed"] = building.Destroyed,
-                ["template"] = new GDictionary { ["melee"] = building.MeleeCount, ["ranged"] = building.RangedCount, ["siege"] = building.SiegeCount, ["dragon"] = building.DragonCount },
+                ["rally_mode"] = building.RallyMode,
                 ["formation"] = building.Formation,
                 ["active_legion_id"] = building.ActiveLegionId,
-                ["waypoint"] = building.Waypoint,
-                ["has_waypoint"] = building.HasWaypoint,
-                ["gathering_progress"] = LegionGatheringProgress(building.ActiveLegionId),
+                ["waiting_count"] = building.WaitingCount,
             });
         }
         return buildings;
-    }
-
-    private float LegionGatheringProgress(int legionId)
-    {
-        int index = LegionIndexFromId(legionId);
-        return index < 0 || _legionOriginalCounts[index] <= 0 ? 0f : Mathf.Clamp(_legionProducedCounts[index] / (float)_legionOriginalCounts[index], 0f, 1f);
     }
 
     public GDictionary GetRenderSnapshot()
@@ -411,14 +403,14 @@ public partial class BattleSimulation
         return result;
     }
 
-    private void QueueHit(int unitIndex, bool highGround)
+    private void QueueHit(int unitIndex, bool highGround, bool strong = false)
     {
         if (_hitCount >= MaxEvents) return;
         int eventIndex = _hitCount++;
         _hitIds[eventIndex] = _ids[unitIndex];
         _hitTeams[eventIndex] = _teams[unitIndex];
         _hitPositions[eventIndex] = _positions[unitIndex];
-        _hitHighGround[eventIndex] = highGround ? (byte)1 : (byte)0;
+        _hitHighGround[eventIndex] = (byte)((highGround ? 1 : 0) | (strong ? 2 : 0));
         _hpBarTimers[unitIndex] = BattleConfig.HpBarVisibleSeconds;
     }
 

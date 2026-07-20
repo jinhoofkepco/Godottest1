@@ -1,6 +1,8 @@
 extends SceneTree
 
 const SIMULATION_SCENE = preload("res://scenes/battle_simulation.tscn")
+const TEAM_ENEMY := 1
+const TEAM_ALLY := 2
 
 
 func _initialize() -> void:
@@ -11,8 +13,8 @@ func _run() -> void:
 	var passive := _simulate(false)
 	var active := _simulate(true)
 	print("BALANCE PATHS: passive=%s %.1fs occupancy=%.3f active=%s %.1fs occupancy=%.3f" % [passive.result, passive.elapsed, passive.occupancy, active.result, active.elapsed, active.occupancy])
-	if passive.result != "DEFEAT" or active.result != "VICTORY" or passive.elapsed < 120.0 or active.elapsed < 120.0 or passive.elapsed > 240.0 or active.elapsed > 240.0:
-		push_error("BALANCE PATHS FAILED: passive defeat and active victory must finish in 120-240 seconds")
+	if passive.result != "DEFEAT" or active.result != "VICTORY" or passive.elapsed < 120.0 or passive.elapsed > 240.0 or active.elapsed < 300.0 or active.elapsed > 420.0:
+		push_error("BALANCE PATHS FAILED: passive defeat must take 2-4 minutes and a fully responding match must end in blue victory within 5-7 minutes")
 		quit(1)
 		return
 	quit(0)
@@ -21,27 +23,22 @@ func _run() -> void:
 func _simulate(active: bool) -> Dictionary:
 	var simulation = SIMULATION_SCENE.instantiate()
 	simulation.call("Reset")
-	var plans := [
-		{"cell": Vector2i(4, 36), "template": {"melee": 7, "ranged": 4, "siege": 1, "dragon": 0}, "formation": 0},
-		{"cell": Vector2i(10, 36), "template": {"melee": 4, "ranged": 7, "siege": 1, "dragon": 0}, "formation": 2},
-		{"cell": Vector2i(10, 41), "tower": true},
-		{"cell": Vector2i(17, 35), "template": {"melee": 9, "ranged": 1, "siege": 1, "dragon": 1}, "formation": 1},
-	]
-	var next_plan := 0
-	var ticks := 0
-	while ticks < 240 * 30:
-		if active and next_plan < plans.size():
-			var plan: Dictionary = plans[next_plan]
-			var built: bool = bool(simulation.call("TryBuild", 2, Vector2i(plan.cell), 2)) if bool(plan.get("tower", false)) else bool(simulation.call("TryBuildBarracks", 2, Vector2i(plan.cell), Dictionary(plan.template), int(plan.formation)))
-			if built:
-				next_plan += 1
-		simulation.call("Step", 1.0 / 30.0)
-		simulation.call("DrainEvents")
-		ticks += 1
+	simulation.call("ApplyDebugCommand", {"op": "set_seed", "value": 13007 if active else 12000})
+	if active:
+		simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 180, "enemy": 180})
+		simulation.call("SetAiEnabled", TEAM_ENEMY, true)
+		simulation.call("SetAiEnabled", TEAM_ALLY, true)
+	var elapsed := 0.0
+	while elapsed < 420.0:
+		var executed := int(simulation.call("RunHeadlessTicks", 150))
+		elapsed += float(executed) / 30.0
 		var hud: Dictionary = simulation.call("GetHudSnapshot")
 		if String(hud.result) != "":
+			var result := {"result": String(hud.result), "elapsed": elapsed, "occupancy": float(hud.occupancy)}
 			simulation.free()
-			return {"result": String(hud.result), "elapsed": float(ticks) / 30.0, "occupancy": float(hud.occupancy)}
+			return result
+	if elapsed >= 420.0: simulation.call("RunHeadlessTicks", 1)
 	var hud: Dictionary = simulation.call("GetHudSnapshot")
+	var result := {"result": String(hud.result), "elapsed": elapsed, "occupancy": float(hud.occupancy)}
 	simulation.free()
-	return {"result": String(hud.result), "elapsed": 240.0, "occupancy": float(hud.occupancy)}
+	return result

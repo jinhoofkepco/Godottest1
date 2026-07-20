@@ -12,9 +12,10 @@ const BUILD_RANGED := 1
 const BUILD_TOWER := 2
 const BUILD_DRAGON := 3
 const BUILD_SIEGE := 4
-const BUILD_BARRACKS := 0
+const BUILD_RALLY := 5
 const FORMATION_LINE := 0
 const FORMATION_LOOSE := 2
+const RALLY_DEFEND := 1
 
 var failures: Array[String] = []
 
@@ -103,31 +104,29 @@ func _test_build_selection_and_picking(tree: SceneTree, main_scene: PackedScene)
 	var world: Vector2 = main.grid.cell_to_world(elevated_cell)
 	var picked: Vector2i = main.grid.world_to_cell(world)
 	_expect(picked == elevated_cell, "elevation-aware isometric picking returns the exact displayed tile")
-	_expect(main.hud.barracks_button != null and main.hud.tower_button != null and main.hud.template_buttons.size() == 3, "mobile bar exposes BARRACKS, TOWER, and three template cards")
-	main.hud.select_template_preset(1)
-	_expect(main.selected_build_kind == BUILD_BARRACKS and main.selected_formation == FORMATION_LOOSE, "FIRE preset selects a LOOSE barracks template")
-	_expect(main.try_build_spawner(elevated_cell), "selected legion template is assigned when the barracks is built")
+	_expect(main.hud.build_buttons.size() == 6, "mobile bar exposes four class spawners, RALLY, and TOWER")
+	for build_kind in [BUILD_MELEE, BUILD_RANGED, BUILD_SIEGE, BUILD_DRAGON, BUILD_RALLY, BUILD_TOWER]:
+		_expect(main.hud.select_build_kind(build_kind), "each build kind can be selected from the mobile bar")
+	main.hud.select_build_kind(BUILD_RALLY)
+	_expect(main.selected_build_kind == BUILD_RALLY, "RALLY selection reaches the main controller")
+	_expect(main.try_build_spawner(elevated_cell), "RALLY builds on allied territory")
 	main._sync_board_and_buildings(true)
-	var barracks_id: int = main._building_at_cell(elevated_cell)
-	var config: Dictionary = main.simulation.call("GetBarracksConfig", barracks_id)
-	_expect(int(config.template.ranged) == 7 and int(config.formation) == FORMATION_LOOSE, "built barracks stores the selected role counts and formation")
-	_expect(main.try_build_spawner(elevated_cell) and main.hud.edit_panel.visible, "tapping an allied barracks opens its compact editor")
-	_expect(main.hud.adjust_edit_role("melee", -1) and main.hud.adjust_edit_role("siege", 1), "editor minus/plus buttons edit SIEGE up to its cap")
-	_expect(not main.hud.adjust_edit_role("siege", 1), "editor enforces SIEGE maximum two")
-	main.hud.select_edit_formation(FORMATION_LINE)
-	config = main.simulation.call("GetBarracksConfig", barracks_id)
-	_expect(int(config.template.siege) == 2 and int(config.formation) == FORMATION_LINE, "role and formation edits reach C# in one config call")
-	main.hud.request_edit_waypoint()
-	var waypoint_cell := Vector2i(10, 25)
-	_expect(main.try_build_spawner(waypoint_cell), "waypoint mode consumes exactly one map tap")
-	config = main.simulation.call("GetBarracksConfig", barracks_id)
-	_expect(bool(config.has_waypoint) and Vector2(config.waypoint).distance_to(Vector2(10.5, 25.5)) < 0.01, "barracks waypoint is stored in grid space")
+	var rally_id: int = main._building_at_cell(elevated_cell)
+	var config: Dictionary = main.simulation.call("GetRallyConfig", rally_id)
+	_expect(int(config.mode) == 0 and int(config.formation) == FORMATION_LINE, "new RALLY defaults to ADVANCE and LINE")
+	var rally_view = main.building_views.get(rally_id)
+	_expect(rally_view != null and int(rally_view.z_index) > int(main.unit_renderer.z_index), "RALLY marker and waiting count stay above battlefield occlusion")
+	_expect(main.try_build_spawner(elevated_cell) and main.hud.edit_panel.visible, "tapping an allied RALLY opens its compact editor")
+	main.hud.select_rally_mode(RALLY_DEFEND)
+	main.hud.select_edit_formation(FORMATION_LOOSE)
+	config = main.simulation.call("GetRallyConfig", rally_id)
+	_expect(int(config.mode) == RALLY_DEFEND and int(config.formation) == FORMATION_LOOSE, "RALLY mode and formation edits reach C# in one config call")
 	main._on_build_kind_selected(BUILD_TOWER)
 	_expect(main.selected_build_kind == BUILD_TOWER, "defense tower can be selected independently")
-	main.hud.open_barracks_panel(config)
+	main.hud.open_rally_panel(config)
 	main.hud.request_edit_demolish()
 	main._sync_board_and_buildings()
-	_expect(bool(main.building_records[barracks_id].destroyed), "barracks editor demolition removes the selected building")
+	_expect(bool(main.building_records[rally_id].destroyed), "RALLY editor demolition removes the selected building")
 	main.queue_free()
 	await tree.process_frame
 

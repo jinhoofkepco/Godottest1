@@ -11,9 +11,10 @@ public partial class BattleSimulation
         long tickStart = _profilingEnabled ? Stopwatch.GetTimestamp() : 0;
         ApplyIncome(delta);
         _timeRemaining = Mathf.Max(0f, _timeRemaining - delta);
-        UpdateEnemyAi(delta);
-        UpdateBarracks(delta);
+        UpdateAiControllers(delta);
+        UpdateSpawners(delta);
         RebuildBuckets();
+        UpdateRallyPoints(delta);
         UpdateLegions(delta);
         _aoeCandidateChecks = 0;
         _siegeImpactsResolved = 0;
@@ -61,12 +62,19 @@ public partial class BattleSimulation
             {
                 _states[index] = StateAttack;
                 _lungeDirections[index] = position.DirectionTo(_foundTargetPosition);
-                _velocities[index] = _velocities[index].MoveToward(Vector2.Zero, UnitSpeed(_kinds[index]) * BattleConfig.UnitTurnRate * delta);
+                bool shouldKite = _kinds[index] == UnitRanged && _foundUnitIndex >= 0
+                    && targetDistanceSq < BattleConfig.RangedStandoffDistance * BattleConfig.RangedStandoffDistance;
+                Vector2 combatVelocity = shouldKite
+                    ? _foundTargetPosition.DirectionTo(position) * UnitSpeed(_kinds[index])
+                    : Vector2.Zero;
+                _velocities[index] = _velocities[index].MoveToward(combatVelocity, UnitSpeed(_kinds[index]) * BattleConfig.UnitTurnRate * delta);
                 if (_cooldowns[index] <= 0f)
                 {
                     if (_kinds[index] == UnitSiege) LaunchSiege(index, _foundTargetPosition);
                     else AttackTarget(index, _foundUnitIndex, _foundBuildingIndex);
                 }
+                if (shouldKite)
+                    _positions[index] = MoveGround(position, _velocities[index] * delta);
                 continue;
             }
 
@@ -76,7 +84,8 @@ public partial class BattleSimulation
                 int legionIndex = LegionIndexFromId(_legionIds[index]);
                 bool grouped = legionIndex >= 0 && _legionStates[legionIndex] != LegionBroken;
                 bool engagedLegion = grouped && _legionStates[legionIndex] == LegionEngaged;
-                Vector2 advance = grouped && !engagedLegion ? LegionSteering(index) : AdvanceDirection(index);
+                bool rallying = !grouped && _rallyPointIds[index] > 0;
+                Vector2 advance = grouped && !engagedLegion ? LegionSteering(index) : rallying ? RallySteering(index) : AdvanceDirection(index);
                 Vector2 seek = _foundTargetId != 0 ? position.DirectionTo(_foundTargetPosition) : Vector2.Zero;
                 Vector2 separation = CalculateSeparation(index);
                 bool waiting = _kinds[index] != UnitDragon && ShouldWait(index, advance);
@@ -135,84 +144,24 @@ public partial class BattleSimulation
         if (enemyIncome > 0) { _enemyGold += enemyIncome; _enemyIncomeRemainder -= enemyIncome; }
     }
 
-    private void UpdateEnemyAi(float delta)
-    {
-        if (!_enemyAiEnabled) return;
-        _enemyBuildTimer -= delta;
-        if (_enemyBuildTimer > 0f || CountBarracks(TeamEnemy) >= BattleConfig.EnemyMaxSpawners)
-            return;
-        _enemyBuildTimer += BattleConfig.EnemyBuildInterval;
-        float templateRoll = _rng.Randf();
-        int preset = templateRoll < 0.50f ? 0 : templateRoll < 0.80f ? 1 : templateRoll < 0.95f ? 2 : 3;
-        if (_enemyGold < BattleConfig.BarracksCost) return;
-        for (int offset = 0; offset < BattleConfig.GridColumns; offset++)
-        {
-            int column = (_enemyBuildCursor + offset) % BattleConfig.GridColumns;
-            int frontline = 0;
-            for (int row = 0; row < BattleConfig.GridRows; row++)
-                if (_ownership[Index(new Vector2I(column, row))] == TeamEnemy)
-                    frontline = row;
-            for (int row = Math.Min(frontline, BattleConfig.GridRows - 2); row > 0; row--)
-            {
-                var cell = new Vector2I(column, row);
-                int formation = preset == 1 ? FormationLoose : preset == 2 ? FormationWedge : FormationLine;
-                if (!TryBuildBarracks(TeamEnemy, cell, PresetTemplate(preset), formation)) continue;
-                int buildingIndex = BuildingAt(cell);
-                if (buildingIndex >= 0)
-                {
-                    int waypointColumn = Math.Clamp(column + _rng.RandiRange(-5, 5), 0, BattleConfig.GridColumns - 1);
-                    SetBarracksWaypoint(_buildings[buildingIndex].Id, new Vector2I(waypointColumn, BattleConfig.GridRows / 2 + 4));
-                }
-                _enemyBuildCursor = (column + 3) % BattleConfig.GridColumns;
-                return;
-            }
-        }
-    }
-
-    private void UpdateBarracks(float delta)
+    private void UpdateSpawners(float delta)
     {
         for (int index = 0; index < _buildingCount; index++)
         {
             ref Building building = ref _buildings[index];
-            if (building.Destroyed || building.Kind != BuildingBarracks)
+            if (building.Destroyed || (building.Kind != BuildingSpawner && building.Kind != BuildingDragonLair))
                 continue;
-            int legionIndex = LegionIndexFromId(building.ActiveLegionId);
-            if (legionIndex < 0 || _legionStates[legionIndex] != LegionGathering)
-            {
-                building.ActiveLegionId = CreateGatheringLegion(index);
-                legionIndex = LegionIndexFromId(building.ActiveLegionId);
-                if (legionIndex < 0) continue;
-            }
             building.SpawnTimer -= delta;
             if (building.SpawnTimer > 0f) continue;
-            building.SpawnTimer += BattleConfig.BarracksProductionInterval;
-            int targetCount = _legionOriginalCounts[legionIndex];
-            if (_legionProducedCounts[legionIndex] >= targetCount)
-            {
-                if (LegionFormationReady(legionIndex) || _legionGatheringElapsed[legionIndex] >= BattleConfig.LegionGatheringMaxSeconds)
-                {
-                    DeployLegion(legionIndex);
-                    building.ActiveLegionId = -1;
-                }
-                continue;
-            }
-            int unitKind = NextLegionUnitKind(legionIndex);
-            Vector2 position = FindSpawnPosition(building.Cell, building.Team, unitKind == UnitDragon);
+            float interval = building.Kind == BuildingDragonLair ? BattleConfig.DragonProductionInterval
+                : building.UnitKind == UnitSiege ? BattleConfig.SiegeProductionInterval
+                : BattleConfig.SpawnerProductionInterval;
+            building.SpawnTimer += interval;
+            Vector2 position = FindSpawnPosition(building.Cell, building.Team, building.UnitKind == UnitDragon);
             if (position.X < 0f) { building.SpawnTimer = 0.5f; continue; }
-            int slotIndex = _legionProducedCounts[legionIndex];
-            Vector2 localSlot = LocalSlotFor(legionIndex, slotIndex);
-            int unitId = SpawnUnit(building.Team, position, unitKind, _legionRecordIds[legionIndex], localSlot);
+            int unitId = SpawnUnit(building.Team, position, building.UnitKind);
             if (unitId != 0)
-            {
-                _legionProducedCounts[legionIndex]++;
-                _legionLiveCounts[legionIndex]++;
-                QueueStructural("unit_produced", building.Team, unitId, building.Cell, building.Kind, unitKind);
-                if ((_legionProducedCounts[legionIndex] >= targetCount && LegionFormationReady(legionIndex)) || _legionGatheringElapsed[legionIndex] >= BattleConfig.LegionGatheringMaxSeconds)
-                {
-                    DeployLegion(legionIndex);
-                    building.ActiveLegionId = -1;
-                }
-            }
+                QueueStructural("unit_produced", building.Team, unitId, building.Cell, building.Kind, building.UnitKind);
         }
     }
 

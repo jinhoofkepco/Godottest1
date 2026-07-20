@@ -5,6 +5,21 @@ using System;
 
 public partial class BattleSimulation
 {
+    public int RunHeadlessTicks(int requestedTicks)
+    {
+        int count = Math.Clamp(requestedTicks, 0, BattleConfig.SimTickRate * 30);
+        int executed = 0;
+        float delta = 1f / BattleConfig.SimTickRate;
+        while (executed < count && _result.Length == 0)
+        {
+            FixedStep(delta);
+            executed++;
+        }
+        _events.Clear();
+        _hitCount = _shotCount = _deathCount = 0;
+        return executed;
+    }
+
     public GDictionary GetDebugSnapshot()
     {
         var buildings = BuildBuildingsSnapshot();
@@ -24,6 +39,7 @@ public partial class BattleSimulation
             ["unit_lunge_directions"] = Copy(_lungeDirections, _unitCount),
             ["unit_cached_waiting"] = Copy(_cachedWaiting, _unitCount),
             ["unit_legion_ids"] = Copy(_legionIds, _unitCount),
+            ["unit_rally_ids"] = Copy(_rallyPointIds, _unitCount),
             ["unit_slot_offsets"] = Copy(_slotOffsets, _unitCount),
             ["legion_count"] = _legionCount,
             ["legion_ids"] = Copy(_legionRecordIds, _legionCount),
@@ -33,6 +49,8 @@ public partial class BattleSimulation
             ["legion_anchors"] = Copy(_legionAnchors, _legionCount),
             ["legion_headings"] = Copy(_legionHeadings, _legionCount),
             ["legion_member_counts"] = Copy(_legionLiveCounts, _legionCount),
+            ["legion_rally_ids"] = Copy(_legionRallyIds, _legionCount),
+            ["legion_defending"] = Copy(_legionDefending, _legionCount),
             ["buildings"] = buildings,
             ["ownership"] = (byte[])_ownership.Clone(),
             ["elevation"] = (byte[])_elevation.Clone(),
@@ -51,6 +69,18 @@ public partial class BattleSimulation
             ["target_candidate_checks"] = _targetCandidateChecks,
             ["aoe_candidate_checks"] = _aoeCandidateChecks,
             ["siege_impacts_resolved"] = _siegeImpactsResolved,
+            ["enemy_ai_decisions"] = _aiDecisions[TeamEnemy],
+            ["enemy_ai_builds"] = _aiBuilds[TeamEnemy],
+            ["enemy_ai_failed_searches"] = _aiFailedSearches[TeamEnemy],
+            ["enemy_ai_forced_spends"] = _aiForcedSpends[TeamEnemy],
+            ["enemy_ai_max_gold"] = _aiMaxGold[TeamEnemy],
+            ["enemy_ai_last_reason"] = _aiLastReasons[TeamEnemy],
+            ["ally_ai_decisions"] = _aiDecisions[TeamAlly],
+            ["ally_ai_builds"] = _aiBuilds[TeamAlly],
+            ["ally_ai_failed_searches"] = _aiFailedSearches[TeamAlly],
+            ["ally_ai_forced_spends"] = _aiForcedSpends[TeamAlly],
+            ["ally_ai_max_gold"] = _aiMaxGold[TeamAlly],
+            ["ally_ai_last_reason"] = _aiLastReasons[TeamAlly],
         };
     }
 
@@ -81,11 +111,18 @@ public partial class BattleSimulation
         ["decision_group_count"] = BattleConfig.DecisionGroupCount,
         ["siege_range"] = BattleConfig.SiegeRange,
         ["siege_damage"] = BattleConfig.SiegeDamage,
-        ["barracks_production_interval"] = BattleConfig.BarracksProductionInterval,
+        ["match_duration"] = BattleConfig.MatchDuration,
+        ["occupancy_win_ratio"] = BattleConfig.OccupancyWinRatio,
+        ["passive_income_per_second"] = BattleConfig.PassiveIncomePerSecond,
+        ["hq_max_hp"] = BattleConfig.HqMaxHp,
+        ["spawner_production_interval"] = BattleConfig.SpawnerProductionInterval,
+        ["siege_production_interval"] = BattleConfig.SiegeProductionInterval,
+        ["dragon_production_interval"] = BattleConfig.DragonProductionInterval,
         ["siege_min_range"] = BattleConfig.SiegeMinRange,
         ["siege_blast_radius"] = BattleConfig.SiegeBlastRadius,
-        ["barracks_cost"] = BattleConfig.BarracksCost,
-        ["barracks_production_interval"] = BattleConfig.BarracksProductionInterval,
+        ["rally_point_cost"] = BattleConfig.RallyPointCost,
+        ["rally_launch_size"] = BattleConfig.RallyLaunchSize,
+        ["rally_defense_capacity"] = BattleConfig.RallyDefenseCapacity,
         ["legion_max_members"] = BattleConfig.LegionMaxMembers,
     };
 
@@ -95,15 +132,15 @@ public partial class BattleSimulation
         switch (op)
         {
             case "spawn_unit":
-            {
-                int team = DInt(command, "team", TeamAlly);
-                int kind = DInt(command, "kind", UnitMelee);
-                Vector2 position = DVector2(command, "position", new Vector2(BattleConfig.GridColumns * 0.5f, BattleConfig.GridRows * 0.5f));
-                int id = SpawnUnit(team, position, kind);
-                if (id == 0) return false;
-                if (DBool(command, "exact", false)) _positions[_indexById[id]] = position;
-                return true;
-            }
+                {
+                    int team = DInt(command, "team", TeamAlly);
+                    int kind = DInt(command, "kind", UnitMelee);
+                    Vector2 position = DVector2(command, "position", new Vector2(BattleConfig.GridColumns * 0.5f, BattleConfig.GridRows * 0.5f));
+                    int id = SpawnUnit(team, position, kind);
+                    if (id == 0) return false;
+                    if (DBool(command, "exact", false)) _positions[_indexById[id]] = position;
+                    return true;
+                }
             case "spawn_legion":
                 return CreateDebugLegion(
                     DInt(command, "team", TeamAlly),
@@ -111,27 +148,27 @@ public partial class BattleSimulation
                     DInt(command, "formation", FormationLine),
                     DVector2(command, "anchor", new Vector2(BattleConfig.GridColumns * 0.5f, BattleConfig.GridRows * 0.5f)));
             case "spawn_stress":
-            {
-                int count = Math.Clamp(DInt(command, "count", 600), 0, MaxUnits);
-                _unitCount = 0;
-                ResetLegions();
-                Array.Fill(_indexById, -1);
-                _nextUnitId = 1;
-                for (int i = 0; i < count; i++)
                 {
-                    int team = i < count / 2 ? TeamEnemy : TeamAlly;
-                    int local = team == TeamEnemy ? i : i - count / 2;
-                    int kind = local % 3 == 0 ? UnitMelee : local % 3 == 1 ? UnitRanged : UnitSiege;
-                    float x = (local % BattleConfig.GridColumns) + 0.5f;
-                    float rank = (local / BattleConfig.GridColumns) % 10;
-                    float y = team == TeamEnemy ? 17.0f + rank * 0.24f : 27.0f - rank * 0.24f;
-                    int id = SpawnUnit(team, new Vector2(x, y), kind);
-                    if (id != 0) _positions[_indexById[id]] = new Vector2(x, y);
+                    int count = Math.Clamp(DInt(command, "count", 600), 0, MaxUnits);
+                    _unitCount = 0;
+                    ResetLegions();
+                    Array.Fill(_indexById, -1);
+                    _nextUnitId = 1;
+                    for (int i = 0; i < count; i++)
+                    {
+                        int team = i < count / 2 ? TeamEnemy : TeamAlly;
+                        int local = team == TeamEnemy ? i : i - count / 2;
+                        int kind = local % 3 == 0 ? UnitMelee : local % 3 == 1 ? UnitRanged : UnitSiege;
+                        float x = (local % BattleConfig.GridColumns) + 0.5f;
+                        float rank = (local / BattleConfig.GridColumns) % 10;
+                        float y = team == TeamEnemy ? 17.0f + rank * 0.24f : 27.0f - rank * 0.24f;
+                        int id = SpawnUnit(team, new Vector2(x, y), kind);
+                        if (id != 0) _positions[_indexById[id]] = new Vector2(x, y);
+                    }
+                    RebuildBuckets();
+                    RebuildFlowFields();
+                    return _unitCount == count;
                 }
-                RebuildBuckets();
-                RebuildFlowFields();
-                return _unitCount == count;
-            }
             case "clear_units":
                 _unitCount = 0;
                 ResetLegions();
@@ -140,92 +177,97 @@ public partial class BattleSimulation
                 RebuildBuckets();
                 return true;
             case "add_building":
-            {
-                int id = AddBuildingInternal(DInt(command, "team", TeamAlly), DInt(command, "kind", BuildingBarracks), DVector2I(command, "cell", Vector2I.Zero), DInt(command, "unit_kind", UnitMelee));
-                if (id != 0) RebuildFlowFields();
-                return id != 0;
-            }
+                {
+                    int id = AddBuildingInternal(DInt(command, "team", TeamAlly), DInt(command, "kind", BuildingSpawner), DVector2I(command, "cell", Vector2I.Zero), DInt(command, "unit_kind", UnitMelee));
+                    if (id != 0) RebuildFlowFields();
+                    return id != 0;
+                }
             case "set_unit":
-            {
-                int index = ResolveUnit(command);
-                if (index < 0) return false;
-                if (command.ContainsKey("position")) _positions[index] = DVector2(command, "position", _positions[index]);
-                if (command.ContainsKey("velocity")) _velocities[index] = DVector2(command, "velocity", _velocities[index]);
-                if (command.ContainsKey("hp")) _hp[index] = DFloat(command, "hp", _hp[index]);
-                if (command.ContainsKey("cooldown")) _cooldowns[index] = DFloat(command, "cooldown", _cooldowns[index]);
-                if (command.ContainsKey("state")) _states[index] = DInt(command, "state", _states[index]);
-                if (command.ContainsKey("target_id")) _targetIds[index] = DInt(command, "target_id", _targetIds[index]);
-                if (command.ContainsKey("lunge_timer")) _lungeTimers[index] = DFloat(command, "lunge_timer", _lungeTimers[index]);
-                if (command.ContainsKey("lunge_direction")) _lungeDirections[index] = DVector2(command, "lunge_direction", _lungeDirections[index]);
-                return true;
-            }
+                {
+                    int index = ResolveUnit(command);
+                    if (index < 0) return false;
+                    if (command.ContainsKey("position")) _positions[index] = DVector2(command, "position", _positions[index]);
+                    if (command.ContainsKey("velocity")) _velocities[index] = DVector2(command, "velocity", _velocities[index]);
+                    if (command.ContainsKey("hp")) _hp[index] = DFloat(command, "hp", _hp[index]);
+                    if (command.ContainsKey("cooldown")) _cooldowns[index] = DFloat(command, "cooldown", _cooldowns[index]);
+                    if (command.ContainsKey("state")) _states[index] = DInt(command, "state", _states[index]);
+                    if (command.ContainsKey("target_id")) _targetIds[index] = DInt(command, "target_id", _targetIds[index]);
+                    if (command.ContainsKey("lunge_timer")) _lungeTimers[index] = DFloat(command, "lunge_timer", _lungeTimers[index]);
+                    if (command.ContainsKey("lunge_direction")) _lungeDirections[index] = DVector2(command, "lunge_direction", _lungeDirections[index]);
+                    return true;
+                }
             case "set_elevation":
-            {
-                byte[] values = command.TryGetValue("values", out Variant variant) ? variant.AsByteArray() : Array.Empty<byte>();
-                if (values.Length != BattleConfig.CellCount) return false;
-                Array.Copy(values, _elevation, values.Length);
-                _terrain.Elevation = _elevation;
-                _boardVersion++;
-                RebuildFlowFields();
-                return true;
-            }
+                {
+                    byte[] values = command.TryGetValue("values", out Variant variant) ? variant.AsByteArray() : Array.Empty<byte>();
+                    if (values.Length != BattleConfig.CellCount) return false;
+                    Array.Copy(values, _elevation, values.Length);
+                    _terrain.Elevation = _elevation;
+                    _boardVersion++;
+                    RebuildFlowFields();
+                    return true;
+                }
             case "set_ownership":
-            {
-                byte[] values = command.TryGetValue("values", out Variant variant) ? variant.AsByteArray() : Array.Empty<byte>();
-                if (values.Length != BattleConfig.CellCount) return false;
-                bool changed = false;
-                for (int i = 0; i < values.Length; i++)
                 {
-                    if (_ownership[i] == values[i]) continue;
-                    _ownership[i] = values[i];
-                    QueueOwnershipDelta(i);
-                    changed = true;
+                    byte[] values = command.TryGetValue("values", out Variant variant) ? variant.AsByteArray() : Array.Empty<byte>();
+                    if (values.Length != BattleConfig.CellCount) return false;
+                    bool changed = false;
+                    for (int i = 0; i < values.Length; i++)
+                    {
+                        if (_ownership[i] == values[i]) continue;
+                        _ownership[i] = values[i];
+                        QueueOwnershipDelta(i);
+                        changed = true;
+                    }
+                    if (changed) _boardVersion++;
+                    RecalculateTerritory(false, true);
+                    return true;
                 }
-                if (changed) _boardVersion++;
-                RecalculateTerritory(false, true);
-                return true;
-            }
             case "force_ownership_delta":
-            {
-                int[] indices = command.TryGetValue("indices", out Variant indexVariant) ? indexVariant.AsInt32Array() : Array.Empty<int>();
-                int[] owners = command.TryGetValue("owners", out Variant ownerVariant) ? ownerVariant.AsInt32Array() : Array.Empty<int>();
-                if (indices.Length == 0 || indices.Length != owners.Length) return false;
-                bool changed = false;
-                for (int i = 0; i < indices.Length; i++)
                 {
-                    int cellIndex = indices[i];
-                    int owner = owners[i];
-                    if (cellIndex < 0 || cellIndex >= BattleConfig.CellCount || (owner != TeamEnemy && owner != TeamAlly)) return false;
-                    if (_ownership[cellIndex] == owner) continue;
-                    _ownership[cellIndex] = (byte)owner;
-                    QueueOwnershipDelta(cellIndex);
-                    changed = true;
+                    int[] indices = command.TryGetValue("indices", out Variant indexVariant) ? indexVariant.AsInt32Array() : Array.Empty<int>();
+                    int[] owners = command.TryGetValue("owners", out Variant ownerVariant) ? ownerVariant.AsInt32Array() : Array.Empty<int>();
+                    if (indices.Length == 0 || indices.Length != owners.Length) return false;
+                    bool changed = false;
+                    for (int i = 0; i < indices.Length; i++)
+                    {
+                        int cellIndex = indices[i];
+                        int owner = owners[i];
+                        if (cellIndex < 0 || cellIndex >= BattleConfig.CellCount || (owner != TeamEnemy && owner != TeamAlly)) return false;
+                        if (_ownership[cellIndex] == owner) continue;
+                        _ownership[cellIndex] = (byte)owner;
+                        QueueOwnershipDelta(cellIndex);
+                        changed = true;
+                    }
+                    if (changed) _boardVersion++;
+                    return changed;
                 }
-                if (changed) _boardVersion++;
-                return changed;
-            }
             case "set_gold":
                 _allyGold = DInt(command, "ally", _allyGold);
                 _enemyGold = DInt(command, "enemy", _enemyGold);
                 return true;
-            case "set_enemy_ai": _enemyAiEnabled = DBool(command, "enabled", true); return true;
-            case "damage_unit":
-            {
-                int index = ResolveUnit(command);
-                if (index < 0) return false;
-                _hp[index] -= DFloat(command, "damage", 0f);
-                _lastAttackerTeams[index] = DInt(command, "team", TeamEnemy);
+            case "set_enemy_ai": SetAiEnabled(TeamEnemy, DBool(command, "enabled", true)); return true;
+            case "set_ai": SetAiEnabled(DInt(command, "team", TeamEnemy), DBool(command, "enabled", true)); return true;
+            case "set_seed":
+                _rng.Seed = (ulong)Math.Max(1, DInt(command, "value", 731942));
+                _aiUpdateCursor = (DInt(command, "value", 731942) & 1) == 0 ? TeamEnemy : TeamAlly;
                 return true;
-            }
+            case "damage_unit":
+                {
+                    int index = ResolveUnit(command);
+                    if (index < 0) return false;
+                    _hp[index] -= DFloat(command, "damage", 0f);
+                    _lastAttackerTeams[index] = DInt(command, "team", TeamEnemy);
+                    return true;
+                }
             case "set_time": _timeRemaining = DFloat(command, "value", _timeRemaining); return true;
             case "set_result": _result = DString(command, "value"); return true;
             case "set_building_spawn_timer":
-            {
-                int index = BuildingIndexFromId(DInt(command, "id"));
-                if (index < 0) return false;
-                _buildings[index].SpawnTimer = DFloat(command, "value", 0f);
-                return true;
-            }
+                {
+                    int index = BuildingIndexFromId(DInt(command, "id"));
+                    if (index < 0) return false;
+                    _buildings[index].SpawnTimer = DFloat(command, "value", 0f);
+                    return true;
+                }
             case "damage_building":
                 ApplyBuildingDamage(DInt(command, "id"), DFloat(command, "damage"), DInt(command, "team", TeamAlly));
                 return true;

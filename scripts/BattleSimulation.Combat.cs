@@ -9,22 +9,36 @@ public partial class BattleSimulation
     {
         Vector2 position = _positions[unitIndex];
         int team = _teams[unitIndex];
+        bool focusFire = _kinds[unitIndex] == UnitRanged;
         bool canTargetAir = _kinds[unitIndex] != UnitMelee;
         float detectRange = UnitDetectRange(_kinds[unitIndex]);
         SeedRetainedTarget(_targetIds[unitIndex], team, position, canTargetAir, detectRange, out float bestDistanceSq);
+        float bestHealthRatio = focusFire && _foundUnitIndex >= 0
+            ? _hp[_foundUnitIndex] / UnitMaxHp(_kinds[_foundUnitIndex])
+            : float.PositiveInfinity;
+        int bestFocusId = focusFire && _foundUnitIndex >= 0 ? _ids[_foundUnitIndex] : int.MaxValue;
         List<int>[] buckets = team == TeamEnemy ? _allyBuckets : _enemyBuckets;
         Vector2I cell = CellAt(position);
         int radius = Mathf.CeilToInt(detectRange);
         for (int row = Math.Max(0, cell.Y - radius); row <= Math.Min(BattleConfig.GridRows - 1, cell.Y + radius); row++)
             for (int col = Math.Max(0, cell.X - radius); col <= Math.Min(BattleConfig.GridColumns - 1, cell.X + radius); col++)
             {
-                if (!BucketCanContainNearer(position, col, row, bestDistanceSq)) continue;
+                if (!focusFire && !BucketCanContainNearer(position, col, row, bestDistanceSq)) continue;
                 foreach (int candidate in buckets[Index(new Vector2I(col, row))])
                 {
                     _targetCandidateChecks++;
                     if (_hp[candidate] <= 0f || (!canTargetAir && _kinds[candidate] == UnitDragon)) continue;
                     float distanceSq = position.DistanceSquaredTo(_positions[candidate]);
-                    if (distanceSq > bestDistanceSq) continue;
+                    if (distanceSq > detectRange * detectRange) continue;
+                    if (focusFire)
+                    {
+                        float healthRatio = _hp[candidate] / UnitMaxHp(_kinds[candidate]);
+                        if (healthRatio > bestHealthRatio + 0.0001f
+                            || (Mathf.IsEqualApprox(healthRatio, bestHealthRatio) && _ids[candidate] >= bestFocusId)) continue;
+                        bestHealthRatio = healthRatio;
+                        bestFocusId = _ids[candidate];
+                    }
+                    else if (distanceSq > bestDistanceSq) continue;
                     bestDistanceSq = distanceSq;
                     _foundTargetId = _ids[candidate];
                     _foundUnitIndex = candidate;
@@ -38,7 +52,7 @@ public partial class BattleSimulation
             if (building.Destroyed || building.Team == team) continue;
             Vector2 at = new(building.Cell.X + 0.5f, building.Cell.Y + 0.5f);
             float distanceSq = position.DistanceSquaredTo(at);
-            if (distanceSq > bestDistanceSq) continue;
+            if (focusFire && _foundUnitIndex >= 0 || distanceSq > bestDistanceSq) continue;
             bestDistanceSq = distanceSq;
             _foundTargetId = -building.Id;
             _foundUnitIndex = -1;
@@ -338,10 +352,11 @@ public partial class BattleSimulation
         if (targetUnit >= 0 && targetUnit < _unitCount)
         {
             if (kind == UnitRanged) QueueShot(ShotRanged, team, origin, _positions[targetUnit]);
-            float multiplier = ElevationDamageMultiplier(origin, _positions[targetUnit]);
+            float classMultiplier = GetClassDamageMultiplier(kind, _kinds[targetUnit]);
+            float multiplier = ElevationDamageMultiplier(origin, _positions[targetUnit]) * classMultiplier;
             _hp[targetUnit] -= UnitAttackDamage(kind) * multiplier;
             _lastAttackerTeams[targetUnit] = team;
-            QueueHit(targetUnit, multiplier > 1f);
+            QueueHit(targetUnit, ElevationDamageMultiplier(origin, _positions[targetUnit]) > 1f, classMultiplier > 1f);
         }
         else if (buildingIndex >= 0 && buildingIndex < _buildingCount)
         {
@@ -398,10 +413,11 @@ public partial class BattleSimulation
                     if (_hp[candidate] <= 0f) continue;
                     float damage = SiegeDamageAtDistance(impact.Target.DistanceTo(_positions[candidate]), UnitRadius(_kinds[candidate]), impact.Damage);
                     if (damage <= 0f) continue;
-                    float multiplier = ElevationDamageMultiplier(impact.Origin, _positions[candidate]);
+                    float classMultiplier = GetClassDamageMultiplier(UnitSiege, _kinds[candidate]);
+                    float multiplier = ElevationDamageMultiplier(impact.Origin, _positions[candidate]) * classMultiplier;
                     _hp[candidate] -= damage * multiplier;
                     _lastAttackerTeams[candidate] = impact.Team;
-                    QueueHit(candidate, multiplier > 1f);
+                    QueueHit(candidate, ElevationDamageMultiplier(impact.Origin, _positions[candidate]) > 1f, classMultiplier > 1f);
                 }
         for (int i = 0; i < _buildingCount; i++)
         {
@@ -421,10 +437,11 @@ public partial class BattleSimulation
         ref Building building = ref _buildings[index];
         building.Hp = Mathf.Max(0f, building.Hp - damage);
         _boardVersion++;
-        string type = building.Kind == BuildingHq ? "hq_hit" : building.Kind == BuildingBarracks ? "barracks_hit" : "building_hit";
+        string type = building.Kind == BuildingHq ? "hq_hit" : building.Kind == BuildingRallyPoint ? "rally_hit" : "building_hit";
         _events.Add(new GDictionary { ["type"] = type, ["team"] = building.Team, ["building_id"] = id, ["cell"] = building.Cell });
         if (building.Hp > 0f) return;
         building.Destroyed = true;
+        if (building.Kind == BuildingRallyPoint) HandleRallyDestroyed(building.Id);
         QueueBlockedDelta(Index(building.Cell));
         _events.Add(new GDictionary { ["type"] = "building_destroyed", ["team"] = building.Team, ["building_id"] = id, ["cell"] = building.Cell, ["kind"] = building.Kind });
         RebuildFlowFields();
@@ -464,7 +481,7 @@ public partial class BattleSimulation
         _cachedTargetPositions[index] = _cachedTargetPositions[last]; _cachedSteering[index] = _cachedSteering[last]; _siegeTargetPositions[index] = _siegeTargetPositions[last];
         _hp[index] = _hp[last]; _cooldowns[index] = _cooldowns[last]; _speedScales[index] = _speedScales[last]; _lungeTimers[index] = _lungeTimers[last];
         _flowBiasRadians[index] = _flowBiasRadians[last]; _cachedTargetRadii[index] = _cachedTargetRadii[last]; _hpBarTimers[index] = _hpBarTimers[last]; _cachedWaiting[index] = _cachedWaiting[last];
-        _legionIds[index] = _legionIds[last]; _slotOffsets[index] = _slotOffsets[last];
+        _legionIds[index] = _legionIds[last]; _rallyPointIds[index] = _rallyPointIds[last]; _slotOffsets[index] = _slotOffsets[last];
         _indexById[_ids[index]] = index;
     }
 
@@ -529,6 +546,18 @@ public partial class BattleSimulation
 
     private float GroundSpeedMultiplier(Vector2 from, Vector2 toward) => ElevationAt(toward) > ElevationAt(from) ? BattleConfig.UphillSpeedMultiplier : 1f;
     private float ElevationDamageMultiplier(Vector2 attacker, Vector2 target) => ElevationAt(attacker) > ElevationAt(target) ? BattleConfig.HighGroundDamageMultiplier : ElevationAt(attacker) < ElevationAt(target) ? BattleConfig.LowGroundDamageMultiplier : 1f;
+    public float GetClassDamageMultiplier(int attackerKind, int targetKind) => (attackerKind, targetKind) switch
+    {
+        (UnitRanged, UnitMelee) => BattleConfig.RangedVsMelee,
+        (UnitMelee, UnitSiege) => BattleConfig.MeleeVsSiege,
+        (UnitMelee, UnitRanged) => BattleConfig.MeleeVsRanged,
+        (UnitRanged, UnitSiege) => BattleConfig.RangedVsSiege,
+        (UnitRanged, UnitDragon) => BattleConfig.RangedVsDragon,
+        (UnitDragon, UnitRanged) => BattleConfig.DragonVsRanged,
+        (UnitDragon, UnitSiege) => BattleConfig.DragonVsSiege,
+        (UnitMelee, UnitDragon) => BattleConfig.MeleeVsDragon,
+        _ => 1f,
+    };
     private int ElevationAt(Vector2 position) => _elevation[Index(CellAt(position))];
     private bool CanGroundStepInternal(Vector2I from, Vector2I to) => Valid(from) && Valid(to) && Math.Abs(_elevation[Index(from)] - _elevation[Index(to)]) <= 1;
     private bool CellBlocksGround(Vector2I cell) => IsBlocked(cell) || BuildingAt(cell) >= 0;
@@ -548,8 +577,16 @@ public partial class BattleSimulation
     private static float UnitSpeed(int kind) => kind == UnitRanged ? BattleConfig.RangedSpeed : kind == UnitDragon ? BattleConfig.DragonSpeed : kind == UnitSiege ? BattleConfig.SiegeSpeed : BattleConfig.MeleeSpeed;
     private static float UnitAttackDamage(int kind) => kind == UnitRanged ? BattleConfig.RangedDamage : kind == UnitDragon ? BattleConfig.DragonDamage : kind == UnitSiege ? BattleConfig.SiegeDamage : BattleConfig.MeleeDamage;
     private static float UnitAttackInterval(int kind) => kind == UnitRanged ? BattleConfig.RangedAttackInterval : kind == UnitDragon ? BattleConfig.DragonAttackInterval : kind == UnitSiege ? BattleConfig.SiegeAttackInterval : BattleConfig.MeleeAttackInterval;
-    private static int BuildCost(int kind) => kind == BuildDefenseTower ? BattleConfig.DefenseTowerCost : BattleConfig.BarracksCost;
-    private int CountBarracks(int team) { int count = 0; for (int i = 0; i < _buildingCount; i++) if (!_buildings[i].Destroyed && _buildings[i].Team == team && _buildings[i].Kind == BuildingBarracks) count++; return count; }
+    private static int BuildCost(int kind) => kind switch
+    {
+        BuildRangedSpawner => BattleConfig.RangedSpawnerCost,
+        BuildDefenseTower => BattleConfig.DefenseTowerCost,
+        BuildDragonLair => BattleConfig.DragonLairCost,
+        BuildSiegeSpawner => BattleConfig.SiegeSpawnerCost,
+        BuildRallyPoint => BattleConfig.RallyPointCost,
+        _ => BattleConfig.MeleeSpawnerCost,
+    };
+    private int CountSpawners(int team) { int count = 0; for (int i = 0; i < _buildingCount; i++) if (!_buildings[i].Destroyed && _buildings[i].Team == team && (_buildings[i].Kind == BuildingSpawner || _buildings[i].Kind == BuildingDragonLair)) count++; return count; }
     private int BuildingAt(Vector2I cell) { for (int i = 0; i < _buildingCount; i++) if (!_buildings[i].Destroyed && _buildings[i].Cell == cell) return i; return -1; }
     private int BuildingIndexFromId(int id) { for (int i = 0; i < _buildingCount; i++) if (_buildings[i].Id == id) return i; return -1; }
     private Vector2I BuildingCell(int id) { int index = BuildingIndexFromId(id); return index >= 0 ? _buildings[index].Cell : new Vector2I(-1, -1); }

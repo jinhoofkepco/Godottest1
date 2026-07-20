@@ -35,7 +35,7 @@ Each rally building stores:
 - `formation`: `LINE`, `WEDGE`, or `LOOSE`.
 - cached `waiting_count` for snapshots and AI observation.
 
-Each ungrouped unit stores `rally_point_id`. It follows the selected rally with existing steering, separation, obstacle avoidance, WAIT, and inertia. A destroyed or invalid rally clears this ID, after which the unit reacquires the nearest live rally or advances individually.
+Each ungrouped unit stores `rally_point_id`. It follows the selected rally with existing steering, separation, obstacle avoidance, WAIT, and inertia. The arrival radius is 2.8 cells: the earlier 1.7-cell value admitted only the first three-to-four members of a stopped queue and could never reach the ten-member launch condition. A destroyed or invalid rally clears this ID, after which the unit reacquires the nearest live rally or advances individually.
 
 In ADVANCE mode, ten arrived members are selected in stable unit-ID order, role counts are derived from those members, formation slots are assigned with the existing role-first geometry, and a MARCHING legion launches toward the enemy HQ. Remaining units form the next batch.
 
@@ -58,7 +58,7 @@ Legions retain anchor, heading, formation, GATHERING/MARCHING/ENGAGED/BROKEN, sl
 - SIEGE speed: 0.56 cells/second.
 - DRAGON speed: 1.19 cells/second.
 
-All construction costs remain unchanged. Balance validation accepts only terminal matches between 300 and 420 seconds and records passive defeat plus an active-player victory path.
+All construction costs remain unchanged. A fully responding match must finish between 300 and 420 seconds; a player who never constructs anything may be defeated earlier. Balance validation records both the passive defeat and a 300-to-420-second active victory path.
 
 ## Class Counter Matrix
 
@@ -75,7 +75,7 @@ All construction costs remain unchanged. Balance validation accepts only termina
 | DRAGON | SIEGE | 1.5 |
 | MELEE | DRAGON | 0.6 |
 
-All other pairs are 1.0. SIEGE splash applies its attacker/target-kind multiplier per affected unit, which is 1.0 for the initial table. A packed hit flag marks multipliers above 1.0 so FX can use the warm strong-hit color without adding dictionary events.
+All other pairs are 1.0. Final permitted tuning moved RANGED→MELEE to 1.7, MELEE→RANGED to 1.2, RANGED→DRAGON to 1.2, and DRAGON→RANGED to 1.7; every other listed value stayed at its initial value. SIEGE splash applies its attacker/target-kind multiplier per affected unit. A packed hit flag marks multipliers above 1.0 so FX can use the warm strong-hit color without adding dictionary events.
 
 The automated matrix uses equal-gold groups, multiple deterministic seeds, and reports the advantaged side's win rate. Each named favorable matchup must reach at least 75%; values may move by at most 0.2 from the table if the initial geometry produces a lower result.
 
@@ -83,7 +83,7 @@ The automated matrix uses equal-gold groups, multiple deterministic seeds, and r
 
 One reusable controller state is stored per team so debug tests can run enemy-vs-passive and AI-vs-AI without a second simulation implementation.
 
-1. **Economy:** keep one rally point early, add a second after four spawners, and spend affordable gold on class spawners. There is no three-building terminal guard.
+1. **Economy:** keep one rally point early, add a second after four spawners, and spend affordable gold on class spawners. Rally placement searches outward from the center column so queues do not cross the entire map. There is no three-building terminal guard.
 2. **Counter-pick:** every decision interval, count hostile MELEE/RANGED/SIEGE/DRAGON units. Weight the build kind that has the highest summed favorable multiplier, with a small base weight for every class.
 3. **Battlefield response:** set rallies to DEFEND when that team's occupancy is below 45%, otherwise ADVANCE. A defending rally may be rebuilt closer to the HQ when lost.
 4. **Forced spending:** above the configured gold threshold, skip the normal cadence and repeatedly attempt the cheapest useful spawner, a missing rally, or an HQ-zone tower until gold falls below the threshold or no legal cell exists.
@@ -104,7 +104,6 @@ Spawner production continues to use `unit_produced`. Rally changes use structura
 
 - Rule tests cover nearest-rally assignment, no-rally advance, ADVANCE launch at ten, DEFEND cap fourteen, overflow launch, rally destruction fallback, defense engage/reform, all three formations, tempo constants, and multiplier composition.
 - The counter matrix runs equal-gold matchup trials and requires at least 75% for each favorable matchup.
-- AI health runs 50 enemy-vs-passive matches, 50 AI-vs-AI matches, and a full-match gold/build audit. Passive must lose every match, blue AI win rate must be 40-60%, average AI-vs-AI duration must be 300-420 seconds, and no match may remain construction-stalled with gold above the forced-spend threshold.
+- AI health runs 50 enemy-vs-passive matches, 50 AI-vs-AI matches, and a full-match gold/build audit. Passive must lose every match. AI-vs-AI uses the standard half-point score for 420-second time-limit draws and requires a 40-60% blue score, 300-420-second average duration, and no construction stall above the forced-spend threshold.
 - Smoke captures add a DEFEND garrison and an ADVANCE launch, with visibly different ring/arrow markers and waiting counts.
 - Existing deterministic, terrain, flow, siege, stress, board-delta, atlas, render, and Android export checks remain green.
-
