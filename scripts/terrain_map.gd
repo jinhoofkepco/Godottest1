@@ -54,6 +54,9 @@ func all_required_paths_reachable(deployment_depth: int) -> bool:
 	var ally_hq := Vector2i(width / 2, height - 1)
 	var from_enemy := _reachable_from(enemy_hq)
 	var from_ally := _reachable_from(ally_hq)
+	for index in elevation.size():
+		if from_enemy[index] == 0 or from_ally[index] == 0:
+			return false
 	var depth := clampi(deployment_depth, 1, maxi(1, height / 2 - 1))
 	for row in range(1, depth + 1):
 		for column in width:
@@ -96,6 +99,7 @@ func _stamp_cliff_pairs(rng: RandomNumberGenerator, pair_count: int, minimum_row
 		if get_elevation(cell) != 0 or not _neighbors_are_level(cell, 0):
 			continue
 		_set_mirrored(cell, 2)
+		_set_mirrored(cell + Vector2i(0, -1), 1)
 		added += 1
 
 

@@ -10,6 +10,8 @@ const OUTPUTS := [
 	"res://build/smoke_flow_split.png",
 	"res://build/smoke_infantry_closeup.png",
 	"res://build/smoke_visual_hierarchy.png",
+	"res://build/smoke_elevation_overview.png",
+	"res://build/smoke_high_ground_combat.png",
 ]
 
 
@@ -47,7 +49,7 @@ func _run() -> void:
 			return
 		main.queue_free()
 		await process_frame
-	print("SMOKE CAPTURE PASS: opening / advantage / disadvantage / cluster / persistent flank / flow split / infantry closeup / visual hierarchy (540x960)")
+	print("SMOKE CAPTURE PASS: opening / advantage / disadvantage / cluster / persistent flank / flow split / infantry closeup / visual hierarchy / elevation overview / high-ground combat (540x960)")
 	quit(0)
 
 
@@ -92,8 +94,12 @@ func _stage_scenario(main: Node, scenario: int) -> bool:
 		return _stage_flow_split(main)
 	elif scenario == 6:
 		return _stage_infantry_closeup(main)
-	else:
+	elif scenario == 7:
 		return _stage_visual_hierarchy(main)
+	elif scenario == 8:
+		return _stage_elevation_overview(main)
+	else:
+		return _stage_high_ground_combat(main)
 	return true
 
 
@@ -145,8 +151,9 @@ func _stage_persistent_flank(main: Node) -> bool:
 func _stage_flow_split(main: Node) -> bool:
 	var simulation = main.simulation
 	var wall_row: int = GameConfig.GRID_ROWS / 2
+	simulation.elevation.fill(0)
 	for column in GameConfig.GRID_COLUMNS:
-		simulation.blocked[wall_row * GameConfig.GRID_COLUMNS + column] = 0 if column in [5, 16] else 1
+		simulation.elevation[wall_row * GameConfig.GRID_COLUMNS + column] = 0 if column in [5, 16] else 2
 	for rank in 5:
 		for column in range(2, 20, 2):
 			_spawn_if_clear(simulation, simulation.TEAM_ALLY, Vector2i(column, wall_row + 3 + rank), simulation.UNIT_MELEE)
@@ -218,6 +225,53 @@ func _stage_visual_hierarchy(main: Node) -> bool:
 	main.fx.show_ranged_shot(Vector2(8.5, middle_row + 1.7), Vector2(10.5, middle_row - 1.2), simulation.TEAM_ALLY)
 	_focus_map(main, Vector2i(GameConfig.GRID_COLUMNS / 2, middle_row), 3.15)
 	return dragon_id > 0 and not damaged_ids.is_empty() and main.unit_renderer.get_hp_bar_alpha(damaged_ids[0]) > 0.0
+
+
+func _stage_elevation_overview(main: Node) -> bool:
+	var simulation = main.simulation
+	var heights: PackedByteArray = simulation.get_elevation()
+	var summit_index: int = heights.find(2)
+	if summit_index < 0:
+		return false
+	var summit := Vector2i(summit_index % GameConfig.GRID_COLUMNS, summit_index / GameConfig.GRID_COLUMNS)
+	for column in range(2, GameConfig.GRID_COLUMNS - 2, 3):
+		_spawn_if_clear(simulation, simulation.TEAM_ENEMY, Vector2i(column, GameConfig.GRID_ROWS / 2 - 5), simulation.UNIT_MELEE)
+		_spawn_if_clear(simulation, simulation.TEAM_ALLY, Vector2i(column, GameConfig.GRID_ROWS / 2 + 5), simulation.UNIT_RANGED)
+	main.grid.queue_redraw()
+	main.hud.show_message("ELEVATION 0 / 1 / 2 // CLIFF ROUTES", GameConfig.COLOR_TEAL)
+	_focus_map(main, summit, 2.65)
+	return heights.count(1) > 0 and heights.count(2) > 0 and simulation.terrain_paths_valid()
+
+
+func _stage_high_ground_combat(main: Node) -> bool:
+	var simulation = main.simulation
+	simulation.elevation.fill(0)
+	var center := Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2)
+	for row in range(center.y - 3, center.y + 2):
+		for column in range(center.x - 3, center.x + 4):
+			simulation.elevation[row * GameConfig.GRID_COLUMNS + column] = 1
+	for row in range(center.y - 2, center.y):
+		for column in range(center.x - 1, center.x + 2):
+			simulation.elevation[row * GameConfig.GRID_COLUMNS + column] = 2
+	var high_position := Vector2(center.x + 0.5, center.y - 1.5)
+	var low_position := Vector2(center.x + 0.5, center.y + 1.5)
+	var ranged_id: int = simulation.spawn_unit(simulation.TEAM_ALLY, high_position, simulation.UNIT_RANGED)
+	var enemy_id: int = simulation.spawn_unit(simulation.TEAM_ENEMY, low_position, simulation.UNIT_MELEE)
+	var ranged_index: int = simulation.unit_ids.find(ranged_id)
+	var enemy_index: int = simulation.unit_ids.find(enemy_id)
+	simulation.unit_positions[ranged_index] = high_position
+	simulation.unit_positions[enemy_index] = low_position
+	simulation.unit_states[ranged_index] = simulation.STATE_ATTACK
+	simulation.unit_lunge_directions[ranged_index] = high_position.direction_to(low_position)
+	simulation.unit_lunge_timers[ranged_index] = GameConfig.UNIT_LUNGE_DURATION * 0.5
+	simulation.unit_hp[enemy_index] *= 0.62
+	main.grid.queue_redraw()
+	main.unit_renderer.sync()
+	main.fx.show_ranged_shot(high_position, low_position, simulation.TEAM_ALLY)
+	main.fx.show_hit(low_position, true)
+	main.hud.show_message("HIGH GROUND +25% // RANGED +0.5", GameConfig.COLOR_ORANGE)
+	_focus_map(main, center, 4.8)
+	return simulation.elevation_at_position(high_position) == 2 and simulation.elevation_at_position(low_position) == 1
 
 
 func _nearest_clear_cell(simulation, desired: Vector2i, excluded: Array = []) -> Vector2i:

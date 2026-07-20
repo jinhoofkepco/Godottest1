@@ -435,7 +435,7 @@ func _step(delta: float) -> void:
 			if not waiting:
 				steering += advance_direction * GameConfig.UNIT_ADVANCE_WEIGHT + seek_direction * GameConfig.UNIT_SEEK_WEIGHT
 				if unit_kinds[index] != UNIT_DRAGON:
-					steering += _calculate_obstacle_repulsion(position) * GameConfig.OBSTACLE_REPULSION_WEIGHT
+					steering += _calculate_obstacle_repulsion(position) * GameConfig.GROUND_BLOCK_REPULSION_WEIGHT
 			unit_states[index] = STATE_WAIT if waiting else STATE_ADVANCE
 			var maximum_speed := _unit_speed(unit_kinds[index]) * unit_speed_scales[index]
 			if unit_kinds[index] != UNIT_DRAGON and advance_direction.length_squared() > 0.000001:
@@ -704,7 +704,7 @@ func _calculate_separation(unit_index: int) -> Vector2:
 
 func _calculate_obstacle_repulsion(position: Vector2) -> Vector2:
 	var cell := Vector2i(floori(position.x), floori(position.y))
-	var radius := GameConfig.OBSTACLE_REPULSION_RADIUS
+	var radius := GameConfig.GROUND_BLOCK_REPULSION_RADIUS
 	var cell_radius := ceili(radius)
 	var repulsion := Vector2.ZERO
 	for row in range(maxi(0, cell.y - cell_radius), mini(GameConfig.GRID_ROWS - 1, cell.y + cell_radius) + 1):
@@ -1051,26 +1051,3 @@ func _cell_is_valid(cell: Vector2i) -> bool:
 
 func _cell_index(cell: Vector2i) -> int:
 	return cell.y * GameConfig.GRID_COLUMNS + cell.x
-
-
-func _generate_blocked_cells() -> void:
-	var obstacle_rng := RandomNumberGenerator.new()
-	obstacle_rng.seed = GameConfig.OBSTACLE_SEED
-	var row_counts := PackedInt32Array()
-	row_counts.resize(GameConfig.GRID_ROWS)
-	var pairs_added := 0
-	while pairs_added < GameConfig.OBSTACLE_PAIR_COUNT:
-		var cell := Vector2i(
-			obstacle_rng.randi_range(0, GameConfig.GRID_COLUMNS - 1),
-			obstacle_rng.randi_range(GameConfig.OBSTACLE_MIN_ROW, GameConfig.OBSTACLE_MAX_ROW)
-		)
-		var mirrored := Vector2i(GameConfig.GRID_COLUMNS - 1 - cell.x, GameConfig.GRID_ROWS - 1 - cell.y)
-		if is_blocked(cell) or is_blocked(mirrored):
-			continue
-		if row_counts[cell.y] >= GameConfig.OBSTACLE_MAX_PER_ROW or row_counts[mirrored.y] >= GameConfig.OBSTACLE_MAX_PER_ROW:
-			continue
-		blocked[_cell_index(cell)] = 1
-		blocked[_cell_index(mirrored)] = 1
-		row_counts[cell.y] += 1
-		row_counts[mirrored.y] += 1
-		pairs_added += 1

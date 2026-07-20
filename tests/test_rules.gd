@@ -71,6 +71,13 @@ func _test_elevation_generation_and_reachability() -> void:
 		var cell := Vector2i(index % simulation.config.GRID_COLUMNS, index / simulation.config.GRID_COLUMNS)
 		var mirrored := Vector2i(simulation.config.GRID_COLUMNS - 1 - cell.x, simulation.config.GRID_ROWS - 1 - cell.y)
 		_expect(heights[index] == heights[mirrored.y * simulation.config.GRID_COLUMNS + mirrored.x], "terrain is center-mirror symmetric at %s" % cell)
+		if heights[index] == 2:
+			var has_ramp_neighbor := false
+			for offset: Vector2i in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+				var neighbor: Vector2i = cell + offset
+				if neighbor.x >= 0 and neighbor.x < simulation.config.GRID_COLUMNS and neighbor.y >= 0 and neighbor.y < simulation.config.GRID_ROWS and heights[neighbor.y * simulation.config.GRID_COLUMNS + neighbor.x] >= 1:
+					has_ramp_neighbor = true
+			_expect(has_ramp_neighbor, "every elevation-2 build cell has at least one traversable ramp")
 	_expect(simulation.elevation_at_cell(Vector2i(simulation.config.GRID_COLUMNS / 2, 0)) == 0, "enemy HQ remains on clear level terrain")
 	_expect(simulation.elevation_at_cell(Vector2i(simulation.config.GRID_COLUMNS / 2, simulation.config.GRID_ROWS - 1)) == 0, "ally HQ remains on clear level terrain")
 	_expect(simulation.has_method("terrain_paths_valid") and simulation.terrain_paths_valid(), "all deployment candidates retain a traversable path to the opposing HQ")
