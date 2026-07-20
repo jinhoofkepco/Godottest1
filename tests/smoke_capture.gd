@@ -38,7 +38,12 @@ func _run() -> void:
 	await _capture_cluster("smoke_large_army.png", 360)
 	await _capture_siege_impact()
 	await _capture_closeup("smoke_siege_closeup.png", true)
-	print("SMOKE CAPTURE PASS: 14 frames")
+	await _capture_legion_gathering()
+	await _capture_legion_formation("smoke_legion_line.png", 0)
+	await _capture_legion_formation("smoke_legion_wedge.png", 1)
+	await _capture_legion_engaged()
+	await _capture_legion_formation("smoke_legion_loose.png", 2)
+	print("SMOKE CAPTURE PASS: 19 frames")
 	quit(0)
 
 
@@ -48,6 +53,7 @@ func _reset() -> void:
 	for view in main.building_views.values():
 		if is_instance_valid(view): view.free()
 	main.building_views.clear()
+	main.building_records.clear()
 	main._last_board_version = -1
 	main.game_result = ""
 	main.map_view.set_interaction_enabled(true)
@@ -192,6 +198,43 @@ func _capture_siege_impact() -> void:
 	main.fx.show_siege_impact(Vector2(10.0, 20.5), TEAM_ALLY, GameConfig.SIEGE_BLAST_RADIUS)
 	main.unit_renderer.sync()
 	await _save("smoke_siege_impact.png")
+
+
+func _capture_legion_gathering() -> void:
+	_reset()
+	main.simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000, "enemy": 0})
+	main.simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	main.simulation.call("TryBuildBarracks", TEAM_ALLY, Vector2i(10, 35), {"melee": 6, "ranged": 3, "siege": 1, "dragon": 0}, 0)
+	for tick in 230: main.simulation.call("Step", 1.0 / 30.0)
+	main._sync_board_and_buildings(true)
+	main.unit_renderer.sync()
+	var focus: Vector2 = main.map_view.to_global(main.grid.position_to_world(Vector2(10.5, 33.8)))
+	main.map_view.set_zoom_at(8.0, focus)
+	await _save("smoke_legion_gathering.png")
+
+
+func _capture_legion_formation(file_name: String, formation: int) -> void:
+	_reset()
+	main.simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	main.simulation.call("ApplyDebugCommand", {"op": "spawn_legion", "team": TEAM_ALLY, "formation": formation, "template": {"melee": 6, "ranged": 3, "siege": 2, "dragon": 1}, "anchor": Vector2(10.5, 28.0)})
+	main.unit_renderer.sync()
+	var focus: Vector2 = main.map_view.to_global(main.grid.position_to_world(Vector2(10.5, 28.0)))
+	main.map_view.set_zoom_at(5.0, focus)
+	await _save(file_name)
+
+
+func _capture_legion_engaged() -> void:
+	_reset()
+	main.simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	var template := {"melee": 6, "ranged": 3, "siege": 1, "dragon": 0}
+	main.simulation.call("ApplyDebugCommand", {"op": "spawn_legion", "team": TEAM_ALLY, "formation": 1, "template": template, "anchor": Vector2(10.5, 24.2)})
+	main.simulation.call("ApplyDebugCommand", {"op": "spawn_legion", "team": TEAM_ENEMY, "formation": 0, "template": template, "anchor": Vector2(10.5, 20.8)})
+	for tick in 30: main.simulation.call("Step", 1.0 / 30.0)
+	main.unit_renderer.sync()
+	main.fx.show_hit(Vector2(10.5, 22.5), false)
+	var focus: Vector2 = main.map_view.to_global(main.grid.position_to_world(Vector2(10.5, 22.5)))
+	main.map_view.set_zoom_at(5.0, focus)
+	await _save("smoke_legion_engaged.png")
 
 
 func _save(file_name: String) -> void:

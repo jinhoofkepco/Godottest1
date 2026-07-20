@@ -24,6 +24,8 @@ var _infantry_units: MultiMeshInstance2D
 var _enemy_dragons: MultiMeshInstance2D
 var _ally_dragons: MultiMeshInstance2D
 var _shadows: MultiMeshInstance2D
+var _legion_banners: MultiMeshInstance2D
+var _legion_ghosts: MultiMeshInstance2D
 var _last_snapshot: Dictionary = {}
 var bulk_upload_count := 0
 var last_sync_usec := 0
@@ -43,6 +45,10 @@ func _ready() -> void:
 	_ally_dragons.z_index = 8
 	_shadows = _make_batch("UnitBlobShadows", _make_ellipse_mesh(18.0, 6.0), true, false)
 	_shadows.z_index = 6
+	_legion_ghosts = _make_batch("LegionGatheringGhosts", _make_diamond_mesh(18.0, 9.0), true, true)
+	_legion_ghosts.z_index = 5
+	_legion_banners = _make_batch("LegionBanners", _make_flag_mesh(), true, true)
+	_legion_banners.z_index = 12
 	_infantry_units.material = _make_atlas_material(_make_team_texture_array())
 	_enemy_dragons.material = _make_single_atlas_material(RED_DRAGON_ATLAS)
 	_ally_dragons.material = _make_single_atlas_material(BLUE_DRAGON_ATLAS)
@@ -70,7 +76,7 @@ func note_damage(_unit_id: int) -> void:
 
 
 func get_multimesh_count() -> int:
-	return int(_infantry_units != null) + int(_enemy_dragons != null) + int(_ally_dragons != null)
+	return int(_infantry_units != null) + int(_enemy_dragons != null) + int(_ally_dragons != null) + int(_legion_banners != null) + int(_legion_ghosts != null)
 
 
 func get_shadow_batch_count() -> int:
@@ -90,6 +96,8 @@ func sync() -> void:
 	_upload_multimesh(_enemy_dragons.multimesh, int(_last_snapshot.get("enemy_dragon_count", 0)), _last_snapshot.get("enemy_dragon_buffer", PackedFloat32Array()))
 	_upload_multimesh(_ally_dragons.multimesh, int(_last_snapshot.get("ally_dragon_count", 0)), _last_snapshot.get("ally_dragon_buffer", PackedFloat32Array()))
 	_upload_multimesh(_shadows.multimesh, int(_last_snapshot.get("shadow_count", 0)), _last_snapshot.get("shadow_buffer", PackedFloat32Array()))
+	_upload_multimesh(_legion_banners.multimesh, int(_last_snapshot.get("legion_banner_count", 0)), _last_snapshot.get("legion_banner_buffer", PackedFloat32Array()))
+	_upload_multimesh(_legion_ghosts.multimesh, int(_last_snapshot.get("legion_ghost_count", 0)), _last_snapshot.get("legion_ghost_buffer", PackedFloat32Array()))
 	queue_redraw()
 	last_sync_usec = Time.get_ticks_usec() - started
 
@@ -190,6 +198,30 @@ func _make_ellipse_mesh(width: float, height: float) -> ArrayMesh:
 	for index in 16:
 		var angle := TAU * float(index) / 16.0
 		points.append(Vector2(cos(angle) * width * 0.5, sin(angle) * height * 0.5))
+	var vertices := PackedVector3Array()
+	for point in points:
+		vertices.append(Vector3(point.x, point.y, 0.0))
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_INDEX] = Geometry2D.triangulate_polygon(points)
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+func _make_diamond_mesh(width: float, height: float) -> ArrayMesh:
+	var points := PackedVector2Array([Vector2(0, -height * 0.5), Vector2(width * 0.5, 0), Vector2(0, height * 0.5), Vector2(-width * 0.5, 0)])
+	return _mesh_from_polygon(points)
+
+
+func _make_flag_mesh() -> Mesh:
+	var mesh := QuadMesh.new()
+	mesh.size = Vector2(18, 24)
+	return mesh
+
+
+func _mesh_from_polygon(points: PackedVector2Array) -> ArrayMesh:
 	var vertices := PackedVector3Array()
 	for point in points:
 		vertices.append(Vector3(point.x, point.y, 0.0))

@@ -20,11 +20,11 @@ The existing unit SoA gains `legion_id` and `slot_offset`. `legion_id == -1` sel
 
 Template validation clamps the total to twelve, `SIEGE` to two, and `DRAGON` to one. Counts are never silently made negative. The three player presets are:
 
-- Shield/LINE: 6 melee, 3 ranged, 1 siege, 0 dragon.
-- Fire/LOOSE: 3 melee, 6 ranged, 1 siege, 0 dragon.
-- Charge/WEDGE: 7 melee, 2 ranged, 0 siege, 1 dragon.
+- Shield/LINE: 7 melee, 4 ranged, 1 siege, 0 dragon.
+- Fire/LOOSE: 4 melee, 7 ranged, 1 siege, 0 dragon.
+- Charge/WEDGE: 9 melee, 1 ranged, 1 siege, 1 dragon.
 
-The enemy uses these three plus a mixed LINE template (4 melee, 4 ranged, 2 siege, 1 dragon) with deterministic weighted selection.
+The enemy uses these three plus a mixed LINE template (6 melee, 4 ranged, 1 siege, 1 dragon) with deterministic weighted selection.
 
 ## Formation Geometry
 

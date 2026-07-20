@@ -9,7 +9,7 @@ var failures: Array[String] = []
 func run_all(tree: SceneTree) -> Array[String]:
 	run_siege_contracts()
 	await _test_determinism_fixture(tree)
-	await _test_siege_production_and_render_flag(tree)
+	await _test_legion_production_and_render_flag(tree)
 	await _test_board_delta_boundary(tree)
 	_test_bulk_boundary_contract()
 	return failures
@@ -18,7 +18,7 @@ func run_all(tree: SceneTree) -> Array[String]:
 func run_siege_contracts() -> Array[String]:
 	_expect(is_equal_approx(GameConfig.SIEGE_UNIT_ATTACK_RANGE, 7.0), "SIEGE maximum range is doubled to 7.0 cells")
 	_expect(is_equal_approx(GameConfig.SIEGE_UNIT_ATTACK_DAMAGE, 55.8), "SIEGE base damage is multiplied by 1.8")
-	_expect(is_equal_approx(GameConfig.SIEGE_PRODUCTION_INTERVAL, GameConfig.SPAWNER_PRODUCTION_INTERVAL * 3.0), "SIEGE production rate is one third of normal")
+	_expect(is_equal_approx(GameConfig.BARRACKS_PRODUCTION_INTERVAL, 1.2), "all legion roles share the barracks 1.2 second production cadence")
 	var renderer_source := FileAccess.get_file_as_string("res://scripts/unit_renderer.gd")
 	_expect(renderer_source.contains("atlas_data.a") and renderer_source.contains("1.0 - UV.y"), "shared atlas shader supports a per-instance vertical flip")
 	var snapshot_source := FileAccess.get_file_as_string("res://scripts/BattleSimulation.Snapshots.cs")
@@ -27,59 +27,47 @@ func run_siege_contracts() -> Array[String]:
 
 
 func _test_determinism_fixture(tree: SceneTree) -> void:
-	var expected: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://tests/fixtures/gdscript_determinism.json"))
-	_expect(int(expected.seed) == 731942, "GDScript golden fixture uses the C# reset seed")
-	var simulation = await _new_simulation(tree)
-	for building: Dictionary in expected.inputs:
-		var coordinates: Array = building.cell
-		_expect(simulation.call("ApplyDebugCommand", {
-			"op": "add_building",
-			"team": int(building.team),
-			"kind": 1,
-			"cell": Vector2i(int(coordinates[0]), int(coordinates[1])),
-			"unit_kind": int(building.kind),
-		}), "determinism setup building is accepted")
-	var elapsed_ticks := 0
-	for checkpoint: Dictionary in expected.checkpoints:
-		var target_tick := int(checkpoint.tick)
-		while elapsed_ticks < target_tick:
-			simulation.call("Step", 1.0 / 30.0)
-			elapsed_ticks += 1
-		var actual: Dictionary = simulation.call("GetDebugSnapshot")
-		var counts: Array = checkpoint.counts
-		_expect(_count_units(actual, 1, 0) == int(counts[0]), "tick %d enemy melee count matches GDScript golden" % target_tick)
-		_expect(_count_units(actual, 1, 1) == int(counts[1]), "tick %d enemy ranged count matches GDScript golden" % target_tick)
-		_expect(_count_units(actual, 2, 0) == int(counts[4]), "tick %d ally melee count matches GDScript golden" % target_tick)
-		_expect(_count_units(actual, 2, 1) == int(counts[5]), "tick %d ally ranged count matches GDScript golden" % target_tick)
-		_expect(int(actual.ally_gold) == int(checkpoint.ally_gold), "tick %d ally gold matches GDScript golden" % target_tick)
-		_expect(int(actual.enemy_gold) == int(checkpoint.enemy_gold), "tick %d enemy gold matches GDScript golden" % target_tick)
-		_expect(abs(float(actual.ally_occupancy) - float(checkpoint.ally_occupancy)) <= 0.0001, "tick %d occupancy matches GDScript golden" % target_tick)
-		_expect(abs(float(actual.time_remaining) - float(checkpoint.time_remaining)) <= 0.002, "tick %d timer matches GDScript golden" % target_tick)
-		_expect(abs(_building_hp(actual.buildings, int(actual.ally_hq_id)) - float(checkpoint.ally_hq_hp)) <= 0.001, "tick %d allied HQ HP matches GDScript golden" % target_tick)
-		_expect(abs(_building_hp(actual.buildings, int(actual.enemy_hq_id)) - float(checkpoint.enemy_hq_hp)) <= 0.001, "tick %d enemy HQ HP matches GDScript golden" % target_tick)
-		_expect(String(actual.result) == String(checkpoint.result), "tick %d terminal result matches GDScript golden" % target_tick)
-	simulation.queue_free()
+	var first = await _new_simulation(tree)
+	var second = await _new_simulation(tree)
+	var template := {"melee": 4, "ranged": 4, "siege": 1, "dragon": 1}
+	for simulation in [first, second]:
+		simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000, "enemy": 1000})
+		simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+		_expect(simulation.call("TryBuildBarracks", 2, Vector2i(6, 35), template, 0), "determinism setup accepts the same barracks input")
+		_expect(simulation.call("TryBuildBarracks", 1, Vector2i(15, 8), template, 2), "determinism setup accepts the mirrored enemy barracks")
+	for tick in 450:
+		first.call("Step", 1.0 / 30.0)
+		second.call("Step", 1.0 / 30.0)
+	var a: Dictionary = first.call("GetDebugSnapshot")
+	var b: Dictionary = second.call("GetDebugSnapshot")
+	_expect(a.unit_ids == b.unit_ids and a.unit_kinds == b.unit_kinds and a.unit_legion_ids == b.unit_legion_ids, "same seed and inputs produce identical legion membership after 450 ticks")
+	_expect(a.unit_positions == b.unit_positions and a.legion_anchors == b.legion_anchors, "same seed and inputs produce identical unit and legion positions")
+	_expect(int(a.ally_gold) == int(b.ally_gold) and is_equal_approx(float(a.ally_occupancy), float(b.ally_occupancy)), "same seed preserves economic and territory state")
+	first.queue_free()
+	second.queue_free()
 
 
-func _test_siege_production_and_render_flag(tree: SceneTree) -> void:
+func _test_legion_production_and_render_flag(tree: SceneTree) -> void:
 	var simulation = await _new_simulation(tree)
-	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": 2, "kind": 1, "cell": Vector2i(8, 35), "unit_kind": 0}), "normal spawner is added")
-	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": 2, "kind": 1, "cell": Vector2i(13, 35), "unit_kind": 3}), "SIEGE spawner is added")
-	for tick in range(49):
+	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000})
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	var template := {"melee": 2, "ranged": 1, "siege": 1, "dragon": 0}
+	_expect(simulation.call("TryBuildBarracks", 2, Vector2i(8, 35), template, 0), "configured barracks is added")
+	for tick in range(37):
 		simulation.call("Step", 1.0 / 30.0)
-	var after_normal: Dictionary = simulation.call("GetDebugSnapshot")
-	_expect(_count_units(after_normal, 2, 0) == 1, "normal spawner produces once after 1.6 seconds")
-	_expect(_count_units(after_normal, 2, 3) == 0, "SIEGE spawner has not produced at the normal interval")
-	for tick in range(96):
+	var after_first: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(_count_units(after_first, 2, 0) == 1, "barracks produces the first template member after 1.2 seconds")
+	for tick in range(108):
 		simulation.call("Step", 1.0 / 30.0)
-	var after_siege: Dictionary = simulation.call("GetDebugSnapshot")
-	_expect(_count_units(after_siege, 2, 3) == 1, "SIEGE spawner produces once after triple interval")
+	var completed: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(_count_units(completed, 2, 0) == 2 and _count_units(completed, 2, 1) == 1 and _count_units(completed, 2, 3) == 1, "barracks produces the complete role-ordered legion template")
 	var render: Dictionary = simulation.call("GetRenderSnapshot")
 	var unit_buffer: PackedFloat32Array = render.infantry_buffer
 	var flipped_siege_found := false
 	for index in range(int(render.infantry_count)):
 		flipped_siege_found = flipped_siege_found or unit_buffer[index * 16 + 15] > 0.5
 	_expect(flipped_siege_found, "SIEGE instance carries vertical flip custom data")
+	_expect(int(render.legion_banner_count) >= 1, "completed legion publishes a packed banner")
 	simulation.queue_free()
 
 

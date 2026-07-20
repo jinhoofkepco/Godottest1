@@ -19,11 +19,8 @@ public static class BattleConfig
     public const float EnemyBuildInterval = 14f;
     public const int EnemyMaxSpawners = 3;
 
-    public const int SpawnerCost = 60;
-    public const int RangedSpawnerCost = 80;
-    public const int SiegeSpawnerCost = 140;
+    public const int BarracksCost = 100;
     public const int DefenseTowerCost = 120;
-    public const int DragonLairCost = 220;
 
     public const float MeleeHp = 48f;
     public const float MeleeDamage = 10f;
@@ -84,9 +81,20 @@ public static class BattleConfig
     public const float HighGroundDamageMultiplier = 1.25f;
     public const float LowGroundDamageMultiplier = 0.75f;
 
-    public const float SpawnerMaxHp = 240f;
-    public const float SpawnerProductionInterval = 1.6f;
-    public const float SiegeProductionInterval = SpawnerProductionInterval * 3f;
+    public const float BarracksMaxHp = 240f;
+    public const float BarracksProductionInterval = 1.2f;
+    public const float LegionGatheringMaxSeconds = 15f;
+    public const int LegionMaxMembers = 12;
+    public const int LegionMaxSiege = 2;
+    public const int LegionMaxDragons = 1;
+    public const float LegionBrokenRatio = 0.30f;
+    public const float LegionSlotFollowWeight = 2.65f;
+    public const float LegionEngagedSlotWeight = 0.38f;
+    public const float LegionGatherTolerance = 0.42f;
+    public const float LegionEngageRadius = 3.4f;
+    public const float LegionDisengageSeconds = 1.2f;
+    public const float LegionHeadingTurnRate = 5.5f;
+    public const float LegionWaypointTolerance = 0.65f;
     public const float DefenseTowerMaxHp = 320f;
     public const float DefenseTowerRange = 3.6f;
     public const float DefenseTowerDamage = 6f;
@@ -95,8 +103,7 @@ public static class BattleConfig
     public const float HqDamage = DefenseTowerDamage * 3f;
     public const float HqAttackInterval = DefenseTowerAttackInterval;
     public const float DragonLairMaxHp = 300f;
-    public const float DragonProductionInterval = 12.5f;
-    public const float HqMaxHp = 7200f;
+    public const float HqMaxHp = 11500f;
 
     public const float TerritoryUpdateInterval = 0.2f;
     public const int DecisionGroupCount = 3;

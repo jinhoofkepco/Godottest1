@@ -12,18 +12,15 @@ public partial class BattleSimulation : Node
     public const int TeamEnemy = 1;
     public const int TeamAlly = 2;
     public const int BuildingHq = 0;
-    public const int BuildingSpawner = 1;
+    public const int BuildingBarracks = 1;
     public const int BuildingDefenseTower = 2;
     public const int BuildingDragonLair = 3;
     public const int UnitMelee = 0;
     public const int UnitRanged = 1;
     public const int UnitDragon = 2;
     public const int UnitSiege = 3;
-    public const int BuildMeleeSpawner = 0;
-    public const int BuildRangedSpawner = 1;
     public const int BuildDefenseTower = 2;
-    public const int BuildDragonLair = 3;
-    public const int BuildSiegeSpawner = 4;
+    public const int BuildBarracks = 0;
     public const int StateAdvance = 0;
     public const int StateAttack = 1;
     public const int StateWait = 2;
@@ -49,6 +46,14 @@ public partial class BattleSimulation : Node
         public float SpawnTimer;
         public float AttackCooldown;
         public bool Destroyed;
+        public int MeleeCount;
+        public int RangedCount;
+        public int SiegeCount;
+        public int DragonCount;
+        public int Formation;
+        public int ActiveLegionId;
+        public Vector2 Waypoint;
+        public bool HasWaypoint;
     }
 
     private struct SiegeImpact
@@ -98,6 +103,8 @@ public partial class BattleSimulation : Node
     private readonly float[] _cachedTargetRadii = new float[MaxUnits];
     private readonly float[] _hpBarTimers = new float[MaxUnits];
     private readonly byte[] _cachedWaiting = new byte[MaxUnits];
+    private readonly int[] _legionIds = new int[MaxUnits];
+    private readonly Vector2[] _slotOffsets = new Vector2[MaxUnits];
     private int _unitCount;
 
     private readonly Building[] _buildings = new Building[MaxBuildings];
@@ -143,6 +150,7 @@ public partial class BattleSimulation : Node
     private float _enemyBuildTimer;
     private int _enemyBuildCursor;
     private int _enemyNextUnitKind;
+    private bool _enemyAiEnabled = true;
     private float _congestionTimer;
     private int _nextFlowTeam;
     private float _territoryTimer;
@@ -182,6 +190,8 @@ public partial class BattleSimulation : Node
     private float[] _allyDragonBuffer = Array.Empty<float>();
     private float[] _shadowBuffer = Array.Empty<float>();
     private float[] _hpBarBuffer = Array.Empty<float>();
+    private float[] _legionBannerBuffer = Array.Empty<float>();
+    private float[] _legionGhostBuffer = Array.Empty<float>();
     private readonly GDictionary _renderSnapshot = new();
     private readonly GDictionary _hudSnapshot = new();
     private GDictionary? _boardSnapshot;
@@ -215,6 +225,7 @@ public partial class BattleSimulation : Node
     public void Reset()
     {
         _unitCount = 0;
+        ResetLegions();
         _buildingCount = 0;
         _impactCount = 0;
         _ghostCount = 0;
@@ -231,6 +242,7 @@ public partial class BattleSimulation : Node
         _enemyBuildTimer = BattleConfig.EnemyBuildInterval;
         _enemyBuildCursor = 0;
         _enemyNextUnitKind = UnitMelee;
+        _enemyAiEnabled = true;
         _congestionTimer = 0f;
         _nextFlowTeam = TeamEnemy;
         _territoryTimer = BattleConfig.TerritoryUpdateInterval;
@@ -295,7 +307,9 @@ public partial class BattleSimulation : Node
 
     public bool TryBuild(int team, Vector2I cell, int buildKind)
     {
-        if (_result.Length != 0 || buildKind < BuildMeleeSpawner || buildKind > BuildSiegeSpawner || !Valid(cell) || IsBlocked(cell))
+        if (buildKind == BuildBarracks)
+            return TryBuildBarracks(team, cell, PresetTemplate(0), FormationLine);
+        if (_result.Length != 0 || buildKind != BuildDefenseTower || !Valid(cell) || IsBlocked(cell))
             return false;
         if (_ownership[Index(cell)] != team || BuildingAt(cell) >= 0)
             return false;
@@ -314,12 +328,8 @@ public partial class BattleSimulation : Node
         }
         else return false;
 
-        int kind = BuildingSpawner;
+        int kind = BuildingDefenseTower;
         int unitKind = UnitMelee;
-        if (buildKind == BuildRangedSpawner) unitKind = UnitRanged;
-        else if (buildKind == BuildSiegeSpawner) unitKind = UnitSiege;
-        else if (buildKind == BuildDefenseTower) kind = BuildingDefenseTower;
-        else if (buildKind == BuildDragonLair) { kind = BuildingDragonLair; unitKind = UnitDragon; }
         int id = AddBuildingInternal(team, kind, cell, unitKind);
         if (id == 0)
         {
@@ -333,7 +343,7 @@ public partial class BattleSimulation : Node
         return true;
     }
 
-    private int SpawnUnit(int team, Vector2 position, int unitKind)
+    private int SpawnUnit(int team, Vector2 position, int unitKind, int legionId = -1, Vector2 slotOffset = default)
     {
         if (_unitCount >= MaxUnits || (team != TeamAlly && team != TeamEnemy) || unitKind < UnitMelee || unitKind > UnitSiege)
             return 0;
@@ -362,6 +372,8 @@ public partial class BattleSimulation : Node
         _cachedSteering[index] = team == TeamEnemy ? Vector2.Down : Vector2.Up;
         _cachedWaiting[index] = 0;
         _hpBarTimers[index] = 0f;
+        _legionIds[index] = legionId;
+        _slotOffsets[index] = slotOffset;
         _indexById[id] = index;
         return id;
     }
@@ -372,19 +384,23 @@ public partial class BattleSimulation : Node
             return 0;
         float maximumHp = kind switch
         {
-            BuildingSpawner => BattleConfig.SpawnerMaxHp,
+            BuildingBarracks => BattleConfig.BarracksMaxHp,
             BuildingDefenseTower => BattleConfig.DefenseTowerMaxHp,
             BuildingDragonLair => BattleConfig.DragonLairMaxHp,
             _ => BattleConfig.HqMaxHp,
         };
-        float production = kind == BuildingDragonLair ? BattleConfig.DragonProductionInterval
-            : unitKind == UnitSiege ? BattleConfig.SiegeProductionInterval
-            : BattleConfig.SpawnerProductionInterval;
+        float production = kind == BuildingBarracks ? BattleConfig.BarracksProductionInterval : 0f;
         int id = _nextBuildingId++;
         _buildings[_buildingCount++] = new Building
         {
             Id = id, Team = team, Kind = kind, UnitKind = unitKind, Cell = cell,
             Hp = maximumHp, MaxHp = maximumHp, SpawnTimer = production,
+            MeleeCount = kind == BuildingBarracks ? 7 : 0,
+            RangedCount = kind == BuildingBarracks ? 4 : 0,
+            SiegeCount = kind == BuildingBarracks ? 1 : 0,
+            DragonCount = 0,
+            Formation = FormationLine,
+            ActiveLegionId = -1,
         };
         QueueBlockedDelta(Index(cell));
         _boardVersion++;

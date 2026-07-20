@@ -91,9 +91,21 @@ public partial class BattleSimulation
                 ["hp"] = building.Hp,
                 ["max_hp"] = building.MaxHp,
                 ["destroyed"] = building.Destroyed,
+                ["template"] = new GDictionary { ["melee"] = building.MeleeCount, ["ranged"] = building.RangedCount, ["siege"] = building.SiegeCount, ["dragon"] = building.DragonCount },
+                ["formation"] = building.Formation,
+                ["active_legion_id"] = building.ActiveLegionId,
+                ["waypoint"] = building.Waypoint,
+                ["has_waypoint"] = building.HasWaypoint,
+                ["gathering_progress"] = LegionGatheringProgress(building.ActiveLegionId),
             });
         }
         return buildings;
+    }
+
+    private float LegionGatheringProgress(int legionId)
+    {
+        int index = LegionIndexFromId(legionId);
+        return index < 0 || _legionOriginalCounts[index] <= 0 ? 0f : Mathf.Clamp(_legionProducedCounts[index] / (float)_legionOriginalCounts[index], 0f, 1f);
     }
 
     public GDictionary GetRenderSnapshot()
@@ -104,6 +116,8 @@ public partial class BattleSimulation
         int allyDragonCount = BuildDragonBuffer(TeamAlly, ref _allyDragonBuffer);
         int shadowCount = BuildShadowBuffer();
         int hpBarCount = BuildHpBarBuffer();
+        int legionBannerCount = BuildLegionBannerBuffer();
+        int legionGhostCount = BuildLegionGhostBuffer();
         long elapsed = Usec(start);
         if (_profilingEnabled) _profileSnapshotUsec += elapsed;
         _renderSnapshot["infantry_count"] = infantryCount;
@@ -116,6 +130,10 @@ public partial class BattleSimulation
         _renderSnapshot["shadow_buffer"] = _shadowBuffer;
         _renderSnapshot["hp_bar_count"] = hpBarCount;
         _renderSnapshot["hp_bars"] = _hpBarBuffer;
+        _renderSnapshot["legion_banner_count"] = legionBannerCount;
+        _renderSnapshot["legion_banner_buffer"] = _legionBannerBuffer;
+        _renderSnapshot["legion_ghost_count"] = legionGhostCount;
+        _renderSnapshot["legion_ghost_buffer"] = _legionGhostBuffer;
         _renderSnapshot["assembly_usec"] = elapsed;
         return _renderSnapshot;
     }
@@ -268,6 +286,44 @@ public partial class BattleSimulation
             _hpBarBuffer[offset + 7] = 0f;
         }
         return count;
+    }
+
+    private int BuildLegionBannerBuffer()
+    {
+        int count = 0;
+        for (int i = 0; i < _legionCount; i++)
+            if (_legionStates[i] != LegionBroken && (_legionLiveCounts[i] > 0 || _legionStates[i] == LegionGathering)) count++;
+        EnsureBuffer(ref _legionBannerBuffer, count * 16);
+        int draw = 0;
+        for (int i = 0; i < _legionCount; i++)
+        {
+            if (_legionStates[i] == LegionBroken || (_legionLiveCounts[i] <= 0 && _legionStates[i] != LegionGathering)) continue;
+            Vector2 origin = PositionToWorld(_legionAnchors[i]) + new Vector2(0f, -24f);
+            Color color = _legionTeams[i] == TeamAlly ? new Color(0.18f, 0.62f, 1f, 0.95f) : new Color(1f, 0.28f, 0.34f, 0.95f);
+            color.G *= _legionStates[i] == LegionEngaged ? 1.25f : _legionStates[i] == LegionGathering ? 0.72f : 1f;
+            WriteRecord(_legionBannerBuffer, draw++, Vector2.One, origin, color, new Color(_legionStates[i] / 3f, _legionFormations[i] / 2f, 0f, 0f));
+        }
+        return draw;
+    }
+
+    private int BuildLegionGhostBuffer()
+    {
+        int count = 0;
+        for (int i = 0; i < _legionCount; i++) if (_legionStates[i] == LegionGathering) count += _legionOriginalCounts[i];
+        EnsureBuffer(ref _legionGhostBuffer, count * 16);
+        int draw = 0;
+        for (int i = 0; i < _legionCount; i++)
+        {
+            if (_legionStates[i] != LegionGathering) continue;
+            for (int slot = 0; slot < _legionOriginalCounts[i]; slot++)
+            {
+                Vector2 origin = PositionToWorld(LegionSlotWorldPosition(i, LocalSlotFor(i, slot))) + new Vector2(0f, -2f);
+                float alpha = slot < _legionProducedCounts[i] ? 0.10f : 0.42f;
+                Color color = _legionTeams[i] == TeamAlly ? new Color(0.25f, 0.78f, 1f, alpha) : new Color(1f, 0.36f, 0.42f, alpha);
+                WriteRecord(_legionGhostBuffer, draw++, Vector2.One, origin, color, new Color(slot < _legionProducedCounts[i] ? 1f : 0f, _legionFormations[i] / 2f, 0f, 0f));
+            }
+        }
+        return draw;
     }
 
     private static void EnsureBuffer(ref float[] buffer, int length)

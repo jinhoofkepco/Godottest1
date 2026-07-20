@@ -421,7 +421,7 @@ public partial class BattleSimulation
         ref Building building = ref _buildings[index];
         building.Hp = Mathf.Max(0f, building.Hp - damage);
         _boardVersion++;
-        string type = building.Kind == BuildingHq ? "hq_hit" : "spawner_hit";
+        string type = building.Kind == BuildingHq ? "hq_hit" : building.Kind == BuildingBarracks ? "barracks_hit" : "building_hit";
         _events.Add(new GDictionary { ["type"] = type, ["team"] = building.Team, ["building_id"] = id, ["cell"] = building.Cell });
         if (building.Hp > 0f) return;
         building.Destroyed = true;
@@ -448,6 +448,12 @@ public partial class BattleSimulation
 
     private void RemoveUnitAt(int index)
     {
+        int legionIndex = LegionIndexFromId(_legionIds[index]);
+        if (legionIndex >= 0)
+        {
+            _legionLiveCounts[legionIndex] = Math.Max(0, _legionLiveCounts[legionIndex] - 1);
+            EvaluateLegionBroken(legionIndex);
+        }
         int deadId = _ids[index];
         int last = --_unitCount;
         _indexById[deadId] = -1;
@@ -458,6 +464,7 @@ public partial class BattleSimulation
         _cachedTargetPositions[index] = _cachedTargetPositions[last]; _cachedSteering[index] = _cachedSteering[last]; _siegeTargetPositions[index] = _siegeTargetPositions[last];
         _hp[index] = _hp[last]; _cooldowns[index] = _cooldowns[last]; _speedScales[index] = _speedScales[last]; _lungeTimers[index] = _lungeTimers[last];
         _flowBiasRadians[index] = _flowBiasRadians[last]; _cachedTargetRadii[index] = _cachedTargetRadii[last]; _hpBarTimers[index] = _hpBarTimers[last]; _cachedWaiting[index] = _cachedWaiting[last];
+        _legionIds[index] = _legionIds[last]; _slotOffsets[index] = _slotOffsets[last];
         _indexById[_ids[index]] = index;
     }
 
@@ -541,9 +548,8 @@ public partial class BattleSimulation
     private static float UnitSpeed(int kind) => kind == UnitRanged ? BattleConfig.RangedSpeed : kind == UnitDragon ? BattleConfig.DragonSpeed : kind == UnitSiege ? BattleConfig.SiegeSpeed : BattleConfig.MeleeSpeed;
     private static float UnitAttackDamage(int kind) => kind == UnitRanged ? BattleConfig.RangedDamage : kind == UnitDragon ? BattleConfig.DragonDamage : kind == UnitSiege ? BattleConfig.SiegeDamage : BattleConfig.MeleeDamage;
     private static float UnitAttackInterval(int kind) => kind == UnitRanged ? BattleConfig.RangedAttackInterval : kind == UnitDragon ? BattleConfig.DragonAttackInterval : kind == UnitSiege ? BattleConfig.SiegeAttackInterval : BattleConfig.MeleeAttackInterval;
-    private static int SpawnerCost(int kind) => kind == UnitSiege ? BattleConfig.SiegeSpawnerCost : kind == UnitRanged ? BattleConfig.RangedSpawnerCost : BattleConfig.SpawnerCost;
-    private static int BuildCost(int kind) => kind == BuildRangedSpawner ? BattleConfig.RangedSpawnerCost : kind == BuildSiegeSpawner ? BattleConfig.SiegeSpawnerCost : kind == BuildDefenseTower ? BattleConfig.DefenseTowerCost : kind == BuildDragonLair ? BattleConfig.DragonLairCost : BattleConfig.SpawnerCost;
-    private int CountSpawners(int team) { int count = 0; for (int i = 0; i < _buildingCount; i++) if (!_buildings[i].Destroyed && _buildings[i].Team == team && _buildings[i].Kind == BuildingSpawner) count++; return count; }
+    private static int BuildCost(int kind) => kind == BuildDefenseTower ? BattleConfig.DefenseTowerCost : BattleConfig.BarracksCost;
+    private int CountBarracks(int team) { int count = 0; for (int i = 0; i < _buildingCount; i++) if (!_buildings[i].Destroyed && _buildings[i].Team == team && _buildings[i].Kind == BuildingBarracks) count++; return count; }
     private int BuildingAt(Vector2I cell) { for (int i = 0; i < _buildingCount; i++) if (!_buildings[i].Destroyed && _buildings[i].Cell == cell) return i; return -1; }
     private int BuildingIndexFromId(int id) { for (int i = 0; i < _buildingCount; i++) if (_buildings[i].Id == id) return i; return -1; }
     private Vector2I BuildingCell(int id) { int index = BuildingIndexFromId(id); return index >= 0 ? _buildings[index].Cell : new Vector2I(-1, -1); }

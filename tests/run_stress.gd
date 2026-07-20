@@ -29,6 +29,11 @@ func _run() -> void:
 		if unit_count == 3000 and float(result.tick_avg) > budget_3000:
 			push_error("STRESS TARGET MISS: 3000-unit average %.3f ms exceeds %.3f ms" % [result.tick_avg, budget_3000])
 			failed = true
+	var legion_result := _measure_legions()
+	print("LEGION STRESS: legions=%d units=%d tick_avg=%.3f ms tick_p95=%.3f ms snapshot_avg=%.3f ms" % [legion_result.legions, legion_result.units, legion_result.tick_avg, legion_result.tick_p95, legion_result.snapshot_avg])
+	if int(legion_result.legions) != 20 or int(legion_result.units) != 240:
+		push_error("LEGION STRESS FIXTURE FAILED: expected 20 legions / 240 units")
+		failed = true
 	var board_delta := _measure_board_delta()
 	print("BOARD DELTA STRESS: cells=%d boundary_avg=%.3f ms boundary_p95=%.3f ms" % [board_delta.cells, board_delta.average, board_delta.p95])
 	if int(board_delta.cells) != 30:
@@ -108,6 +113,39 @@ func _measure_board_delta() -> Dictionary:
 			last_count = PackedInt32Array(delta.ownership_indices).size()
 	simulation.queue_free()
 	return {"cells": last_count, "average": _average(samples), "p95": _percentile(samples, 0.95)}
+
+
+func _measure_legions() -> Dictionary:
+	var simulation = SIMULATION_SCENE.instantiate()
+	root.add_child(simulation)
+	simulation.call("Reset")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	var template := {"melee": 5, "ranged": 4, "siege": 2, "dragon": 1}
+	for index in 20:
+		var team := 1 if index < 10 else 2
+		var local := index if team == 1 else index - 10
+		var anchor := Vector2(1.5 + float(local % 10) * 2.0, 14.5 if team == 1 else 29.5)
+		simulation.call("ApplyDebugCommand", {"op": "spawn_legion", "team": team, "formation": index % 3, "template": template, "anchor": anchor})
+	var initial: Dictionary = simulation.call("GetDebugSnapshot")
+	simulation.call("SetProfilingEnabled", true)
+	for tick in WARMUP_TICKS:
+		simulation.call("Step", 1.0 / 30.0)
+		simulation.call("GetRenderSnapshot")
+		simulation.call("DrainEvents")
+	simulation.call("ResetProfileCounters")
+	var tick_samples := PackedFloat64Array()
+	var snapshot_samples := PackedFloat64Array()
+	for tick in MEASURED_TICKS:
+		var started := Time.get_ticks_usec()
+		simulation.call("Step", 1.0 / 30.0)
+		tick_samples.append(float(Time.get_ticks_usec() - started) / 1000.0)
+		started = Time.get_ticks_usec()
+		simulation.call("GetRenderSnapshot")
+		snapshot_samples.append(float(Time.get_ticks_usec() - started) / 1000.0)
+		simulation.call("DrainEvents")
+	var result := {"legions": int(initial.legion_count), "units": int(initial.unit_count), "tick_avg": _average(tick_samples), "tick_p95": _percentile(tick_samples, 0.95), "snapshot_avg": _average(snapshot_samples)}
+	simulation.queue_free()
+	return result
 
 
 func _average(samples: PackedFloat64Array) -> float:

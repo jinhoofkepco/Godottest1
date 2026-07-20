@@ -23,6 +23,16 @@ public partial class BattleSimulation
             ["unit_lunge_timers"] = Copy(_lungeTimers, _unitCount),
             ["unit_lunge_directions"] = Copy(_lungeDirections, _unitCount),
             ["unit_cached_waiting"] = Copy(_cachedWaiting, _unitCount),
+            ["unit_legion_ids"] = Copy(_legionIds, _unitCount),
+            ["unit_slot_offsets"] = Copy(_slotOffsets, _unitCount),
+            ["legion_count"] = _legionCount,
+            ["legion_ids"] = Copy(_legionRecordIds, _legionCount),
+            ["legion_teams"] = Copy(_legionTeams, _legionCount),
+            ["legion_states"] = Copy(_legionStates, _legionCount),
+            ["legion_formations"] = Copy(_legionFormations, _legionCount),
+            ["legion_anchors"] = Copy(_legionAnchors, _legionCount),
+            ["legion_headings"] = Copy(_legionHeadings, _legionCount),
+            ["legion_member_counts"] = Copy(_legionLiveCounts, _legionCount),
             ["buildings"] = buildings,
             ["ownership"] = (byte[])_ownership.Clone(),
             ["elevation"] = (byte[])_elevation.Clone(),
@@ -71,9 +81,12 @@ public partial class BattleSimulation
         ["decision_group_count"] = BattleConfig.DecisionGroupCount,
         ["siege_range"] = BattleConfig.SiegeRange,
         ["siege_damage"] = BattleConfig.SiegeDamage,
-        ["siege_production_interval"] = BattleConfig.SiegeProductionInterval,
+        ["barracks_production_interval"] = BattleConfig.BarracksProductionInterval,
         ["siege_min_range"] = BattleConfig.SiegeMinRange,
         ["siege_blast_radius"] = BattleConfig.SiegeBlastRadius,
+        ["barracks_cost"] = BattleConfig.BarracksCost,
+        ["barracks_production_interval"] = BattleConfig.BarracksProductionInterval,
+        ["legion_max_members"] = BattleConfig.LegionMaxMembers,
     };
 
     public bool ApplyDebugCommand(GDictionary command)
@@ -91,10 +104,17 @@ public partial class BattleSimulation
                 if (DBool(command, "exact", false)) _positions[_indexById[id]] = position;
                 return true;
             }
+            case "spawn_legion":
+                return CreateDebugLegion(
+                    DInt(command, "team", TeamAlly),
+                    command.TryGetValue("template", out Variant templateVariant) ? templateVariant.AsGodotDictionary() : PresetTemplate(0),
+                    DInt(command, "formation", FormationLine),
+                    DVector2(command, "anchor", new Vector2(BattleConfig.GridColumns * 0.5f, BattleConfig.GridRows * 0.5f)));
             case "spawn_stress":
             {
                 int count = Math.Clamp(DInt(command, "count", 600), 0, MaxUnits);
                 _unitCount = 0;
+                ResetLegions();
                 Array.Fill(_indexById, -1);
                 _nextUnitId = 1;
                 for (int i = 0; i < count; i++)
@@ -114,13 +134,14 @@ public partial class BattleSimulation
             }
             case "clear_units":
                 _unitCount = 0;
+                ResetLegions();
                 Array.Fill(_indexById, -1);
                 _nextUnitId = 1;
                 RebuildBuckets();
                 return true;
             case "add_building":
             {
-                int id = AddBuildingInternal(DInt(command, "team", TeamAlly), DInt(command, "kind", BuildingSpawner), DVector2I(command, "cell", Vector2I.Zero), DInt(command, "unit_kind", UnitMelee));
+                int id = AddBuildingInternal(DInt(command, "team", TeamAlly), DInt(command, "kind", BuildingBarracks), DVector2I(command, "cell", Vector2I.Zero), DInt(command, "unit_kind", UnitMelee));
                 if (id != 0) RebuildFlowFields();
                 return id != 0;
             }
@@ -187,6 +208,15 @@ public partial class BattleSimulation
                 _allyGold = DInt(command, "ally", _allyGold);
                 _enemyGold = DInt(command, "enemy", _enemyGold);
                 return true;
+            case "set_enemy_ai": _enemyAiEnabled = DBool(command, "enabled", true); return true;
+            case "damage_unit":
+            {
+                int index = ResolveUnit(command);
+                if (index < 0) return false;
+                _hp[index] -= DFloat(command, "damage", 0f);
+                _lastAttackerTeams[index] = DInt(command, "team", TeamEnemy);
+                return true;
+            }
             case "set_time": _timeRemaining = DFloat(command, "value", _timeRemaining); return true;
             case "set_result": _result = DString(command, "value"); return true;
             case "set_building_spawn_timer":

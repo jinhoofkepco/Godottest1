@@ -12,8 +12,9 @@ public partial class BattleSimulation
         ApplyIncome(delta);
         _timeRemaining = Mathf.Max(0f, _timeRemaining - delta);
         UpdateEnemyAi(delta);
-        UpdateSpawners(delta);
+        UpdateBarracks(delta);
         RebuildBuckets();
+        UpdateLegions(delta);
         _aoeCandidateChecks = 0;
         _siegeImpactsResolved = 0;
         long eventStart = _profilingEnabled ? Stopwatch.GetTimestamp() : 0;
@@ -72,14 +73,18 @@ public partial class BattleSimulation
             long separationStart = _profilingEnabled ? Stopwatch.GetTimestamp() : 0;
             if (refresh)
             {
-                Vector2 advance = AdvanceDirection(index);
+                int legionIndex = LegionIndexFromId(_legionIds[index]);
+                bool grouped = legionIndex >= 0 && _legionStates[legionIndex] != LegionBroken;
+                bool engagedLegion = grouped && _legionStates[legionIndex] == LegionEngaged;
+                Vector2 advance = grouped && !engagedLegion ? LegionSteering(index) : AdvanceDirection(index);
                 Vector2 seek = _foundTargetId != 0 ? position.DirectionTo(_foundTargetPosition) : Vector2.Zero;
                 Vector2 separation = CalculateSeparation(index);
                 bool waiting = _kinds[index] != UnitDragon && ShouldWait(index, advance);
                 Vector2 steering = separation * (waiting ? BattleConfig.WaitSeparationWeight : BattleConfig.UnitSeparationWeight);
                 if (!waiting)
                 {
-                    steering += advance * BattleConfig.UnitAdvanceWeight + seek * BattleConfig.UnitSeekWeight;
+                    steering += advance * (grouped && !engagedLegion ? 1f : BattleConfig.UnitAdvanceWeight) + seek * BattleConfig.UnitSeekWeight;
+                    if (grouped && engagedLegion) steering += LegionSteering(index);
                     if (_kinds[index] != UnitDragon)
                         steering += CalculateObstacleRepulsion(position) * BattleConfig.GroundBlockRepulsionWeight;
                 }
@@ -89,7 +94,7 @@ public partial class BattleSimulation
             bool isWaiting = _cachedWaiting[index] != 0;
             Vector2 desired = _cachedSteering[index];
             _states[index] = isWaiting ? StateWait : StateAdvance;
-            float maximumSpeed = UnitSpeed(_kinds[index]) * _speedScales[index];
+            float maximumSpeed = LegionSpeedForUnit(index) * _speedScales[index];
             if (_kinds[index] != UnitDragon && desired.LengthSquared() > 0.000001f)
                 maximumSpeed *= GroundSpeedMultiplier(position, position + desired.Normalized());
             Vector2 targetVelocity = desired.LengthSquared() > 0.000001f ? desired.Normalized() * maximumSpeed : Vector2.Zero;
@@ -132,13 +137,14 @@ public partial class BattleSimulation
 
     private void UpdateEnemyAi(float delta)
     {
+        if (!_enemyAiEnabled) return;
         _enemyBuildTimer -= delta;
-        if (_enemyBuildTimer > 0f || CountSpawners(TeamEnemy) >= BattleConfig.EnemyMaxSpawners)
+        if (_enemyBuildTimer > 0f || CountBarracks(TeamEnemy) >= BattleConfig.EnemyMaxSpawners)
             return;
         _enemyBuildTimer += BattleConfig.EnemyBuildInterval;
-        int unitKind = _enemyNextUnitKind;
-        int cost = SpawnerCost(unitKind);
-        if (_enemyGold < cost) return;
+        float templateRoll = _rng.Randf();
+        int preset = templateRoll < 0.50f ? 0 : templateRoll < 0.80f ? 1 : templateRoll < 0.95f ? 2 : 3;
+        if (_enemyGold < BattleConfig.BarracksCost) return;
         for (int offset = 0; offset < BattleConfig.GridColumns; offset++)
         {
             int column = (_enemyBuildCursor + offset) % BattleConfig.GridColumns;
@@ -149,33 +155,64 @@ public partial class BattleSimulation
             for (int row = Math.Min(frontline, BattleConfig.GridRows - 2); row > 0; row--)
             {
                 var cell = new Vector2I(column, row);
-                int buildKind = unitKind == UnitRanged ? BuildRangedSpawner : unitKind == UnitSiege ? BuildSiegeSpawner : BuildMeleeSpawner;
-                if (!TryBuild(TeamEnemy, cell, buildKind)) continue;
+                int formation = preset == 1 ? FormationLoose : preset == 2 ? FormationWedge : FormationLine;
+                if (!TryBuildBarracks(TeamEnemy, cell, PresetTemplate(preset), formation)) continue;
+                int buildingIndex = BuildingAt(cell);
+                if (buildingIndex >= 0)
+                {
+                    int waypointColumn = Math.Clamp(column + _rng.RandiRange(-5, 5), 0, BattleConfig.GridColumns - 1);
+                    SetBarracksWaypoint(_buildings[buildingIndex].Id, new Vector2I(waypointColumn, BattleConfig.GridRows / 2 + 4));
+                }
                 _enemyBuildCursor = (column + 3) % BattleConfig.GridColumns;
-                _enemyNextUnitKind = unitKind == UnitMelee ? UnitRanged : unitKind == UnitRanged ? UnitSiege : UnitMelee;
                 return;
             }
         }
     }
 
-    private void UpdateSpawners(float delta)
+    private void UpdateBarracks(float delta)
     {
         for (int index = 0; index < _buildingCount; index++)
         {
             ref Building building = ref _buildings[index];
-            if (building.Destroyed || (building.Kind != BuildingSpawner && building.Kind != BuildingDragonLair))
+            if (building.Destroyed || building.Kind != BuildingBarracks)
                 continue;
+            int legionIndex = LegionIndexFromId(building.ActiveLegionId);
+            if (legionIndex < 0 || _legionStates[legionIndex] != LegionGathering)
+            {
+                building.ActiveLegionId = CreateGatheringLegion(index);
+                legionIndex = LegionIndexFromId(building.ActiveLegionId);
+                if (legionIndex < 0) continue;
+            }
             building.SpawnTimer -= delta;
             if (building.SpawnTimer > 0f) continue;
-            float interval = building.Kind == BuildingDragonLair ? BattleConfig.DragonProductionInterval
-                : building.UnitKind == UnitSiege ? BattleConfig.SiegeProductionInterval
-                : BattleConfig.SpawnerProductionInterval;
-            building.SpawnTimer += interval;
-            Vector2 position = FindSpawnPosition(building.Cell, building.Team, building.UnitKind == UnitDragon);
+            building.SpawnTimer += BattleConfig.BarracksProductionInterval;
+            int targetCount = _legionOriginalCounts[legionIndex];
+            if (_legionProducedCounts[legionIndex] >= targetCount)
+            {
+                if (LegionFormationReady(legionIndex) || _legionGatheringElapsed[legionIndex] >= BattleConfig.LegionGatheringMaxSeconds)
+                {
+                    DeployLegion(legionIndex);
+                    building.ActiveLegionId = -1;
+                }
+                continue;
+            }
+            int unitKind = NextLegionUnitKind(legionIndex);
+            Vector2 position = FindSpawnPosition(building.Cell, building.Team, unitKind == UnitDragon);
             if (position.X < 0f) { building.SpawnTimer = 0.5f; continue; }
-            int unitId = SpawnUnit(building.Team, position, building.UnitKind);
+            int slotIndex = _legionProducedCounts[legionIndex];
+            Vector2 localSlot = LocalSlotFor(legionIndex, slotIndex);
+            int unitId = SpawnUnit(building.Team, position, unitKind, _legionRecordIds[legionIndex], localSlot);
             if (unitId != 0)
-                QueueStructural("unit_produced", building.Team, unitId, building.Cell, building.Kind, building.UnitKind);
+            {
+                _legionProducedCounts[legionIndex]++;
+                _legionLiveCounts[legionIndex]++;
+                QueueStructural("unit_produced", building.Team, unitId, building.Cell, building.Kind, unitKind);
+                if ((_legionProducedCounts[legionIndex] >= targetCount && LegionFormationReady(legionIndex)) || _legionGatheringElapsed[legionIndex] >= BattleConfig.LegionGatheringMaxSeconds)
+                {
+                    DeployLegion(legionIndex);
+                    building.ActiveLegionId = -1;
+                }
+            }
         }
     }
 

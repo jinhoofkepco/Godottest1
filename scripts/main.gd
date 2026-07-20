@@ -12,11 +12,9 @@ const UNIT_MELEE := 0
 const UNIT_RANGED := 1
 const UNIT_DRAGON := 2
 const UNIT_SIEGE := 3
-const BUILD_MELEE_SPAWNER := 0
-const BUILD_RANGED_SPAWNER := 1
+const BUILD_BARRACKS := 0
 const BUILD_DEFENSE_TOWER := 2
-const BUILD_DRAGON_LAIR := 3
-const BUILD_SIEGE_SPAWNER := 4
+const FORMATION_LINE := 0
 
 @onready var map_view: MapView = $MapView
 @onready var world: Node2D = $MapView
@@ -28,8 +26,12 @@ const BUILD_SIEGE_SPAWNER := 4
 @onready var simulation = $BattleSimulation
 
 var building_views: Dictionary = {}
+var building_records: Dictionary = {}
 var game_result := ""
-var selected_build_kind := BUILD_MELEE_SPAWNER
+var selected_build_kind := BUILD_BARRACKS
+var selected_template := {"melee": 7, "ranged": 4, "siege": 1, "dragon": 0}
+var selected_formation := FORMATION_LINE
+var waypoint_barracks_id := -1
 var _last_board_version := -1
 var _hud_snapshot: Dictionary = {}
 
@@ -51,6 +53,10 @@ func _ready() -> void:
 	map_view.tile_tapped.connect(try_build_spawner)
 	hud.restart_pressed.connect(_restart)
 	hud.build_kind_selected.connect(_on_build_kind_selected)
+	hud.template_selected.connect(_on_template_selected)
+	hud.barracks_config_changed.connect(_on_barracks_config_changed)
+	hud.waypoint_requested.connect(_on_waypoint_requested)
+	hud.demolish_requested.connect(_on_demolish_requested)
 	hud.show_message("FRONTLINE ACTIVE", GameConfig.COLOR_TEXT)
 	queue_redraw()
 
@@ -66,7 +72,28 @@ func _process(delta: float) -> void:
 
 
 func try_build_spawner(cell: Vector2i) -> bool:
-	var valid: bool = game_result == "" and simulation.call("TryBuild", TEAM_ALLY, cell, selected_build_kind)
+	if game_result != "":
+		return false
+	if waypoint_barracks_id >= 0:
+		var waypoint_valid := bool(simulation.call("SetBarracksWaypoint", waypoint_barracks_id, cell))
+		waypoint_barracks_id = -1
+		fx.show_placement(cell, waypoint_valid)
+		hud.show_message("WAYPOINT SET" if waypoint_valid else "WAYPOINT BLOCKED", GameConfig.COLOR_TEAL if waypoint_valid else GameConfig.COLOR_ENEMY)
+		_sync_board_and_buildings()
+		return waypoint_valid
+	var existing_id := _building_at_cell(cell)
+	if existing_id >= 0:
+		var config: Dictionary = simulation.call("GetBarracksConfig", existing_id)
+		if not config.is_empty() and int(config.get("team", 0)) == TEAM_ALLY:
+			hud.open_barracks_panel(config)
+			hud.show_message("EDIT NEXT LEGION", GameConfig.COLOR_TEAL)
+			return true
+		return false
+	var valid: bool
+	if selected_build_kind == BUILD_DEFENSE_TOWER:
+		valid = bool(simulation.call("TryBuild", TEAM_ALLY, cell, BUILD_DEFENSE_TOWER))
+	else:
+		valid = bool(simulation.call("TryBuildBarracks", TEAM_ALLY, cell, selected_template, selected_formation))
 	fx.show_placement(cell, valid)
 	if valid:
 		_sync_board_and_buildings()
@@ -136,7 +163,7 @@ func _consume_events(events: Array) -> void:
 				fx.show_unit_death(Vector2(event.position), int(event.team))
 			"unit_produced":
 				fx.show_production(Vector2i(event.cell), int(event.team))
-			"spawner_hit":
+			"barracks_hit", "building_hit":
 				fx.show_spawner_hit(Vector2i(event.cell), int(event.team))
 				_flash_building(int(event.building_id))
 			"hq_hit":
@@ -172,6 +199,7 @@ func _sync_board_and_buildings(force := false) -> void:
 	_last_board_version = int(board_data.get("version", version))
 	for record in board_data.get("buildings", []):
 		var building_id := int(record.id)
+		building_records[building_id] = record
 		if bool(record.destroyed):
 			continue
 		if not building_views.has(building_id):
@@ -228,17 +256,7 @@ func _unit_kind_name(unit_kind: int) -> String:
 
 
 func _build_kind_name(build_kind: int) -> String:
-	match build_kind:
-		BUILD_RANGED_SPAWNER:
-			return "RANGED SPAWNER"
-		BUILD_DEFENSE_TOWER:
-			return "DEFENSE TOWER"
-		BUILD_DRAGON_LAIR:
-			return "DRAGON LAIR"
-		BUILD_SIEGE_SPAWNER:
-			return "SIEGE SPAWNER"
-		_:
-			return "MELEE SPAWNER"
+	return "DEFENSE TOWER" if build_kind == BUILD_DEFENSE_TOWER else "BARRACKS"
 
 
 func _building_kind_name(kind: int, unit_kind: int) -> String:
@@ -246,11 +264,42 @@ func _building_kind_name(kind: int, unit_kind: int) -> String:
 		return "DEFENSE TOWER"
 	if kind == BUILDING_DRAGON_LAIR:
 		return "DRAGON LAIR"
-	return "%s SPAWNER" % _unit_kind_name(unit_kind)
+	return "BARRACKS"
 
 
 func _on_build_kind_selected(build_kind: int) -> void:
 	selected_build_kind = build_kind
+
+
+func _on_template_selected(template: Dictionary, formation: int) -> void:
+	selected_template = template.duplicate()
+	selected_formation = formation
+	selected_build_kind = BUILD_BARRACKS
+
+
+func _on_barracks_config_changed(building_id: int, template: Dictionary, formation: int) -> void:
+	if simulation.call("ConfigureBarracks", building_id, template, formation):
+		_sync_board_and_buildings()
+		hud.show_message("NEXT LEGION UPDATED", GameConfig.COLOR_TEAL)
+
+
+func _on_waypoint_requested(building_id: int) -> void:
+	waypoint_barracks_id = building_id
+	hud.show_message("TAP MAP FOR WAYPOINT", GameConfig.COLOR_TEAL)
+
+
+func _on_demolish_requested(building_id: int) -> void:
+	if simulation.call("DemolishBuilding", building_id):
+		_sync_board_and_buildings()
+		hud.show_message("BARRACKS DEMOLISHED", GameConfig.COLOR_ORANGE)
+
+
+func _building_at_cell(cell: Vector2i) -> int:
+	for building_id in building_records:
+		var record: Dictionary = building_records[building_id]
+		if not bool(record.get("destroyed", false)) and Vector2i(record.get("cell", Vector2i(-1, -1))) == cell:
+			return int(building_id)
+	return -1
 
 
 func _restart() -> void:

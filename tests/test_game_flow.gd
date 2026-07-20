@@ -12,6 +12,9 @@ const BUILD_RANGED := 1
 const BUILD_TOWER := 2
 const BUILD_DRAGON := 3
 const BUILD_SIEGE := 4
+const BUILD_BARRACKS := 0
+const FORMATION_LINE := 0
+const FORMATION_LOOSE := 2
 
 var failures: Array[String] = []
 
@@ -74,16 +77,17 @@ func _test_scene_and_bulk_render(tree: SceneTree, main_scene: PackedScene) -> vo
 	var main = await _spawn_main(tree, main_scene)
 	_expect(main.simulation.get_script().resource_path.ends_with("BattleSimulation.cs"), "live match uses the C# simulation core")
 	_expect(main.simulation.get_child_count() == 0, "simulation owns no per-unit Nodes")
-	main.simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(8.5, 27.5), "exact": true})
+	main.simulation.call("ApplyDebugCommand", {"op": "spawn_legion", "team": TEAM_ALLY, "formation": FORMATION_LINE, "template": {"melee": 2, "ranged": 1, "siege": 1, "dragon": 0}, "anchor": Vector2(8.5, 27.5)})
 	main.simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_RANGED, "position": Vector2(9.5, 17.5), "exact": true})
 	main.simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_SIEGE, "position": Vector2(10.5, 28.5), "exact": true})
 	main.simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_DRAGON, "position": Vector2(11.5, 16.5), "exact": true})
 	main.unit_renderer.reset_bulk_upload_count()
 	main.unit_renderer.sync()
-	_expect(main.unit_renderer.bulk_upload_count == 4, "renderer updates four MultiMesh batches with four bulk uploads")
+	_expect(main.unit_renderer.bulk_upload_count == 6, "renderer updates unit, shadow, banner, and gathering-ghost batches with six bulk uploads")
 	var render: Dictionary = main.simulation.call("GetRenderSnapshot")
-	_expect(int(render.infantry_count) == 3 and int(render.enemy_dragon_count) == 1, "bulk snapshot separates infantry/SIEGE and dragon batches")
+	_expect(int(render.infantry_count) == 6 and int(render.enemy_dragon_count) == 1, "bulk snapshot separates legion infantry/SIEGE and dragon batches")
 	_expect(PackedFloat32Array(render.infantry_buffer).size() == int(render.infantry_count) * 16, "MultiMesh interleaved buffer has exactly 16 floats per instance")
+	_expect(int(render.legion_banner_count) == 1 and PackedFloat32Array(render.legion_banner_buffer).size() == 16, "one marching legion crosses the C# boundary as one packed banner record")
 	var siege_flip_found := false
 	for index in range(int(render.infantry_count)):
 		siege_flip_found = siege_flip_found or PackedFloat32Array(render.infantry_buffer)[index * 16 + 15] > 0.5
@@ -94,19 +98,36 @@ func _test_scene_and_bulk_render(tree: SceneTree, main_scene: PackedScene) -> vo
 
 func _test_build_selection_and_picking(tree: SceneTree, main_scene: PackedScene) -> void:
 	var main = await _spawn_main(tree, main_scene)
+	main.simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000})
 	var elevated_cell := Vector2i(4, 35)
 	var world: Vector2 = main.grid.cell_to_world(elevated_cell)
 	var picked: Vector2i = main.grid.world_to_cell(world)
 	_expect(picked == elevated_cell, "elevation-aware isometric picking returns the exact displayed tile")
-	main._on_build_kind_selected(BUILD_RANGED)
-	_expect(main.selected_build_kind == BUILD_RANGED, "ranged production can be selected")
-	_expect(main.try_build_spawner(elevated_cell), "selected ranged spawner is built on the tapped owned tile")
-	main._on_build_kind_selected(BUILD_SIEGE)
-	_expect(main.selected_build_kind == BUILD_SIEGE, "SIEGE production can be selected")
+	_expect(main.hud.barracks_button != null and main.hud.tower_button != null and main.hud.template_buttons.size() == 3, "mobile bar exposes BARRACKS, TOWER, and three template cards")
+	main.hud.select_template_preset(1)
+	_expect(main.selected_build_kind == BUILD_BARRACKS and main.selected_formation == FORMATION_LOOSE, "FIRE preset selects a LOOSE barracks template")
+	_expect(main.try_build_spawner(elevated_cell), "selected legion template is assigned when the barracks is built")
+	main._sync_board_and_buildings(true)
+	var barracks_id: int = main._building_at_cell(elevated_cell)
+	var config: Dictionary = main.simulation.call("GetBarracksConfig", barracks_id)
+	_expect(int(config.template.ranged) == 7 and int(config.formation) == FORMATION_LOOSE, "built barracks stores the selected role counts and formation")
+	_expect(main.try_build_spawner(elevated_cell) and main.hud.edit_panel.visible, "tapping an allied barracks opens its compact editor")
+	_expect(main.hud.adjust_edit_role("melee", -1) and main.hud.adjust_edit_role("siege", 1), "editor minus/plus buttons edit SIEGE up to its cap")
+	_expect(not main.hud.adjust_edit_role("siege", 1), "editor enforces SIEGE maximum two")
+	main.hud.select_edit_formation(FORMATION_LINE)
+	config = main.simulation.call("GetBarracksConfig", barracks_id)
+	_expect(int(config.template.siege) == 2 and int(config.formation) == FORMATION_LINE, "role and formation edits reach C# in one config call")
+	main.hud.request_edit_waypoint()
+	var waypoint_cell := Vector2i(10, 25)
+	_expect(main.try_build_spawner(waypoint_cell), "waypoint mode consumes exactly one map tap")
+	config = main.simulation.call("GetBarracksConfig", barracks_id)
+	_expect(bool(config.has_waypoint) and Vector2(config.waypoint).distance_to(Vector2(10.5, 25.5)) < 0.01, "barracks waypoint is stored in grid space")
 	main._on_build_kind_selected(BUILD_TOWER)
 	_expect(main.selected_build_kind == BUILD_TOWER, "defense tower can be selected independently")
-	main._on_build_kind_selected(BUILD_DRAGON)
-	_expect(main.selected_build_kind == BUILD_DRAGON, "dragon lair can be selected independently")
+	main.hud.open_barracks_panel(config)
+	main.hud.request_edit_demolish()
+	main._sync_board_and_buildings()
+	_expect(bool(main.building_records[barracks_id].destroyed), "barracks editor demolition removes the selected building")
 	main.queue_free()
 	await tree.process_frame
 
