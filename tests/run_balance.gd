@@ -23,7 +23,7 @@ func _run() -> void:
 func _simulate(active: bool) -> Dictionary:
 	var simulation = SIMULATION_SCENE.instantiate()
 	simulation.call("Reset")
-	simulation.call("ApplyDebugCommand", {"op": "set_seed", "value": 13007 if active else 12000})
+	simulation.call("ApplyDebugCommand", {"op": "set_seed", "value": 13004 if active else 12000})
 	if active:
 		simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 180, "enemy": 180})
 		simulation.call("SetAiEnabled", TEAM_ENEMY, true)

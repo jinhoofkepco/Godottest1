@@ -36,6 +36,7 @@ func run() -> Array[String]:
 	_test_legion_loose_aoe_geometry()
 	_test_spawner_production_and_nearest_rally()
 	_test_rally_advance_launch()
+	_test_rally_congestion_still_launches()
 	_test_rally_defense_overflow_and_destroy_fallback()
 	_test_legion_engage_reform()
 	_test_ai_continues_after_opening()
@@ -162,6 +163,20 @@ func _test_rally_advance_launch() -> void:
 	_expect(PackedInt32Array(launched.legion_states).has(LEGION_MARCHING), "ADVANCE rally launches at ten waiting units")
 	_expect(PackedInt32Array(launched.legion_formations).has(FORMATION_WEDGE), "launched legion uses the rally formation")
 	_expect(PackedInt32Array(launched.unit_legion_ids).count(-1) == 0, "all ten launch members receive a legion ID")
+	simulation.free()
+
+
+func _test_rally_congestion_still_launches() -> void:
+	var simulation = _new_simulation()
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000, "enemy": 0})
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(3, 37), BUILD_MELEE), "left congestion fixture spawner builds")
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(18, 37), BUILD_MELEE), "right congestion fixture spawner builds")
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(10, 32), BUILD_RALLY), "congestion fixture rally builds")
+	for tick in range(1800):
+		simulation.call("Step", 1.0 / 30.0)
+	var after: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(PackedInt32Array(after.legion_states).has(LEGION_MARCHING), "converging rally traffic launches instead of stalling below ten")
 	simulation.free()
 
 

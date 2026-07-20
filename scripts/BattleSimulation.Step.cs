@@ -88,7 +88,7 @@ public partial class BattleSimulation
                 Vector2 advance = grouped && !engagedLegion ? LegionSteering(index) : rallying ? RallySteering(index) : AdvanceDirection(index);
                 Vector2 seek = _foundTargetId != 0 ? position.DirectionTo(_foundTargetPosition) : Vector2.Zero;
                 Vector2 separation = CalculateSeparation(index);
-                bool waiting = _kinds[index] != UnitDragon && ShouldWait(index, advance);
+                bool waiting = !rallying && _kinds[index] != UnitDragon && ShouldWait(index, advance);
                 Vector2 steering = separation * (waiting ? BattleConfig.WaitSeparationWeight : BattleConfig.UnitSeparationWeight);
                 if (!waiting)
                 {
