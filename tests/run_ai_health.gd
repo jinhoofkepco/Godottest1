@@ -55,7 +55,9 @@ func _simulate(seed_value: int, mirror_ai: bool) -> Dictionary:
 	simulation.call("ApplyDebugCommand", {"op": "set_seed", "value": 12000 + seed_value})
 	simulation.call("SetAiEnabled", TEAM_ENEMY, true)
 	simulation.call("SetAiEnabled", TEAM_ALLY, mirror_ai)
-	if mirror_ai: simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 180, "enemy": 180})
+	if mirror_ai:
+		simulation.call("SetAiIncomeLevel", 1)
+		simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 180, "enemy": 180})
 	var elapsed := 0.0
 	var last_enemy_builds := 0
 	var last_ally_builds := 0

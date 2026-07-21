@@ -2,8 +2,8 @@ using Godot;
 
 public static class BattleConfig
 {
-    public const int GridColumns = 22;
-    public const int GridRows = 44;
+    public const int GridColumns = 44;
+    public const int GridRows = 88;
     public const int CellCount = GridColumns * GridRows;
     public const float IsoTileWidth = 64f;
     public const float IsoTileHeight = 32f;
@@ -16,6 +16,12 @@ public static class BattleConfig
     public const int EnemyStartGold = 120;
     public const float PassiveIncomePerSecond = 2.25f;
     public const int KillReward = 6;
+    public const int TeamUnitCap = 300;
+    public const int PopulationIncomeStepUnits = 30;
+    public const float PopulationIncomePenaltyPerStep = 0.10f;
+    public const int AiIncomeLevelDefault = 3;
+    public const int AiIncomeLevelMin = 1;
+    public const int AiIncomeLevelMax = 5;
     public const float AiDecisionInterval = 6f;
     public const int AiMaxSpawners = 4;
     public const int AiMaxRallyPoints = 2;
@@ -35,7 +41,7 @@ public static class BattleConfig
     public const float MeleeRange = 0.72f;
     public const float MeleeSpeed = 1.015f;
     public const float MeleeRadius = 0.14f;
-    public const float RangedHp = 34f;
+    public const float RangedHp = 20.4f;
     public const float RangedDamage = 8f;
     public const float RangedAttackInterval = 0.80f;
     public const float RangedRange = 2.2f;
@@ -96,18 +102,21 @@ public static class BattleConfig
     public const float DragonVsRanged = 1.7f;
     public const float DragonVsSiege = 1.5f;
     public const float MeleeVsDragon = 0.6f;
+    public const float SiegeVsMelee = 1.5f;
 
-    public const float SpawnerMaxHp = 240f;
-    public const float SpawnerProductionInterval = 2.88f;
-    public const float SiegeProductionInterval = 8.64f;
-    public const float DragonProductionInterval = 22.5f;
-    public const float RallyPointMaxHp = 260f;
-    public const int RallyLaunchSize = 10;
-    public const int RallyDefenseCapacity = 14;
-    public const float RallyArrivalRadius = 2.8f;
+    public const float BuildingConstructionSecondsPerGold = 0.10f;
+    public const float BuildingConstructionStartHpRatio = 0.20f;
+    public const float SpawnerMaxHp = 1200f;
+    public const float SpawnerProductionInterval = 5.76f;
+    public const float SiegeProductionInterval = 17.28f;
+    public const float DragonProductionInterval = 45f;
+    public const float RallyPointMaxHp = 1300f;
+    public const int RallyLaunchSize = 20;
+    public const int RallyDefenseCapacity = 28;
+    public const float RallyArrivalRadius = 4.2f;
     public const float RallyFollowWeight = 2.4f;
     public const float LegionGatheringMaxSeconds = 15f;
-    public const int LegionMaxMembers = 12;
+    public const int LegionMaxMembers = 28;
     public const int LegionMaxSiege = 2;
     public const int LegionMaxDragons = 1;
     public const float LegionBrokenRatio = 0.30f;
@@ -118,26 +127,28 @@ public static class BattleConfig
     public const float LegionDisengageSeconds = 1.2f;
     public const float LegionHeadingTurnRate = 5.5f;
     public const float LegionWaypointTolerance = 0.65f;
-    public const float DefenseTowerMaxHp = 320f;
+    public const float DefenseTowerMaxHp = 1600f;
     public const float DefenseTowerRange = 3.6f;
     public const float DefenseTowerDamage = 6f;
     public const float DefenseTowerAttackInterval = 0.8f;
     public const float HqRange = DefenseTowerRange;
     public const float HqDamage = DefenseTowerDamage * 3f;
     public const float HqAttackInterval = DefenseTowerAttackInterval;
-    public const float DragonLairMaxHp = 300f;
-    public const float HqMaxHp = 2400f;
+    public const float DragonLairMaxHp = 1500f;
+    public const float HqMaxHp = 12000f;
 
     public const float TerritoryUpdateInterval = 0.2f;
     public const int DecisionGroupCount = 3;
     public const int TerrainSeed = 42517;
-    public const int TerrainHillPairCount = 5;
-    public const int TerrainSummitPairCount = 3;
-    public const int TerrainCliffPairCount = 3;
-    public const int TerrainMinRow = 12;
-    public const int TerrainMaxRow = 21;
-    public const int TerrainDeploymentDepth = 10;
+    public const int TerrainHillPairCount = 10;
+    public const int TerrainSummitPairCount = 6;
+    public const int TerrainCliffPairCount = 6;
+    public const int TerrainMinRow = 24;
+    public const int TerrainMaxRow = 43;
+    public const int TerrainDeploymentDepth = 20;
     public const int TerrainGenerationAttempts = 24;
+    public const int LakeRadiusX = 10;
+    public const int LakeRadiusY = 9;
 
     public const int AtlasColumns = 16;
     public const int AtlasRows = 16;

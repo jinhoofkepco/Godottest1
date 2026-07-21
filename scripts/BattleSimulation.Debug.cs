@@ -26,6 +26,11 @@ public partial class BattleSimulation
         return new GDictionary
         {
             ["unit_count"] = _unitCount,
+            ["ally_unit_count"] = _teamUnitCounts[TeamAlly],
+            ["enemy_unit_count"] = _teamUnitCounts[TeamEnemy],
+            ["ally_income_multiplier"] = PopulationIncomeMultiplier(TeamAlly),
+            ["enemy_income_multiplier"] = PopulationIncomeMultiplier(TeamEnemy) * AiIncomeMultiplier(),
+            ["ai_income_level"] = _aiIncomeLevel,
             ["unit_ids"] = Copy(_ids, _unitCount),
             ["unit_teams"] = Copy(_teams, _unitCount),
             ["unit_kinds"] = Copy(_kinds, _unitCount),
@@ -55,6 +60,7 @@ public partial class BattleSimulation
             ["ownership"] = (byte[])_ownership.Clone(),
             ["elevation"] = (byte[])_elevation.Clone(),
             ["blocked"] = (byte[])_blocked.Clone(),
+            ["water"] = (byte[])_water.Clone(),
             ["ally_gold"] = _allyGold,
             ["enemy_gold"] = _enemyGold,
             ["ally_hq_id"] = _allyHqId,
@@ -115,6 +121,7 @@ public partial class BattleSimulation
         ["occupancy_win_ratio"] = BattleConfig.OccupancyWinRatio,
         ["passive_income_per_second"] = BattleConfig.PassiveIncomePerSecond,
         ["hq_max_hp"] = BattleConfig.HqMaxHp,
+        ["ranged_hp"] = BattleConfig.RangedHp,
         ["spawner_production_interval"] = BattleConfig.SpawnerProductionInterval,
         ["siege_production_interval"] = BattleConfig.SiegeProductionInterval,
         ["dragon_production_interval"] = BattleConfig.DragonProductionInterval,
@@ -124,7 +131,13 @@ public partial class BattleSimulation
         ["rally_launch_size"] = BattleConfig.RallyLaunchSize,
         ["rally_defense_capacity"] = BattleConfig.RallyDefenseCapacity,
         ["legion_max_members"] = BattleConfig.LegionMaxMembers,
+        ["team_unit_cap"] = BattleConfig.TeamUnitCap,
+        ["ai_income_level"] = _aiIncomeLevel,
     };
+
+    public void SetAiIncomeLevel(int level) => _aiIncomeLevel = Math.Clamp(level, BattleConfig.AiIncomeLevelMin, BattleConfig.AiIncomeLevelMax);
+    public int GetAiIncomeLevel() => _aiIncomeLevel;
+    public float GetIncomeMultiplier(int team) => PopulationIncomeMultiplier(team) * (team == TeamEnemy ? AiIncomeMultiplier() : 1f);
 
     public bool ApplyDebugCommand(GDictionary command)
     {
@@ -136,7 +149,7 @@ public partial class BattleSimulation
                     int team = DInt(command, "team", TeamAlly);
                     int kind = DInt(command, "kind", UnitMelee);
                     Vector2 position = DVector2(command, "position", new Vector2(BattleConfig.GridColumns * 0.5f, BattleConfig.GridRows * 0.5f));
-                    int id = SpawnUnit(team, position, kind);
+                    int id = SpawnUnit(team, position, kind, -1, default, DBool(command, "bypass_cap", false));
                     if (id == 0) return false;
                     if (DBool(command, "exact", false)) _positions[_indexById[id]] = position;
                     return true;
@@ -148,29 +161,12 @@ public partial class BattleSimulation
                     DInt(command, "formation", FormationLine),
                     DVector2(command, "anchor", new Vector2(BattleConfig.GridColumns * 0.5f, BattleConfig.GridRows * 0.5f)));
             case "spawn_stress":
-                {
-                    int count = Math.Clamp(DInt(command, "count", 600), 0, MaxUnits);
-                    _unitCount = 0;
-                    ResetLegions();
-                    Array.Fill(_indexById, -1);
-                    _nextUnitId = 1;
-                    for (int i = 0; i < count; i++)
-                    {
-                        int team = i < count / 2 ? TeamEnemy : TeamAlly;
-                        int local = team == TeamEnemy ? i : i - count / 2;
-                        int kind = local % 3 == 0 ? UnitMelee : local % 3 == 1 ? UnitRanged : UnitSiege;
-                        float x = (local % BattleConfig.GridColumns) + 0.5f;
-                        float rank = (local / BattleConfig.GridColumns) % 10;
-                        float y = team == TeamEnemy ? 17.0f + rank * 0.24f : 27.0f - rank * 0.24f;
-                        int id = SpawnUnit(team, new Vector2(x, y), kind);
-                        if (id != 0) _positions[_indexById[id]] = new Vector2(x, y);
-                    }
-                    RebuildBuckets();
-                    RebuildFlowFields();
-                    return _unitCount == count;
-                }
+                return SpawnStressFixture(Math.Clamp(DInt(command, "count", 600), 0, MaxUnits), true);
+            case "spawn_capped_stress":
+                return SpawnStressFixture(Math.Clamp(DInt(command, "count", 600), 0, BattleConfig.TeamUnitCap * 2), false);
             case "clear_units":
                 _unitCount = 0;
+                Array.Clear(_teamUnitCounts);
                 ResetLegions();
                 Array.Fill(_indexById, -1);
                 _nextUnitId = 1;
@@ -247,6 +243,7 @@ public partial class BattleSimulation
                 return true;
             case "set_enemy_ai": SetAiEnabled(TeamEnemy, DBool(command, "enabled", true)); return true;
             case "set_ai": SetAiEnabled(DInt(command, "team", TeamEnemy), DBool(command, "enabled", true)); return true;
+            case "set_ai_income_level": SetAiIncomeLevel(DInt(command, "level", BattleConfig.AiIncomeLevelDefault)); return true;
             case "set_seed":
                 _rng.Seed = (ulong)Math.Max(1, DInt(command, "value", 731942));
                 _aiUpdateCursor = (DInt(command, "value", 731942) & 1) == 0 ? TeamEnemy : TeamAlly;
@@ -288,7 +285,62 @@ public partial class BattleSimulation
     public float GetGroundSpeedMultiplier(Vector2 from, Vector2 toward) => GroundSpeedMultiplier(from, toward);
     public float GetElevationDamageMultiplier(Vector2 attacker, Vector2 target) => ElevationDamageMultiplier(attacker, target);
     public bool CanGroundStep(Vector2I from, Vector2I to) => CanGroundStepInternal(from, to);
-    public bool TerrainPathsValid() { _terrain.Elevation = _elevation; return _terrain.AllRequiredPathsReachable(BattleConfig.TerrainDeploymentDepth); }
+    public bool CanFlyingStep(Vector2I from, Vector2I to) => Valid(from) && Valid(to);
+    public bool IsWaterCell(Vector2I cell) => Valid(cell) && _water[Index(cell)] != 0;
+    public int WaterComponentCount()
+    {
+        var visited = new byte[BattleConfig.CellCount];
+        int components = 0;
+        var queue = new System.Collections.Generic.Queue<int>();
+        Vector2I[] offsets = { Vector2I.Left, Vector2I.Right, Vector2I.Up, Vector2I.Down };
+        for (int start = 0; start < BattleConfig.CellCount; start++)
+        {
+            if (_water[start] == 0 || visited[start] != 0) continue;
+            components++;
+            visited[start] = 1;
+            queue.Enqueue(start);
+            while (queue.Count > 0)
+            {
+                int current = queue.Dequeue();
+                int col = current % BattleConfig.GridColumns;
+                int row = current / BattleConfig.GridColumns;
+                foreach (Vector2I offset in offsets)
+                {
+                    Vector2I neighbor = new(col + offset.X, row + offset.Y);
+                    if (!Valid(neighbor)) continue;
+                    int next = Index(neighbor);
+                    if (_water[next] == 0 || visited[next] != 0) continue;
+                    visited[next] = 1;
+                    queue.Enqueue(next);
+                }
+            }
+        }
+        return components;
+    }
+    public bool TerrainPathsValid() { _terrain.Elevation = _elevation; _terrain.Water = _water; return _terrain.AllRequiredPathsReachable(BattleConfig.TerrainDeploymentDepth); }
+
+    private bool SpawnStressFixture(int count, bool bypassCap)
+    {
+        _unitCount = 0;
+        Array.Clear(_teamUnitCounts);
+        ResetLegions();
+        Array.Fill(_indexById, -1);
+        _nextUnitId = 1;
+        for (int i = 0; i < count; i++)
+        {
+            int team = i < count / 2 ? TeamEnemy : TeamAlly;
+            int local = team == TeamEnemy ? i : i - count / 2;
+            int kind = local % 3 == 0 ? UnitMelee : local % 3 == 1 ? UnitRanged : UnitSiege;
+            float x = (local % BattleConfig.GridColumns) + 0.5f;
+            float rank = (local / BattleConfig.GridColumns) % 10;
+            float y = team == TeamEnemy ? 29.0f + rank * 0.24f : 59.0f - rank * 0.24f;
+            int id = SpawnUnit(team, new Vector2(x, y), kind, -1, default, bypassCap);
+            if (id != 0) _positions[_indexById[id]] = new Vector2(x, y);
+        }
+        RebuildBuckets();
+        RebuildFlowFields();
+        return _unitCount == count;
+    }
     public float GetFlowCost(int team, Vector2I cell) => team == TeamAlly ? _allyFlow.CostAt(cell) : _enemyFlow.CostAt(cell);
     public Vector2 GetFlowDirection(int team, Vector2I cell) => team == TeamAlly ? _allyFlow.DirectionAt(cell) : _enemyFlow.DirectionAt(cell);
 

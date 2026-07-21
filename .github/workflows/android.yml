@@ -108,7 +108,7 @@ jobs:
           xvfb-run -a -s "-screen 0 540x960x24" \
             godot --display-driver x11 --rendering-method gl_compatibility \
             --audio-driver Dummy --path . -s tests/smoke_capture.gd
-          for capture in build/smoke_opening.png build/smoke_advantage.png build/smoke_disadvantage.png build/smoke_cluster.png build/smoke_persistent_flank.png build/smoke_flow_split.png build/smoke_infantry_closeup.png build/smoke_visual_hierarchy.png build/smoke_elevation_overview.png build/smoke_territory_flash.png build/smoke_high_ground_combat.png build/smoke_large_army.png build/smoke_siege_impact.png build/smoke_siege_closeup.png build/smoke_legion_gathering.png build/smoke_rally_defend.png build/smoke_rally_advance.png build/smoke_legion_line.png build/smoke_legion_wedge.png build/smoke_legion_engaged.png build/smoke_legion_loose.png; do
+          for capture in build/smoke_opening.png build/smoke_advantage.png build/smoke_disadvantage.png build/smoke_cluster.png build/smoke_persistent_flank.png build/smoke_flow_split.png build/smoke_infantry_closeup.png build/smoke_visual_hierarchy.png build/smoke_elevation_overview.png build/smoke_territory_flash.png build/smoke_high_ground_combat.png build/smoke_large_army.png build/smoke_siege_impact.png build/smoke_siege_closeup.png build/smoke_legion_gathering.png build/smoke_rally_defend.png build/smoke_rally_advance.png build/smoke_legion_line.png build/smoke_legion_wedge.png build/smoke_legion_engaged.png build/smoke_legion_loose.png build/smoke_lake_overview.png build/smoke_construction.png build/smoke_tactical_fx.png; do
             test -s "$capture"
             capture_info="$(file "$capture")"
             printf '%s\n' "$capture_info"

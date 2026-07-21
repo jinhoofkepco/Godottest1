@@ -13,12 +13,35 @@ internal sealed class TerrainMap
     public readonly int Width;
     public readonly int Height;
     public byte[] Elevation;
+    public byte[] Water;
 
     public TerrainMap(int width, int height)
     {
         Width = Math.Max(1, width);
         Height = Math.Max(1, height);
         Elevation = new byte[Width * Height];
+        Water = new byte[Width * Height];
+    }
+
+    public byte[] GenerateCentralLake(ulong seed)
+    {
+        Array.Clear(Water);
+        float centerX = (Width - 1) * 0.5f;
+        float centerY = (Height - 1) * 0.5f;
+        float radiusX = Math.Max(4f, BattleConfig.LakeRadiusX);
+        float radiusY = Math.Max(5f, BattleConfig.LakeRadiusY);
+        for (int row = 0; row < Height; row++)
+            for (int col = 0; col < Width; col++)
+            {
+                float dx = Math.Abs(col - centerX) / radiusX;
+                float dy = Math.Abs(row - centerY) / radiusY;
+                float edgeNoise = 0.075f * Mathf.Sin((Math.Abs(row - centerY) + (seed % 7)) * 1.37f)
+                    + 0.045f * Mathf.Cos((Math.Abs(col - centerX) + (seed % 11)) * 1.91f);
+                if (dx * dx + dy * dy <= 1f + edgeNoise)
+                    Water[Index(new Vector2I(col, row))] = 1;
+            }
+        ClearHqZones();
+        return (byte[])Water.Clone();
     }
 
     public byte[] Generate(ulong seed, int hillPairs, int summitPairs, int cliffPairs, int minimumRow, int maximumRow, int deploymentDepth, int maximumAttempts)
@@ -30,6 +53,8 @@ internal sealed class TerrainMap
             StampHillPairs(rng, hillPairs, summitPairs, minimumRow, maximumRow);
             StampCliffPairs(rng, cliffPairs, minimumRow, maximumRow);
             ClearHqZones();
+            for (int i = 0; i < Elevation.Length; i++)
+                if (Water[i] != 0) Elevation[i] = 0;
             if (AllRequiredPathsReachable(deploymentDepth))
                 return (byte[])Elevation.Clone();
         }
@@ -38,7 +63,9 @@ internal sealed class TerrainMap
     }
 
     public int GetElevation(Vector2I cell) => Valid(cell) ? Elevation[Index(cell)] : 0;
-    public bool CanStep(Vector2I from, Vector2I to) => Valid(from) && Valid(to) && Math.Abs(GetElevation(from) - GetElevation(to)) <= 1;
+    public bool CanStep(Vector2I from, Vector2I to) => Valid(from) && Valid(to)
+        && Water[Index(from)] == 0 && Water[Index(to)] == 0
+        && Math.Abs(GetElevation(from) - GetElevation(to)) <= 1;
 
     public bool AllRequiredPathsReachable(int deploymentDepth)
     {
@@ -47,7 +74,7 @@ internal sealed class TerrainMap
         byte[] fromEnemy = ReachableFrom(enemyHq);
         byte[] fromAlly = ReachableFrom(allyHq);
         for (int i = 0; i < Elevation.Length; i++)
-            if (fromEnemy[i] == 0 || fromAlly[i] == 0)
+            if (Water[i] == 0 && (fromEnemy[i] == 0 || fromAlly[i] == 0))
                 return false;
         int depth = Math.Clamp(deploymentDepth, 1, Math.Max(1, Height / 2 - 1));
         for (int row = 1; row <= depth; row++)
@@ -118,6 +145,8 @@ internal sealed class TerrainMap
         if (!Valid(cell))
             return;
         var mirrored = new Vector2I(Width - 1 - cell.X, Height - 1 - cell.Y);
+        if (Water[Index(cell)] != 0 || Water[Index(mirrored)] != 0)
+            return;
         byte value = (byte)Math.Max(Elevation[Index(cell)], Math.Clamp(level, 0, 2));
         Elevation[Index(cell)] = value;
         Elevation[Index(mirrored)] = value;
@@ -132,14 +161,17 @@ internal sealed class TerrainMap
                 {
                     Vector2I cell = hq + new Vector2I(x, y);
                     if (Valid(cell))
+                    {
                         Elevation[Index(cell)] = 0;
+                        Water[Index(cell)] = 0;
+                    }
                 }
     }
 
     private byte[] ReachableFrom(Vector2I start)
     {
         var visited = new byte[Width * Height];
-        if (!Valid(start))
+        if (!Valid(start) || Water[Index(start)] != 0)
             return visited;
         var queue = new Queue<Vector2I>();
         queue.Enqueue(start);
@@ -150,7 +182,7 @@ internal sealed class TerrainMap
             foreach (Vector2I offset in Neighbors)
             {
                 Vector2I neighbor = current + offset;
-                if (!Valid(neighbor) || visited[Index(neighbor)] != 0 || !CanStep(current, neighbor))
+                if (!Valid(neighbor) || Water[Index(neighbor)] != 0 || visited[Index(neighbor)] != 0 || !CanStep(current, neighbor))
                     continue;
                 visited[Index(neighbor)] = 1;
                 queue.Enqueue(neighbor);

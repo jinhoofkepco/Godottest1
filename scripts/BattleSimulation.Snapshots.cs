@@ -16,6 +16,13 @@ public partial class BattleSimulation
         _hudSnapshot["time_remaining"] = _timeRemaining;
         _hudSnapshot["result"] = _result;
         _hudSnapshot["unit_count"] = _unitCount;
+        _hudSnapshot["ally_unit_count"] = _teamUnitCounts[TeamAlly];
+        _hudSnapshot["enemy_unit_count"] = _teamUnitCounts[TeamEnemy];
+        _hudSnapshot["team_unit_cap"] = BattleConfig.TeamUnitCap;
+        _hudSnapshot["ally_income_multiplier"] = PopulationIncomeMultiplier(TeamAlly);
+        _hudSnapshot["enemy_income_multiplier"] = PopulationIncomeMultiplier(TeamEnemy) * AiIncomeMultiplier();
+        _hudSnapshot["ai_income_level"] = _aiIncomeLevel;
+        _hudSnapshot["ai_income_multiplier"] = AiIncomeMultiplier();
         _hudSnapshot["board_version"] = _boardVersion;
         return _hudSnapshot;
     }
@@ -32,6 +39,7 @@ public partial class BattleSimulation
             ["version"] = _boardVersion,
             ["ownership"] = (byte[])_ownership.Clone(),
             ["blocked"] = (byte[])_blocked.Clone(),
+            ["water"] = (byte[])_water.Clone(),
             ["elevation"] = (byte[])_elevation.Clone(),
             ["buildings"] = BuildBuildingsSnapshot(),
             ["ally_hq_id"] = _allyHqId,
@@ -59,7 +67,7 @@ public partial class BattleSimulation
             int cellIndex = _pendingBlockedCells[i];
             blockedIndices[i] = cellIndex;
             Vector2I cell = new(cellIndex % BattleConfig.GridColumns, cellIndex / BattleConfig.GridColumns);
-            blockedValues[i] = _blocked[cellIndex] != 0 || BuildingAt(cell) >= 0 ? 1 : 0;
+            blockedValues[i] = IsBlocked(cell) || BuildingAt(cell) >= 0 ? 1 : 0;
             _pendingBlockedFlags[cellIndex] = 0;
         }
         _pendingOwnershipCount = 0;
@@ -90,6 +98,10 @@ public partial class BattleSimulation
                 ["cell"] = building.Cell,
                 ["hp"] = building.Hp,
                 ["max_hp"] = building.MaxHp,
+                ["complete"] = building.Complete,
+                ["construction_duration"] = building.ConstructionDuration,
+                ["construction_remaining"] = building.ConstructionRemaining,
+                ["construction_progress"] = building.Complete || building.ConstructionDuration <= 0f ? 1f : 1f - building.ConstructionRemaining / building.ConstructionDuration,
                 ["destroyed"] = building.Destroyed,
                 ["rally_mode"] = building.RallyMode,
                 ["formation"] = building.Formation,
@@ -291,7 +303,8 @@ public partial class BattleSimulation
         {
             if (_legionStates[i] == LegionBroken || (_legionLiveCounts[i] <= 0 && _legionStates[i] != LegionGathering)) continue;
             Vector2 origin = PositionToWorld(_legionAnchors[i]) + new Vector2(0f, -24f);
-            Color color = _legionTeams[i] == TeamAlly ? new Color(0.18f, 0.62f, 1f, 0.95f) : new Color(1f, 0.28f, 0.34f, 0.95f);
+            float alpha = _legionStates[i] == LegionGathering ? 0.58f : _legionStates[i] == LegionEngaged ? 0.78f : 0.72f;
+            Color color = _legionTeams[i] == TeamAlly ? new Color(0.18f, 0.62f, 1f, alpha) : new Color(1f, 0.28f, 0.34f, alpha);
             color.G *= _legionStates[i] == LegionEngaged ? 1.25f : _legionStates[i] == LegionGathering ? 0.72f : 1f;
             WriteRecord(_legionBannerBuffer, draw++, Vector2.One, origin, color, new Color(_legionStates[i] / 3f, _legionFormations[i] / 2f, 0f, 0f));
         }

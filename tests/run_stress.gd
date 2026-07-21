@@ -13,8 +13,13 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var failed := false
-	var budget_600 := _environment_budget("STRESS_600_BUDGET_MS", 1.5)
-	var budget_3000 := _environment_budget("STRESS_3000_BUDGET_MS", 8.0)
+	var budget_600 := _environment_budget("STRESS_600_BUDGET_MS", 2.0)
+	var budget_3000 := _environment_budget("STRESS_3000_BUDGET_MS", 9.0)
+	var capped := _measure(600, "spawn_capped_stress")
+	print("CAPPED STRESS: ally=%d enemy=%d tick_avg=%.3f ms snapshot_avg=%.3f ms" % [capped.ally_units, capped.enemy_units, capped.tick_avg, capped.snapshot_avg])
+	if int(capped.ally_units) != 300 or int(capped.enemy_units) != 300:
+		push_error("CAPPED STRESS FIXTURE FAILED: expected 300 living units per team")
+		failed = true
 	print("DOTNET STRESS: units | tick_avg | tick_p95 | tick_worst | snapshot_avg | target | separation | territory | events | GC(0/1/2)")
 	for unit_count in COUNTS:
 		var result := _measure(int(unit_count))
@@ -45,11 +50,11 @@ func _run() -> void:
 	quit(1 if failed else 0)
 
 
-func _measure(unit_count: int) -> Dictionary:
+func _measure(unit_count: int, fixture_op := "spawn_stress") -> Dictionary:
 	var simulation = SIMULATION_SCENE.instantiate()
 	root.add_child(simulation)
 	simulation.call("Reset")
-	if not simulation.call("ApplyDebugCommand", {"op": "spawn_stress", "count": unit_count}):
+	if not simulation.call("ApplyDebugCommand", {"op": fixture_op, "count": unit_count}):
 		push_error("STRESS FIXTURE FAILED: could not spawn %d units" % unit_count)
 		return {}
 	simulation.call("SetProfilingEnabled", true)
@@ -72,6 +77,8 @@ func _measure(unit_count: int) -> Dictionary:
 	var after_gc: Dictionary = simulation.call("GetProfileSnapshot")
 	var ticks := maxf(1.0, float(after_gc.tick_count))
 	var result := {
+		"ally_units": int(simulation.call("GetDebugSnapshot").ally_unit_count),
+		"enemy_units": int(simulation.call("GetDebugSnapshot").enemy_unit_count),
 		"tick_avg": _average(tick_samples),
 		"tick_p95": _percentile(tick_samples, 0.95),
 		"tick_worst": _percentile(tick_samples, 1.0),

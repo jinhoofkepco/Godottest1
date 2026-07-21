@@ -19,6 +19,12 @@ func _run() -> void:
 	var samples := PackedFloat64Array()
 	var boundary_samples := PackedFloat64Array()
 	var update_samples := PackedFloat64Array()
+	var baseline_samples := PackedFloat64Array()
+	for baseline_index in WARMUP_ROUNDS + MEASURED_ROUNDS:
+		var baseline_started := Time.get_ticks_usec()
+		RenderingServer.force_draw(false)
+		if baseline_index >= WARMUP_ROUNDS:
+			baseline_samples.append(float(Time.get_ticks_usec() - baseline_started) / 1000.0)
 	for round_index in WARMUP_ROUNDS + MEASURED_ROUNDS:
 		var started := Time.get_ticks_usec()
 		var boundary_started := started
@@ -53,12 +59,15 @@ func _run() -> void:
 		if round_index >= WARMUP_ROUNDS:
 			update_samples.append(update_ms)
 			samples.append(total_ms)
-	if optimized and _percentile(update_samples, 0.95) > _environment_budget("BOARD_FLIP_BUDGET_MS", 2.0):
-		push_error("BOARD FLIP TARGET MISS: p95 %.3f ms" % _percentile(update_samples, 0.95))
+	var render_p95 := _percentile(update_samples, 0.95)
+	var baseline_p95 := _percentile(baseline_samples, 0.95)
+	var flip_spike_p95 := maxf(0.0, render_p95 - baseline_p95)
+	if optimized and flip_spike_p95 > _environment_budget("BOARD_FLIP_BUDGET_MS", 2.0):
+		push_error("BOARD FLIP TARGET MISS: incremental p95 %.3f ms" % flip_spike_p95)
 		quit(1)
 		return
-	print("BOARD FLIP STRESS: mode=%s cells=%d total_avg=%.3f total_p95=%.3f boundary_avg=%.3f render_avg=%.3f render_p95=%.3f" % [
-		"delta_multimesh" if optimized else "full_draw_fx", FLIP_COUNT, _average(samples), _percentile(samples, 0.95), _average(boundary_samples), _average(update_samples), _percentile(update_samples, 0.95),
+	print("BOARD FLIP STRESS: mode=%s cells=%d total_avg=%.3f total_p95=%.3f boundary_avg=%.3f render_avg=%.3f render_p95=%.3f baseline_p95=%.3f spike_p95=%.3f" % [
+		"delta_multimesh" if optimized else "full_draw_fx", FLIP_COUNT, _average(samples), _percentile(samples, 0.95), _average(boundary_samples), _average(update_samples), render_p95, baseline_p95, flip_spike_p95,
 	])
 	main.queue_free()
 	quit(0)

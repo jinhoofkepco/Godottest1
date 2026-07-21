@@ -129,10 +129,12 @@ public partial class BattleSimulation
             for (int i = 0; i < rear; i++) slots[cursor++] = GridSlot(i, rear, 4, 0.48f, 0.62f);
             return slots;
         }
-        for (int i = 0; i < melee; i++) slots[cursor++] = CenteredRowSlot(i, melee, 0.70f, -0.58f);
-        for (int i = 0; i < ranged; i++) slots[cursor++] = CenteredRowSlot(i, ranged, 0.58f, 0.28f);
-        for (int i = 0; i < siege; i++) slots[cursor++] = CenteredRowSlot(i, siege, 0.62f, 0.82f);
-        for (int i = 0; i < dragon; i++) slots[cursor++] = CenteredRowSlot(i, dragon, 0.72f, 1.30f);
+        for (int i = 0; i < melee; i++) slots[cursor++] = GridSlot(i, melee, 10, 0.62f, -0.58f);
+        int rangedRows = Math.Max(1, Mathf.CeilToInt(ranged / 7f));
+        for (int i = 0; i < ranged; i++) slots[cursor++] = GridSlot(i, ranged, 7, 0.56f, 0.60f);
+        float siegeDepth = 0.60f + rangedRows * 0.56f;
+        for (int i = 0; i < siege; i++) slots[cursor++] = CenteredRowSlot(i, siege, 0.68f, siegeDepth);
+        for (int i = 0; i < dragon; i++) slots[cursor++] = CenteredRowSlot(i, dragon, 0.78f, siegeDepth + 0.62f);
         return slots;
     }
 
@@ -221,7 +223,7 @@ public partial class BattleSimulation
         for (int buildingIndex = 0; buildingIndex < _buildingCount; buildingIndex++)
         {
             ref Building rally = ref _buildings[buildingIndex];
-            if (rally.Destroyed || rally.Kind != BuildingRallyPoint) continue;
+            if (rally.Destroyed || !rally.Complete || rally.Kind != BuildingRallyPoint) continue;
             List<int> waiting = _rallyMembers[buildingIndex];
             waiting.Sort((left, right) => _ids[left].CompareTo(_ids[right]));
             if (rally.RallyMode == RallyAdvance)
@@ -270,7 +272,7 @@ public partial class BattleSimulation
     }
 
     private bool IsFriendlyRally(int buildingIndex, int team) =>
-        buildingIndex >= 0 && !_buildings[buildingIndex].Destroyed && _buildings[buildingIndex].Kind == BuildingRallyPoint && _buildings[buildingIndex].Team == team;
+        buildingIndex >= 0 && !_buildings[buildingIndex].Destroyed && _buildings[buildingIndex].Complete && _buildings[buildingIndex].Kind == BuildingRallyPoint && _buildings[buildingIndex].Team == team;
 
     private int NearestRallyId(int team, Vector2 position)
     {
@@ -389,13 +391,23 @@ public partial class BattleSimulation
             else
             {
                 _legionHasWaypoint[i] = 0;
-                direction = _legionTeams[i] == TeamEnemy ? _enemyFlow.DirectionAt(CellAt(_legionAnchors[i])) : _allyFlow.DirectionAt(CellAt(_legionAnchors[i]));
+                if (LegionIsAirOnly(i))
+                {
+                    Vector2I hq = BuildingCell(_legionTeams[i] == TeamAlly ? _enemyHqId : _allyHqId);
+                    direction = _legionAnchors[i].DirectionTo(new Vector2(hq.X + 0.5f, hq.Y + 0.5f));
+                }
+                else
+                    direction = _legionTeams[i] == TeamEnemy ? _enemyFlow.DirectionAt(CellAt(_legionAnchors[i])) : _allyFlow.DirectionAt(CellAt(_legionAnchors[i]));
             }
             if (direction.LengthSquared() <= 0.0001f) direction = _legionTeams[i] == TeamEnemy ? Vector2.Down : Vector2.Up;
             _legionHeadings[i] = _legionHeadings[i].Slerp(direction.Normalized(), Mathf.Clamp(delta * BattleConfig.LegionHeadingTurnRate, 0f, 1f)).Normalized();
-            _legionAnchors[i] = MoveGround(_legionAnchors[i], _legionHeadings[i] * LegionMinimumSpeed(i) * delta);
+            Vector2 motion = _legionHeadings[i] * LegionMinimumSpeed(i) * delta;
+            _legionAnchors[i] = LegionIsAirOnly(i) ? MoveFlying(_legionAnchors[i], motion) : MoveGround(_legionAnchors[i], motion);
         }
     }
+
+    private bool LegionIsAirOnly(int legionIndex) => _legionLiveCounts[legionIndex] > 0
+        && _legionDragonCounts[legionIndex] == _legionLiveCounts[legionIndex];
 
     private bool LegionHasHostile(int legionIndex)
     {
@@ -447,7 +459,7 @@ public partial class BattleSimulation
     public bool ConfigureRally(int buildingId, int mode, int formation)
     {
         int index = BuildingIndexFromId(buildingId);
-        if (index < 0 || _buildings[index].Destroyed || _buildings[index].Kind != BuildingRallyPoint || mode < RallyAdvance || mode > RallyDefend) return false;
+        if (index < 0 || _buildings[index].Destroyed || !_buildings[index].Complete || _buildings[index].Kind != BuildingRallyPoint || mode < RallyAdvance || mode > RallyDefend) return false;
         ref Building rally = ref _buildings[index];
         if (rally.RallyMode == RallyDefend && mode == RallyAdvance)
         {

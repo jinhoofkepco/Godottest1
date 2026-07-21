@@ -56,6 +56,7 @@ func _ready() -> void:
 	hud.build_kind_selected.connect(_on_build_kind_selected)
 	hud.rally_config_changed.connect(_on_rally_config_changed)
 	hud.demolish_requested.connect(_on_demolish_requested)
+	hud.ai_income_level_changed.connect(_on_ai_income_level_changed)
 	hud.show_message("FRONTLINE ACTIVE", GameConfig.COLOR_TEXT)
 	queue_redraw()
 
@@ -86,7 +87,7 @@ func try_build_spawner(cell: Vector2i) -> bool:
 	if valid:
 		_sync_board_and_buildings()
 		_update_hud()
-		hud.show_message("BLUE %s DEPLOYED" % _build_kind_name(selected_build_kind), GameConfig.COLOR_ALLY)
+		hud.show_message("BLUE %s CONSTRUCTION" % _build_kind_name(selected_build_kind), GameConfig.COLOR_ALLY)
 	else:
 		hud.show_message("%s BUILD BLOCKED" % _build_kind_name(selected_build_kind), GameConfig.COLOR_ENEMY.lightened(0.25))
 	return valid
@@ -171,6 +172,14 @@ func _consume_events(events: Array) -> void:
 				_start_building_destroy(int(event.building_id))
 			"building_built":
 				var team := int(event.team)
+				fx.show_placement(Vector2i(event.cell), true)
+				hud.show_message(
+					"%s %s CONSTRUCTION" % ["BLUE" if team == TEAM_ALLY else "RED", _building_kind_name(int(event.kind), int(event.unit_kind))],
+					GameConfig.COLOR_ALLY if team == TEAM_ALLY else GameConfig.COLOR_ENEMY
+				)
+			"building_completed":
+				var team := int(event.team)
+				fx.show_production(Vector2i(event.cell), team)
 				hud.show_message(
 					"%s %s ONLINE" % ["BLUE" if team == TEAM_ALLY else "RED", _building_kind_name(int(event.kind), int(event.unit_kind))],
 					GameConfig.COLOR_ALLY if team == TEAM_ALLY else GameConfig.COLOR_ENEMY
@@ -231,7 +240,12 @@ func _update_hud() -> void:
 		float(_hud_snapshot.get("ally_hq_hp", 0.0)),
 		float(_hud_snapshot.get("enemy_hq_hp", 0.0)),
 		float(_hud_snapshot.get("time_remaining", 0.0)),
-		float(_hud_snapshot.get("occupancy", 0.5))
+		float(_hud_snapshot.get("occupancy", 0.5)),
+		int(_hud_snapshot.get("ally_unit_count", 0)),
+		int(_hud_snapshot.get("team_unit_cap", GameConfig.TEAM_UNIT_CAP)),
+		float(_hud_snapshot.get("ally_income_multiplier", 1.0)),
+		int(_hud_snapshot.get("ai_income_level", GameConfig.AI_INCOME_LEVEL_DEFAULT)),
+		float(_hud_snapshot.get("ai_income_multiplier", 1.5))
 	)
 
 
@@ -283,6 +297,12 @@ func _on_demolish_requested(building_id: int) -> void:
 	if simulation.call("DemolishRally", building_id):
 		_sync_board_and_buildings()
 		hud.show_message("RALLY POINT DEMOLISHED", GameConfig.COLOR_ORANGE)
+
+
+func _on_ai_income_level_changed(level: int) -> void:
+	simulation.call("SetAiIncomeLevel", level)
+	_update_hud()
+	hud.show_message("ENEMY ECONOMY LEVEL %d" % level, GameConfig.COLOR_ORANGE)
 
 
 func _building_at_cell(cell: Vector2i) -> int:

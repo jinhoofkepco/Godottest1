@@ -5,6 +5,7 @@ signal restart_pressed
 signal build_kind_selected(build_kind: int)
 signal rally_config_changed(building_id: int, mode: int, formation: int)
 signal demolish_requested(building_id: int)
+signal ai_income_level_changed(level: int)
 
 const GameConfig = preload("res://scripts/game_config.gd")
 
@@ -31,6 +32,8 @@ var enemy_hq_label: Label
 var timer_label: Label
 var ally_percent_label: Label
 var enemy_percent_label: Label
+var population_label: Label
+var ai_income_button: Button
 var ally_occupancy_fill: ColorRect
 var enemy_occupancy_fill: ColorRect
 var message_label: Label
@@ -48,6 +51,7 @@ var selected_build_kind := BUILD_MELEE
 var editing_building_id := -1
 var editing_mode := RALLY_ADVANCE
 var editing_formation := FORMATION_LINE
+var ai_income_level := GameConfig.AI_INCOME_LEVEL_DEFAULT
 
 @export var message_duration := 1.1
 
@@ -64,7 +68,7 @@ func _ready() -> void:
 	update_stats(GameConfig.START_GOLD, GameConfig.HQ_MAX_HP, GameConfig.HQ_MAX_HP, GameConfig.MATCH_DURATION, 0.5)
 
 
-func update_stats(ally_gold: int, ally_hq_hp: float, enemy_hq_hp: float, time_remaining: float, ally_occupancy: float) -> void:
+func update_stats(ally_gold: int, ally_hq_hp: float, enemy_hq_hp: float, time_remaining: float, ally_occupancy: float, ally_units := 0, unit_cap := GameConfig.TEAM_UNIT_CAP, ally_income_multiplier := 1.0, current_ai_level := GameConfig.AI_INCOME_LEVEL_DEFAULT, ai_income_multiplier := 1.5) -> void:
 	var blue_share := clampf(ally_occupancy, 0.0, 1.0)
 	var red_share := 1.0 - blue_share
 	gold_label.text = "GOLD  %03d" % max(0, ally_gold)
@@ -73,6 +77,9 @@ func update_stats(ally_gold: int, ally_hq_hp: float, enemy_hq_hp: float, time_re
 	timer_label.text = _format_time(time_remaining)
 	ally_percent_label.text = "BLUE %d%%" % roundi(blue_share * 100.0)
 	enemy_percent_label.text = "%d%% RED" % roundi(red_share * 100.0)
+	population_label.text = "UNITS %d/%d  //  INCOME %d%%" % [ally_units, unit_cap, roundi(ally_income_multiplier * 100.0)]
+	ai_income_level = clampi(current_ai_level, 1, 5)
+	ai_income_button.text = "AI L%d  x%.2f" % [ai_income_level, ai_income_multiplier]
 	ally_occupancy_fill.size.x = BAR_WIDTH * blue_share
 	enemy_occupancy_fill.position.x = BAR_WIDTH * blue_share
 	enemy_occupancy_fill.size.x = BAR_WIDTH * red_share
@@ -108,8 +115,12 @@ func _build_status_panel() -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(panel)
 	var title := _make_label(Vector2(14, 7), Vector2(300, 24), 16, GameConfig.COLOR_TEAL)
-	title.text = "FRONTLINE // RALLY COMMAND"
+	title.text = "FRONTLINE // COMMAND"
 	panel.add_child(title)
+	ai_income_button = _make_selector_button("AI L3  x1.50", Vector2(272, 4), Vector2(112, 28))
+	_style_button(ai_income_button, GameConfig.COLOR_ORANGE.darkened(0.12))
+	ai_income_button.pressed.connect(_cycle_ai_income_level)
+	panel.add_child(ai_income_button)
 	timer_label = _make_label(Vector2(388, 7), Vector2(110, 24), 18, GameConfig.COLOR_TEXT)
 	timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	panel.add_child(timer_label)
@@ -124,6 +135,9 @@ func _build_status_panel() -> void:
 	enemy_percent_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	panel.add_child(ally_percent_label)
 	panel.add_child(enemy_percent_label)
+	population_label = _make_label(Vector2(142, 61), Vector2(200, 22), 11, Color(GameConfig.COLOR_TEXT, 0.78))
+	population_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(population_label)
 	var bar_back := ColorRect.new()
 	bar_back.position = Vector2(14, 88)
 	bar_back.size = Vector2(BAR_WIDTH, 22)
@@ -242,7 +256,7 @@ func _build_rally_editor() -> void:
 	demolish.pressed.connect(request_edit_demolish)
 	edit_panel.add_child(demolish)
 	var hint := _make_label(Vector2(12, 134), Vector2(406, 28), 11, Color(GameConfig.COLOR_TEXT, 0.66))
-	hint.text = "ADVANCE 10 // DEFEND 14 + AUTO-LAUNCH OVERFLOW"
+	hint.text = "ADVANCE 20 // DEFEND 28 + AUTO-LAUNCH OVERFLOW"
 	edit_panel.add_child(hint)
 
 
@@ -334,6 +348,11 @@ func _build_result_overlay() -> void:
 func _format_time(seconds_left: float) -> String:
 	var whole_seconds := maxi(0, ceili(seconds_left))
 	return "%02d:%02d" % [whole_seconds / 60, whole_seconds % 60]
+
+
+func _cycle_ai_income_level() -> void:
+	ai_income_level = ai_income_level % 5 + 1
+	ai_income_level_changed.emit(ai_income_level)
 
 
 func _make_label(at: Vector2, dimensions: Vector2, font_size: int, color: Color) -> Label:

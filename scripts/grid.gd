@@ -16,6 +16,7 @@ var full_sync_count := 0
 var _board_version := -1
 var _ownership := PackedByteArray()
 var _blocked := PackedByteArray()
+var _water := PackedByteArray()
 var _elevation := PackedByteArray()
 var _buildings: Array = []
 var _cell_to_instance := PackedInt32Array()
@@ -44,6 +45,7 @@ func sync_initial(snapshot: Dictionary) -> void:
 	_board_version = int(snapshot.get("version", -1))
 	_ownership = PackedByteArray(snapshot.get("ownership", PackedByteArray())).duplicate()
 	_blocked = PackedByteArray(snapshot.get("blocked", PackedByteArray())).duplicate()
+	_water = PackedByteArray(snapshot.get("water", PackedByteArray())).duplicate()
 	_elevation = PackedByteArray(snapshot.get("elevation", PackedByteArray())).duplicate()
 	_buildings = Array(snapshot.get("buildings", []))
 	full_sync_count += 1
@@ -66,7 +68,7 @@ func apply_board_delta(delta: Dictionary) -> void:
 		var cell_index := ownership_indices[delta_index]
 		if cell_index < 0 or cell_index >= CELL_COUNT:
 			continue
-		_ownership[cell_index] = clampi(ownership_owners[delta_index], 1, 2)
+		_ownership[cell_index] = clampi(ownership_owners[delta_index], 0, 2)
 		_flash_times[cell_index] = flash_time
 		_update_tile_instance(cell_index, true)
 		last_flash_update_count += 1
@@ -87,6 +89,7 @@ func can_build(cell: Vector2i, team: int = 2) -> bool:
 		return false
 	var cell_index := cell.y * GameConfig.GRID_COLUMNS + cell.x
 	var cell_blocked: bool = not _blocked.is_empty() and _blocked[cell_index] != 0
+	cell_blocked = cell_blocked or (not _water.is_empty() and _water[cell_index] != 0)
 	return _can_build_with_ownership(cell, team, _ownership, cell_blocked)
 
 
@@ -135,14 +138,20 @@ func cell_to_world(cell: Vector2i) -> Vector2:
 func world_to_cell(world_position: Vector2) -> Vector2i:
 	var best_cell := Vector2i(-1, -1)
 	var best_depth := -1
-	for depth in GameConfig.GRID_COLUMNS + GameConfig.GRID_ROWS - 1:
-		var first_row := maxi(0, depth - GameConfig.GRID_COLUMNS + 1)
-		var last_row := mini(GameConfig.GRID_ROWS - 1, depth)
-		for row in range(first_row, last_row + 1):
-			var cell := Vector2i(depth - row, row)
-			if Geometry2D.is_point_in_polygon(world_position, _cell_diamond(cell)) and depth >= best_depth:
-				best_cell = cell
-				best_depth = depth
+	var visited: Dictionary = {}
+	for elevation_level in GameConfig.ELEVATION_LEVELS:
+		var corrected := screen_to_grid(world_position + Vector2(0.0, float(elevation_level) * GameConfig.ELEVATION_PIXEL_STEP))
+		var origin := Vector2i(floori(corrected.x), floori(corrected.y))
+		for y_offset in range(-1, 2):
+			for x_offset in range(-1, 2):
+				var cell := origin + Vector2i(x_offset, y_offset)
+				if not _cell_is_valid(cell) or visited.has(cell):
+					continue
+				visited[cell] = true
+				var depth := cell.x + cell.y
+				if Geometry2D.is_point_in_polygon(world_position, _cell_diamond(cell)) and depth >= best_depth:
+					best_cell = cell
+					best_depth = depth
 	if best_cell.x >= 0:
 		return best_cell
 	var flat_position := screen_to_grid(world_position)
@@ -182,6 +191,10 @@ func get_elevation_at(cell: Vector2i) -> int:
 	return _elevation_at(cell)
 
 
+func is_water(cell: Vector2i) -> bool:
+	return _cell_is_valid(cell) and _water.size() == CELL_COUNT and _water[cell.y * GameConfig.GRID_COLUMNS + cell.x] != 0
+
+
 func get_tile_instance_count() -> int:
 	return _tile_multimesh.instance_count if _tile_multimesh != null else 0
 
@@ -201,13 +214,15 @@ func get_frontline_segments(current_ownership: PackedByteArray) -> Array[PackedV
 	for row in GameConfig.GRID_ROWS:
 		for column in GameConfig.GRID_COLUMNS:
 			var owner: int = current_ownership[row * GameConfig.GRID_COLUMNS + column]
-			if column + 1 < GameConfig.GRID_COLUMNS and current_ownership[row * GameConfig.GRID_COLUMNS + column + 1] != owner:
+			var right_owner := int(current_ownership[row * GameConfig.GRID_COLUMNS + column + 1]) if column + 1 < GameConfig.GRID_COLUMNS else owner
+			if column + 1 < GameConfig.GRID_COLUMNS and owner != 0 and right_owner != 0 and right_owner != owner:
 				var edge_elevation := maxi(_elevation_at(Vector2i(column, row)), _elevation_at(Vector2i(column + 1, row)))
 				segments.append(PackedVector2Array([
 					grid_to_screen_elevated(Vector2(column + 1, row), edge_elevation),
 					grid_to_screen_elevated(Vector2(column + 1, row + 1), edge_elevation),
 				]))
-			if row + 1 < GameConfig.GRID_ROWS and current_ownership[(row + 1) * GameConfig.GRID_COLUMNS + column] != owner:
+			var lower_owner := int(current_ownership[(row + 1) * GameConfig.GRID_COLUMNS + column]) if row + 1 < GameConfig.GRID_ROWS else owner
+			if row + 1 < GameConfig.GRID_ROWS and owner != 0 and lower_owner != 0 and lower_owner != owner:
 				var edge_elevation := maxi(_elevation_at(Vector2i(column, row)), _elevation_at(Vector2i(column, row + 1)))
 				segments.append(PackedVector2Array([
 					grid_to_screen_elevated(Vector2(column + 1, row + 1), edge_elevation),
@@ -234,7 +249,7 @@ func _ensure_layers() -> void:
 
 
 func _initialize_or_refresh_tiles() -> void:
-	if _ownership.size() != CELL_COUNT or _blocked.size() != CELL_COUNT or _elevation.size() != CELL_COUNT:
+	if _ownership.size() != CELL_COUNT or _blocked.size() != CELL_COUNT or _water.size() != CELL_COUNT or _elevation.size() != CELL_COUNT:
 		return
 	if not _tiles_initialized:
 		_cell_to_instance.resize(CELL_COUNT)
@@ -277,13 +292,13 @@ func _write_tile_visual(cell_index: int, instance_index: int) -> void:
 	var cell := Vector2i(cell_index % GameConfig.GRID_COLUMNS, cell_index / GameConfig.GRID_COLUMNS)
 	var elevation_level := _elevation_at(cell)
 	_tile_multimesh.set_instance_color(instance_index, _cell_color(cell, _ownership).lightened(float(elevation_level) * GameConfig.ELEVATION_BRIGHTNESS_STEP))
-	var cell_blocked := _blocked[cell_index] != 0
+	var cell_blocked := _blocked[cell_index] != 0 or _water[cell_index] != 0
 	var buildable := _can_build_with_ownership(cell, 2, _ownership, cell_blocked)
 	_tile_multimesh.set_instance_custom_data(instance_index, Color(
 		_flash_times[cell_index],
 		1.0 if buildable else 0.0,
 		float(elevation_level) / maxf(1.0, float(GameConfig.ELEVATION_LEVELS - 1)),
-		0.0
+		1.0 if _water[cell_index] != 0 else 0.0
 	))
 
 
@@ -331,6 +346,10 @@ void fragment() {
 	float active = step(0.0, age) * (1.0 - step(flash_duration, age));
 	float flash = active * (1.0 - clamp(age / flash_duration, 0.0, 1.0));
 	color = mix(color, vec3(1.0), flash * 0.52);
+	if (tile_data.a > 0.5) {
+		float ripple = 0.035 * sin(TIME * 1.35 + UV.x * 13.0 + UV.y * 9.0);
+		color += vec3(0.02, 0.08, 0.10) + ripple;
+	}
 	COLOR = vec4(color, tile_color.a);
 }
 """
@@ -342,6 +361,8 @@ void fragment() {
 
 
 func _cell_color(cell: Vector2i, current_ownership: PackedByteArray) -> Color:
+	if is_water(cell):
+		return GameConfig.COLOR_WATER if (cell.x + cell.y) % 2 == 0 else GameConfig.COLOR_WATER_ALT
 	var owner := 1 if cell.y < GameConfig.GRID_ROWS / 2 else 2
 	if current_ownership.size() == CELL_COUNT:
 		owner = current_ownership[cell.y * GameConfig.GRID_COLUMNS + cell.x]

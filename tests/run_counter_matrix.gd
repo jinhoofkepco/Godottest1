@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SIMULATION_SCENE = preload("res://scenes/battle_simulation.tscn")
+const GameConfig = preload("res://scripts/game_config.gd")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const UNIT_MELEE := 0
@@ -41,7 +42,7 @@ func _trial(scenario: Dictionary, trial: int) -> bool:
 	simulation.call("ApplyDebugCommand", {"op": "set_seed", "value": 9000 + trial})
 	simulation.call("ApplyDebugCommand", {"op": "clear_units"})
 	var elevation := PackedByteArray()
-	elevation.resize(22 * 44)
+	elevation.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
 	elevation.fill(0)
 	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": elevation})
 	var favored_team := TEAM_ALLY if trial % 2 == 0 else TEAM_ENEMY

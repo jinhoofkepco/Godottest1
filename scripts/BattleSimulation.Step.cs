@@ -12,6 +12,7 @@ public partial class BattleSimulation
         ApplyIncome(delta);
         _timeRemaining = Mathf.Max(0f, _timeRemaining - delta);
         UpdateAiControllers(delta);
+        UpdateConstruction(delta);
         UpdateSpawners(delta);
         RebuildBuckets();
         UpdateRallyPoints(delta);
@@ -136,12 +137,31 @@ public partial class BattleSimulation
 
     private void ApplyIncome(float delta)
     {
-        _allyIncomeRemainder += delta * BattleConfig.PassiveIncomePerSecond;
-        _enemyIncomeRemainder += delta * BattleConfig.PassiveIncomePerSecond;
+        _allyIncomeRemainder += delta * BattleConfig.PassiveIncomePerSecond * PopulationIncomeMultiplier(TeamAlly);
+        _enemyIncomeRemainder += delta * BattleConfig.PassiveIncomePerSecond * PopulationIncomeMultiplier(TeamEnemy) * AiIncomeMultiplier();
         int allyIncome = Mathf.FloorToInt(_allyIncomeRemainder + 0.000001f);
         int enemyIncome = Mathf.FloorToInt(_enemyIncomeRemainder + 0.000001f);
         if (allyIncome > 0) { _allyGold += allyIncome; _allyIncomeRemainder -= allyIncome; }
         if (enemyIncome > 0) { _enemyGold += enemyIncome; _enemyIncomeRemainder -= enemyIncome; }
+    }
+
+    private void UpdateConstruction(float delta)
+    {
+        for (int index = 0; index < _buildingCount; index++)
+        {
+            ref Building building = ref _buildings[index];
+            if (building.Destroyed || building.Complete) continue;
+            building.ConstructionRemaining = Mathf.Max(0f, building.ConstructionRemaining - delta);
+            building.Hp = Mathf.Min(building.MaxHp, building.Hp + building.ConstructionHpPerSecond * delta);
+            if (building.ConstructionRemaining > 0.0001f) continue;
+            building.ConstructionRemaining = 0f;
+            building.Complete = true;
+            building.SpawnTimer = building.Kind == BuildingDragonLair ? BattleConfig.DragonProductionInterval
+                : building.Kind == BuildingSpawner && building.UnitKind == UnitSiege ? BattleConfig.SiegeProductionInterval
+                : building.Kind == BuildingSpawner ? BattleConfig.SpawnerProductionInterval : 0f;
+            QueueStructural("building_completed", building.Team, building.Id, building.Cell, building.Kind, building.UnitKind);
+            _boardVersion++;
+        }
     }
 
     private void UpdateSpawners(float delta)
@@ -149,7 +169,7 @@ public partial class BattleSimulation
         for (int index = 0; index < _buildingCount; index++)
         {
             ref Building building = ref _buildings[index];
-            if (building.Destroyed || (building.Kind != BuildingSpawner && building.Kind != BuildingDragonLair))
+            if (building.Destroyed || !building.Complete || (building.Kind != BuildingSpawner && building.Kind != BuildingDragonLair))
                 continue;
             building.SpawnTimer -= delta;
             if (building.SpawnTimer > 0f) continue;
@@ -170,7 +190,7 @@ public partial class BattleSimulation
         for (int buildingIndex = 0; buildingIndex < _buildingCount; buildingIndex++)
         {
             ref Building building = ref _buildings[buildingIndex];
-            if (building.Destroyed || (building.Kind != BuildingHq && building.Kind != BuildingDefenseTower))
+            if (building.Destroyed || !building.Complete || (building.Kind != BuildingHq && building.Kind != BuildingDefenseTower))
                 continue;
             building.AttackCooldown = Mathf.Max(0f, building.AttackCooldown - delta);
             if (building.AttackCooldown > 0f) continue;
@@ -246,6 +266,8 @@ public partial class BattleSimulation
     private void RebuildFlowForTeam(int team)
     {
         Array.Copy(_blocked, _flowBlocked, _blocked.Length);
+        for (int i = 0; i < _flowBlocked.Length; i++)
+            if (_water[i] != 0) _flowBlocked[i] = 1;
         for (int i = 0; i < _buildingCount; i++)
         {
             Building building = _buildings[i];
@@ -281,6 +303,7 @@ public partial class BattleSimulation
             else blue[building.Cell.X] = Math.Min(blue[building.Cell.X], building.Cell.Y);
         }
         int allyCells = 0;
+        int landCells = 0;
         bool changed = false;
         for (int col = 0; col < BattleConfig.GridColumns; col++)
         {
@@ -296,6 +319,16 @@ public partial class BattleSimulation
                 else if (redClaims) owner = TeamEnemy;
                 else if (blueClaims) owner = TeamAlly;
                 int cellIndex = Index(new Vector2I(col, row));
+                if (_water[cellIndex] != 0)
+                {
+                    if (_ownership[cellIndex] != TeamNone)
+                    {
+                        _ownership[cellIndex] = TeamNone;
+                        if (emitChanges) { changed = true; QueueOwnershipDelta(cellIndex); }
+                    }
+                    continue;
+                }
+                landCells++;
                 if (owner != TeamNone) _ownership[cellIndex] = (byte)owner;
                 if (_ownership[cellIndex] == TeamAlly) allyCells++;
                 if (emitChanges && previous[cellIndex] != _ownership[cellIndex])
@@ -305,7 +338,7 @@ public partial class BattleSimulation
                 }
             }
         }
-        _allyOccupancy = allyCells / (float)BattleConfig.CellCount;
+        _allyOccupancy = landCells > 0 ? allyCells / (float)landCells : 0.5f;
         _enemyOccupancy = 1f - _allyOccupancy;
         _territoryTimer = BattleConfig.TerritoryUpdateInterval;
         _territoryUpdateCount++;

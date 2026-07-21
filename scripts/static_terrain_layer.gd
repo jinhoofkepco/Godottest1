@@ -23,7 +23,18 @@ func _draw() -> void:
 		var last_row := mini(GameConfig.GRID_ROWS - 1, depth)
 		for row in range(first_row, last_row + 1):
 			var cell := Vector2i(depth - row, row)
+			if _grid.is_water(cell):
+				_draw_shore(cell, _grid.get_cell_diamond(cell))
+				continue
 			_draw_cliff_sides(cell, _grid.get_cell_diamond(cell), _grid.get_elevation_at(cell))
+
+
+func _draw_shore(cell: Vector2i, diamond: PackedVector2Array) -> void:
+	var shore := Color(GameConfig.COLOR_SHORE, 0.72)
+	if not _grid.is_water(cell + Vector2i.UP): draw_line(diamond[0], diamond[1], shore, 1.4, true)
+	if not _grid.is_water(cell + Vector2i.RIGHT): draw_line(diamond[1], diamond[2], shore, 1.4, true)
+	if not _grid.is_water(cell + Vector2i.DOWN): draw_line(diamond[2], diamond[3], shore, 1.4, true)
+	if not _grid.is_water(cell + Vector2i.LEFT): draw_line(diamond[3], diamond[0], shore, 1.4, true)
 
 
 func _draw_cliff_sides(cell: Vector2i, diamond: PackedVector2Array, elevation_level: int) -> void:

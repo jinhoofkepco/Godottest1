@@ -27,6 +27,7 @@ var failures: Array[String] = []
 func run() -> Array[String]:
 	_test_config_and_initial_state()
 	_test_build_and_economy()
+	_test_construction_population_and_ai_income()
 	_test_elevation_rules()
 	_test_cross_column_combat_and_air_targeting()
 	_test_radius_and_separation()
@@ -56,34 +57,73 @@ func _test_config_and_initial_state() -> void:
 	var simulation = _new_simulation()
 	var config: Dictionary = simulation.call("GetConfigSnapshot")
 	var debug: Dictionary = simulation.call("GetDebugSnapshot")
-	_expect(int(config.grid_columns) == 22 and int(config.grid_rows) == 44, "map remains the four-times 22x44 battlefield")
+	_expect(int(config.grid_columns) == 44 and int(config.grid_rows) == 88, "map expands to the 44x88 battlefield")
 	_expect(is_equal_approx(float(config.siege_range), 7.0), "SIEGE range is 7.0 cells")
 	_expect(is_equal_approx(float(config.siege_damage), 55.8), "SIEGE damage is 55.8")
 	_expect(is_equal_approx(float(config.match_duration), 420.0) and is_equal_approx(float(config.occupancy_win_ratio), 0.92), "match tempo exposes seven minutes and ninety-two percent occupancy")
-	_expect(is_equal_approx(float(config.passive_income_per_second), 2.25) and is_equal_approx(float(config.hq_max_hp), 2400.0), "slower economy and HQ durability are exposed by C#")
+	_expect(is_equal_approx(float(config.passive_income_per_second), 2.25) and is_equal_approx(float(config.hq_max_hp), 12000.0), "population-scaled economy and five-times HQ durability are exposed by C#")
+	_expect(is_equal_approx(float(config.ranged_hp), 20.4), "RANGED HP is nerfed to sixty percent")
+	_expect(is_equal_approx(float(config.spawner_production_interval), 5.76), "unit production interval is doubled")
+	_expect(int(config.rally_launch_size) == 20 and int(config.rally_defense_capacity) == 28, "rally launch and defense capacity are doubled")
+	_expect(int(config.team_unit_cap) == 300 and int(config.ai_income_level) == 3, "team unit cap and default AI income level are exposed")
 	_expect(int(debug.unit_count) == 0, "match starts without unit Nodes or unit objects")
 	_expect(is_equal_approx(float(debug.ally_occupancy), 0.5), "initial territory is split 50/50")
 	_expect(simulation.call("TerrainPathsValid"), "seeded symmetric elevation map is reachable")
 	var elevation: PackedByteArray = debug.elevation
+	var water: PackedByteArray = debug.water
+	_expect(water.size() == GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS, "board exposes one water flag per cell")
+	_expect(water[(GameConfig.GRID_ROWS / 2) * GameConfig.GRID_COLUMNS + GameConfig.GRID_COLUMNS / 2] == 1, "one large lake occupies the battlefield center")
 	for row in range(GameConfig.GRID_ROWS / 2):
 		for col in range(GameConfig.GRID_COLUMNS):
 			var mirror := (GameConfig.GRID_ROWS - 1 - row) * GameConfig.GRID_COLUMNS + (GameConfig.GRID_COLUMNS - 1 - col)
 			_expect(elevation[row * GameConfig.GRID_COLUMNS + col] == elevation[mirror], "terrain elevation is point-mirrored for fairness")
+			_expect(water[row * GameConfig.GRID_COLUMNS + col] == water[mirror], "central lake is point-mirrored for fairness")
+	_expect(not simulation.call("CanGroundStep", Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2 - 10), Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2 - 9)), "ground units cannot step into the lake")
 	simulation.free()
 
 
 func _test_build_and_economy() -> void:
 	var simulation = _new_simulation()
 	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000})
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(3, 35), BUILD_MELEE), "MELEE spawner builds on owned territory")
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(6, 35), BUILD_RANGED), "RANGED spawner builds on owned territory")
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(12, 35), BUILD_SIEGE), "SIEGE spawner builds on owned territory")
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(15, 35), BUILD_DRAGON), "DRAGON lair builds on owned territory")
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(9, 34), BUILD_RALLY), "RALLY_POINT builds on owned territory")
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(9, 41), BUILD_TOWER), "defense tower builds inside allied HQ 5x5")
-	_expect(not simulation.call("TryBuild", TEAM_ALLY, Vector2i(3, 30), BUILD_TOWER), "defense tower rejects cells outside HQ 5x5")
-	_expect(not simulation.call("TryBuild", TEAM_ALLY, Vector2i(9, 34), BUILD_RALLY), "occupied rally cell rejects a duplicate")
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(3, 70), BUILD_MELEE), "MELEE spawner builds on owned territory")
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(8, 70), BUILD_RANGED), "RANGED spawner builds on owned territory")
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(13, 70), BUILD_SIEGE), "SIEGE spawner builds on owned territory")
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(18, 70), BUILD_DRAGON), "DRAGON lair builds on owned territory")
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(24, 68), BUILD_RALLY), "RALLY_POINT builds on owned territory")
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(22, 86), BUILD_TOWER), "defense tower builds inside allied HQ 5x5")
+	_expect(not simulation.call("TryBuild", TEAM_ALLY, Vector2i(30, 70), BUILD_TOWER), "defense tower rejects cells outside HQ 5x5")
+	_expect(not simulation.call("TryBuild", TEAM_ALLY, Vector2i(24, 68), BUILD_RALLY), "occupied rally cell rejects a duplicate")
 	_expect(not simulation.call("TryBuild", TEAM_ALLY, Vector2i(3, 4), BUILD_RALLY), "enemy territory rejects allied rally construction")
+	_expect(not simulation.call("TryBuild", TEAM_ALLY, Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2), BUILD_RALLY), "central lake rejects construction")
+	simulation.free()
+
+
+func _test_construction_population_and_ai_income() -> void:
+	var simulation = _new_simulation()
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000, "enemy": 0})
+	var cell := Vector2i(5, 70)
+	_expect(simulation.call("TryBuild", TEAM_ALLY, cell, BUILD_MELEE), "construction fixture places a MELEE spawner")
+	var built: Dictionary = simulation.call("GetDebugSnapshot")
+	var building_id := _building_id_at(built.buildings, cell)
+	var building := _building_by_id(built.buildings, building_id)
+	_expect(not bool(building.complete) and is_equal_approx(float(building.construction_duration), 6.0), "construction time equals building cost times 0.1 seconds")
+	_expect(is_equal_approx(float(building.hp), GameConfig.SPAWNER_MAX_HP * 0.2), "construction starts at twenty percent building HP")
+	for tick in range(180): simulation.call("Step", 1.0 / 30.0)
+	building = _building_by_id(simulation.call("GetDebugSnapshot").buildings, building_id)
+	_expect(bool(building.complete), "building activates after its full construction duration")
+	simulation.call("ApplyDebugCommand", {"op": "clear_units"})
+	for index in range(GameConfig.TEAM_UNIT_CAP + 1):
+		simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(5.5, 70.5), "exact": true})
+	var capped: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(int(capped.ally_unit_count) == GameConfig.TEAM_UNIT_CAP, "each team is capped at three hundred living units")
+	_expect(is_equal_approx(float(simulation.call("GetIncomeMultiplier", TEAM_ALLY)), 0.0), "three hundred units reduce incoming player money to zero")
+	simulation.call("ApplyDebugCommand", {"op": "clear_units"})
+	for index in range(30):
+		simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(5.5, 70.5), "exact": true})
+	_expect(is_equal_approx(float(simulation.call("GetIncomeMultiplier", TEAM_ALLY)), 0.9), "each complete thirty-unit block reduces income by ten percent")
+	simulation.call("SetAiIncomeLevel", 5)
+	_expect(int(simulation.call("GetAiIncomeLevel")) == 5 and is_equal_approx(float(simulation.call("GetIncomeMultiplier", TEAM_ENEMY)), 2.0), "AI income level five maps to two-times player base income")
 	simulation.free()
 
 
@@ -105,6 +145,10 @@ func _test_legion_slots_and_rotation() -> void:
 		_expect(last_melee > first_support, "LINE places every melee rank ahead of ranged and siege ranks")
 		var expected_east := Vector2(-north[0].y, north[0].x)
 		_expect(east[0].distance_to(expected_east) < 0.001, "heading rotation rotates the complete slot layout")
+	var large: PackedVector2Array = simulation.call("GetFormationSlots", {"melee": 18, "ranged": 8, "siege": 2, "dragon": 0}, FORMATION_LINE, Vector2.UP)
+	var maximum_width := 0.0
+	for slot in large: maximum_width = maxf(maximum_width, absf(Vector2(slot).x))
+	_expect(large.size() == 28 and maximum_width < 3.2, "twenty-eight-member LINE uses bounded ranks instead of one screen-wide row")
 	simulation.free()
 
 
@@ -135,13 +179,13 @@ func _test_spawner_production_and_nearest_rally() -> void:
 		return
 	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000, "enemy": 0})
 	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(5, 35), BUILD_MELEE), "continuous production fixture builds a MELEE spawner")
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(4, 32), BUILD_RALLY), "first rally builds")
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(14, 32), BUILD_RALLY), "second rally builds")
-	for tick in range(88): simulation.call("Step", 1.0 / 30.0)
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 1, "cell": Vector2i(10, 70), "unit_kind": UNIT_MELEE}), "continuous production fixture adds a completed MELEE spawner")
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 4, "cell": Vector2i(8, 64), "unit_kind": UNIT_MELEE}), "first completed rally is added")
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 4, "cell": Vector2i(28, 64), "unit_kind": UNIT_MELEE}), "second completed rally is added")
+	for tick in range(174): simulation.call("Step", 1.0 / 30.0)
 	var produced: Dictionary = simulation.call("GetDebugSnapshot")
-	_expect(int(produced.unit_count) == 1 and int(produced.unit_kinds[0]) == UNIT_MELEE, "MELEE spawner produces one ungrouped unit after 2.88 seconds")
-	_expect(int(produced.unit_rally_ids[0]) == _building_id_at(produced.buildings, Vector2i(4, 32)), "produced unit selects the nearest friendly rally")
+	_expect(int(produced.unit_count) == 1 and int(produced.unit_kinds[0]) == UNIT_MELEE, "MELEE spawner produces one ungrouped unit after 5.76 seconds")
+	_expect(int(produced.unit_rally_ids[0]) == _building_id_at(produced.buildings, Vector2i(8, 64)), "produced unit selects the nearest friendly rally")
 	simulation.free()
 
 
@@ -153,16 +197,16 @@ func _test_rally_advance_launch() -> void:
 		return
 	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
 	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000})
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(10, 32), BUILD_RALLY), "advance rally fixture builds")
-	var rally_id := _building_id_at(simulation.call("GetDebugSnapshot").buildings, Vector2i(10, 32))
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 4, "cell": Vector2i(20, 64), "unit_kind": UNIT_MELEE}), "advance rally fixture is complete")
+	var rally_id := _building_id_at(simulation.call("GetDebugSnapshot").buildings, Vector2i(20, 64))
 	_expect(simulation.call("ConfigureRally", rally_id, 0, FORMATION_WEDGE), "rally selects ADVANCE and WEDGE")
-	for offset in range(10):
-		simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": offset % 4, "position": Vector2(10.2 + float(offset % 3) * 0.12, 31.8 + float(offset / 3) * 0.10), "exact": true})
+	for offset in range(20):
+		simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": offset % 4, "position": Vector2(20.2 + float(offset % 5) * 0.12, 63.2 + float(offset / 5) * 0.10), "exact": true})
 	for tick in range(8): simulation.call("Step", 1.0 / 30.0)
 	var launched: Dictionary = simulation.call("GetDebugSnapshot")
-	_expect(PackedInt32Array(launched.legion_states).has(LEGION_MARCHING), "ADVANCE rally launches at ten waiting units")
+	_expect(PackedInt32Array(launched.legion_states).has(LEGION_MARCHING), "ADVANCE rally launches at twenty waiting units")
 	_expect(PackedInt32Array(launched.legion_formations).has(FORMATION_WEDGE), "launched legion uses the rally formation")
-	_expect(PackedInt32Array(launched.unit_legion_ids).count(-1) == 0, "all ten launch members receive a legion ID")
+	_expect(PackedInt32Array(launched.unit_legion_ids).count(-1) == 0, "all twenty launch members receive a legion ID")
 	simulation.free()
 
 
@@ -170,13 +214,13 @@ func _test_rally_congestion_still_launches() -> void:
 	var simulation = _new_simulation()
 	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
 	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000, "enemy": 0})
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(3, 37), BUILD_MELEE), "left congestion fixture spawner builds")
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(18, 37), BUILD_MELEE), "right congestion fixture spawner builds")
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(10, 32), BUILD_RALLY), "congestion fixture rally builds")
-	for tick in range(1800):
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 1, "cell": Vector2i(6, 74), "unit_kind": UNIT_MELEE}), "left congestion fixture spawner builds")
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 1, "cell": Vector2i(36, 74), "unit_kind": UNIT_MELEE}), "right congestion fixture spawner builds")
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 4, "cell": Vector2i(21, 64), "unit_kind": UNIT_MELEE}), "congestion fixture rally builds")
+	for tick in range(2400):
 		simulation.call("Step", 1.0 / 30.0)
 	var after: Dictionary = simulation.call("GetDebugSnapshot")
-	_expect(PackedInt32Array(after.legion_states).has(LEGION_MARCHING), "converging rally traffic launches instead of stalling below ten")
+	_expect(PackedInt32Array(after.legion_states).has(LEGION_MARCHING), "converging rally traffic launches instead of stalling below twenty")
 	simulation.free()
 
 
@@ -188,17 +232,17 @@ func _test_rally_defense_overflow_and_destroy_fallback() -> void:
 		return
 	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
 	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000})
-	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(10, 32), BUILD_RALLY), "defense rally fixture builds")
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 4, "cell": Vector2i(20, 64), "unit_kind": UNIT_MELEE}), "defense rally fixture builds")
 	var before: Dictionary = simulation.call("GetDebugSnapshot")
-	var rally_id := _building_id_at(before.buildings, Vector2i(10, 32))
+	var rally_id := _building_id_at(before.buildings, Vector2i(20, 64))
 	_expect(simulation.call("ConfigureRally", rally_id, 1, FORMATION_LINE), "rally selects DEFEND and LINE")
-	for offset in range(16):
-		simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(10.1 + float(offset % 4) * 0.10, 31.7 + float(offset / 4) * 0.10), "exact": true})
+	for offset in range(30):
+		simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(20.1 + float(offset % 6) * 0.10, 63.2 + float(offset / 6) * 0.10), "exact": true})
 	for tick in range(8): simulation.call("Step", 1.0 / 30.0)
 	var defended: Dictionary = simulation.call("GetDebugSnapshot")
 	_expect(PackedInt32Array(defended.legion_states).has(LEGION_GATHERING), "DEFEND rally holds a garrison in formation")
 	_expect(PackedInt32Array(defended.legion_states).has(LEGION_MARCHING), "DEFEND overflow launches automatically")
-	_expect(_max_int(PackedInt32Array(defended.legion_member_counts)) == GameConfig.RALLY_DEFENSE_CAPACITY, "defense garrison is capped at fourteen")
+	_expect(_max_int(PackedInt32Array(defended.legion_member_counts)) == GameConfig.RALLY_DEFENSE_CAPACITY, "defense garrison is capped at twenty-eight")
 	simulation.call("ApplyDebugCommand", {"op": "damage_building", "id": rally_id, "damage": 9999.0, "team": TEAM_ENEMY})
 	simulation.call("Step", 1.0 / 30.0)
 	var destroyed: Dictionary = simulation.call("GetDebugSnapshot")
@@ -349,6 +393,7 @@ func _test_class_counter_matrix_and_composition() -> void:
 		Vector2i(UNIT_DRAGON, UNIT_RANGED): 1.7,
 		Vector2i(UNIT_DRAGON, UNIT_SIEGE): 1.5,
 		Vector2i(UNIT_MELEE, UNIT_DRAGON): 0.6,
+		Vector2i(UNIT_SIEGE, UNIT_MELEE): 1.5,
 	}
 	for pair: Vector2i in expected:
 		_expect(is_equal_approx(float(simulation.call("GetClassDamageMultiplier", pair.x, pair.y)), float(expected[pair])), "class counter %d to %d matches the locked table" % [pair.x, pair.y])
@@ -421,6 +466,13 @@ func _building_id_at(buildings: Array, cell: Vector2i) -> int:
 		if Vector2i(building.cell) == cell:
 			return int(building.id)
 	return -1
+
+
+func _building_by_id(buildings: Array, building_id: int) -> Dictionary:
+	for building: Dictionary in buildings:
+		if int(building.id) == building_id:
+			return building
+	return {}
 
 
 func _max_int(values: PackedInt32Array) -> int:

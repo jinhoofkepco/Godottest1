@@ -472,6 +472,7 @@ public partial class BattleSimulation
             EvaluateLegionBroken(legionIndex);
         }
         int deadId = _ids[index];
+        _teamUnitCounts[_teams[index]] = Math.Max(0, _teamUnitCounts[_teams[index]] - 1);
         int last = --_unitCount;
         _indexById[deadId] = -1;
         if (index == last) return;
@@ -556,10 +557,11 @@ public partial class BattleSimulation
         (UnitDragon, UnitRanged) => BattleConfig.DragonVsRanged,
         (UnitDragon, UnitSiege) => BattleConfig.DragonVsSiege,
         (UnitMelee, UnitDragon) => BattleConfig.MeleeVsDragon,
+        (UnitSiege, UnitMelee) => BattleConfig.SiegeVsMelee,
         _ => 1f,
     };
     private int ElevationAt(Vector2 position) => _elevation[Index(CellAt(position))];
-    private bool CanGroundStepInternal(Vector2I from, Vector2I to) => Valid(from) && Valid(to) && Math.Abs(_elevation[Index(from)] - _elevation[Index(to)]) <= 1;
+    private bool CanGroundStepInternal(Vector2I from, Vector2I to) => _terrain.CanStep(from, to);
     private bool CellBlocksGround(Vector2I cell) => IsBlocked(cell) || BuildingAt(cell) >= 0;
     private float SeparationDistance(int first, int second) => (UnitRadius(first) + UnitRadius(second)) * BattleConfig.UnitSeparationSpacingMultiplier;
     private float SiegeDamageAtDistance(float centerDistance, float targetRadius, float baseDamage)
@@ -592,5 +594,36 @@ public partial class BattleSimulation
     private Vector2I BuildingCell(int id) { int index = BuildingIndexFromId(id); return index >= 0 ? _buildings[index].Cell : new Vector2I(-1, -1); }
     private float BuildingHpRatio(int id) { int index = BuildingIndexFromId(id); return index >= 0 ? _buildings[index].Hp / _buildings[index].MaxHp : 0f; }
     private bool InsideHqBuildZone(int team, Vector2I cell) { Vector2I hq = BuildingCell(team == TeamAlly ? _allyHqId : _enemyHqId); return Math.Abs(cell.X - hq.X) <= 2 && Math.Abs(cell.Y - hq.Y) <= 2; }
-    private void AwardKill(int team) { if (team == TeamAlly) _allyGold += BattleConfig.KillReward; else if (team == TeamEnemy) _enemyGold += BattleConfig.KillReward; }
+    private float PopulationIncomeMultiplier(int team)
+    {
+        int steps = Math.Clamp(_teamUnitCounts[team] / BattleConfig.PopulationIncomeStepUnits, 0, 10);
+        return Mathf.Max(0f, 1f - steps * BattleConfig.PopulationIncomePenaltyPerStep);
+    }
+
+    private float AiIncomeMultiplier() => _aiIncomeLevel switch
+    {
+        1 => 1f,
+        2 => 1.25f,
+        3 => 1.5f,
+        4 => 1.75f,
+        _ => 2f,
+    };
+
+    private void AwardKill(int team)
+    {
+        if (team == TeamAlly)
+        {
+            _allyIncomeRemainder += BattleConfig.KillReward * PopulationIncomeMultiplier(TeamAlly);
+            int payout = Mathf.FloorToInt(_allyIncomeRemainder + 0.000001f);
+            _allyGold += payout;
+            _allyIncomeRemainder -= payout;
+        }
+        else if (team == TeamEnemy)
+        {
+            _enemyIncomeRemainder += BattleConfig.KillReward * PopulationIncomeMultiplier(TeamEnemy) * AiIncomeMultiplier();
+            int payout = Mathf.FloorToInt(_enemyIncomeRemainder + 0.000001f);
+            _enemyGold += payout;
+            _enemyIncomeRemainder -= payout;
+        }
+    }
 }

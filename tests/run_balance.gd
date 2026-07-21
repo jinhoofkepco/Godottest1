@@ -13,8 +13,8 @@ func _run() -> void:
 	var passive := _simulate(false)
 	var active := _simulate(true)
 	print("BALANCE PATHS: passive=%s %.1fs occupancy=%.3f active=%s %.1fs occupancy=%.3f" % [passive.result, passive.elapsed, passive.occupancy, active.result, active.elapsed, active.occupancy])
-	if passive.result != "DEFEAT" or active.result != "VICTORY" or passive.elapsed < 120.0 or passive.elapsed > 240.0 or active.elapsed < 300.0 or active.elapsed > 420.0:
-		push_error("BALANCE PATHS FAILED: passive defeat must take 2-4 minutes and a fully responding match must end in blue victory within 5-7 minutes")
+	if passive.result != "DEFEAT" or active.result != "VICTORY" or passive.elapsed < 300.0 or passive.elapsed > 420.0 or active.elapsed < 300.0 or active.elapsed > 420.0:
+		push_error("BALANCE PATHS FAILED: expanded-map passive and fully responding matches must resolve within 5-7 minutes")
 		quit(1)
 		return
 	quit(0)

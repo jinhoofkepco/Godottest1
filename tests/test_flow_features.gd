@@ -7,10 +7,27 @@ var failures: Array[String] = []
 
 
 func run() -> Array[String]:
+	_test_lake_ground_detour_and_dragon_crossing()
 	_test_flow_detour()
 	_test_wait_enter_and_release()
 	_test_bulk_boundary_source()
 	return failures
+
+
+func _test_lake_ground_detour_and_dragon_crossing() -> void:
+	var simulation = _new_simulation()
+	_expect(int(simulation.call("WaterComponentCount")) == 1, "central lake is one connected body")
+	_expect(simulation.call("TerrainPathsValid"), "ground flow retains reachable corridors around the lake")
+	var shore := Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2 - GameConfig.LAKE_RADIUS_Y - 1)
+	var water := shore + Vector2i.DOWN
+	_expect(not simulation.call("CanGroundStep", shore, water), "ground movement rejects the lake edge")
+	_expect(simulation.call("CanFlyingStep", shore, water), "flying movement ignores the lake edge")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 2, "kind": 2, "position": Vector2(22.5, 55.5), "exact": true})
+	for tick in range(450): simulation.call("Step", 1.0 / 30.0)
+	var after: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(float(after.unit_positions[0].y) < float(GameConfig.GRID_ROWS / 2), "dragon flies directly across the central lake toward the enemy HQ")
+	simulation.free()
 
 
 func _new_simulation():

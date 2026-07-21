@@ -50,6 +50,10 @@ public partial class BattleSimulation : Node
         public float MaxHp;
         public float SpawnTimer;
         public float AttackCooldown;
+        public float ConstructionDuration;
+        public float ConstructionRemaining;
+        public float ConstructionHpPerSecond;
+        public bool Complete;
         public bool Destroyed;
         public int RallyMode;
         public int Formation;
@@ -108,6 +112,7 @@ public partial class BattleSimulation : Node
     private readonly int[] _rallyPointIds = new int[MaxUnits];
     private readonly Vector2[] _slotOffsets = new Vector2[MaxUnits];
     private int _unitCount;
+    private readonly int[] _teamUnitCounts = new int[3];
 
     private readonly Building[] _buildings = new Building[MaxBuildings];
     private int _buildingCount;
@@ -123,6 +128,7 @@ public partial class BattleSimulation : Node
 
     private readonly byte[] _ownership = new byte[BattleConfig.CellCount];
     private readonly byte[] _blocked = new byte[BattleConfig.CellCount];
+    private byte[] _water = new byte[BattleConfig.CellCount];
     private readonly int[] _pendingOwnershipCells = new int[BattleConfig.CellCount];
     private readonly byte[] _pendingOwnershipFlags = new byte[BattleConfig.CellCount];
     private int _pendingOwnershipCount;
@@ -149,6 +155,7 @@ public partial class BattleSimulation : Node
     private int _enemyGold;
     private float _allyIncomeRemainder;
     private float _enemyIncomeRemainder;
+    private int _aiIncomeLevel;
     private float _congestionTimer;
     private int _nextFlowTeam;
     private float _territoryTimer;
@@ -223,6 +230,7 @@ public partial class BattleSimulation : Node
     public void Reset()
     {
         _unitCount = 0;
+        Array.Clear(_teamUnitCounts);
         ResetLegions();
         _buildingCount = 0;
         _impactCount = 0;
@@ -237,6 +245,7 @@ public partial class BattleSimulation : Node
         _enemyGold = BattleConfig.EnemyStartGold;
         _allyIncomeRemainder = 0f;
         _enemyIncomeRemainder = 0f;
+        _aiIncomeLevel = BattleConfig.AiIncomeLevelDefault;
         ResetAiControllers();
         _congestionTimer = 0f;
         _nextFlowTeam = TeamEnemy;
@@ -252,11 +261,15 @@ public partial class BattleSimulation : Node
         _events.Clear();
         _hitCount = _shotCount = _deathCount = 0;
         Array.Clear(_blocked);
+        _water = _terrain.GenerateCentralLake(BattleConfig.TerrainSeed);
         for (int row = 0; row < BattleConfig.GridRows; row++)
         {
             byte owner = row < BattleConfig.GridRows / 2 ? (byte)TeamEnemy : (byte)TeamAlly;
             for (int col = 0; col < BattleConfig.GridColumns; col++)
-                _ownership[Index(new Vector2I(col, row))] = owner;
+            {
+                int cellIndex = Index(new Vector2I(col, row));
+                _ownership[cellIndex] = _water[cellIndex] == 0 ? owner : (byte)TeamNone;
+            }
         }
         _elevation = _terrain.Generate(
             BattleConfig.TerrainSeed,
@@ -268,6 +281,7 @@ public partial class BattleSimulation : Node
             BattleConfig.TerrainDeploymentDepth,
             BattleConfig.TerrainGenerationAttempts);
         _terrain.Elevation = _elevation;
+        _terrain.Water = _water;
         _enemyHqId = AddBuildingInternal(TeamEnemy, BuildingHq, new Vector2I(BattleConfig.GridColumns / 2, 0), UnitMelee);
         _allyHqId = AddBuildingInternal(TeamAlly, BuildingHq, new Vector2I(BattleConfig.GridColumns / 2, BattleConfig.GridRows - 1), UnitMelee);
         RebuildBuckets();
@@ -328,7 +342,7 @@ public partial class BattleSimulation : Node
         else if (buildKind == BuildDefenseTower) kind = BuildingDefenseTower;
         else if (buildKind == BuildDragonLair) { kind = BuildingDragonLair; unitKind = UnitDragon; }
         else if (buildKind == BuildRallyPoint) kind = BuildingRallyPoint;
-        int id = AddBuildingInternal(team, kind, cell, unitKind);
+        int id = AddBuildingInternal(team, kind, cell, unitKind, cost * BattleConfig.BuildingConstructionSecondsPerGold);
         if (id == 0)
         {
             if (team == TeamAlly) _allyGold += cost;
@@ -341,9 +355,11 @@ public partial class BattleSimulation : Node
         return true;
     }
 
-    private int SpawnUnit(int team, Vector2 position, int unitKind, int legionId = -1, Vector2 slotOffset = default)
+    private int SpawnUnit(int team, Vector2 position, int unitKind, int legionId = -1, Vector2 slotOffset = default, bool bypassTeamCap = false)
     {
         if (_unitCount >= MaxUnits || (team != TeamAlly && team != TeamEnemy) || unitKind < UnitMelee || unitKind > UnitSiege)
+            return 0;
+        if (!bypassTeamCap && _teamUnitCounts[team] >= BattleConfig.TeamUnitCap)
             return 0;
         int index = _unitCount++;
         int id = _nextUnitId++;
@@ -374,10 +390,11 @@ public partial class BattleSimulation : Node
         _rallyPointIds[index] = -1;
         _slotOffsets[index] = slotOffset;
         _indexById[id] = index;
+        _teamUnitCounts[team]++;
         return id;
     }
 
-    private int AddBuildingInternal(int team, int kind, Vector2I cell, int unitKind)
+    private int AddBuildingInternal(int team, int kind, Vector2I cell, int unitKind, float constructionDuration = 0f)
     {
         if (_buildingCount >= MaxBuildings || !Valid(cell) || IsBlocked(cell))
             return 0;
@@ -393,6 +410,8 @@ public partial class BattleSimulation : Node
             : kind == BuildingSpawner && unitKind == UnitSiege ? BattleConfig.SiegeProductionInterval
             : kind == BuildingSpawner ? BattleConfig.SpawnerProductionInterval : 0f;
         int id = _nextBuildingId++;
+        bool complete = constructionDuration <= 0f || kind == BuildingHq;
+        float startingHp = complete ? maximumHp : maximumHp * BattleConfig.BuildingConstructionStartHpRatio;
         _buildings[_buildingCount++] = new Building
         {
             Id = id,
@@ -400,9 +419,13 @@ public partial class BattleSimulation : Node
             Kind = kind,
             UnitKind = unitKind,
             Cell = cell,
-            Hp = maximumHp,
+            Hp = startingHp,
             MaxHp = maximumHp,
-            SpawnTimer = production,
+            SpawnTimer = complete ? production : 0f,
+            ConstructionDuration = complete ? 0f : constructionDuration,
+            ConstructionRemaining = complete ? 0f : constructionDuration,
+            ConstructionHpPerSecond = complete ? 0f : maximumHp * (1f - BattleConfig.BuildingConstructionStartHpRatio) / constructionDuration,
+            Complete = complete,
             RallyMode = RallyAdvance,
             Formation = FormationLine,
             ActiveLegionId = -1,
@@ -438,7 +461,7 @@ public partial class BattleSimulation : Node
     private static int Index(Vector2I cell) => cell.Y * BattleConfig.GridColumns + cell.X;
     private static bool Valid(Vector2I cell) => cell.X >= 0 && cell.X < BattleConfig.GridColumns && cell.Y >= 0 && cell.Y < BattleConfig.GridRows;
     private static Vector2I CellAt(Vector2 position) => new(Math.Clamp(Mathf.FloorToInt(position.X), 0, BattleConfig.GridColumns - 1), Math.Clamp(Mathf.FloorToInt(position.Y), 0, BattleConfig.GridRows - 1));
-    private bool IsBlocked(Vector2I cell) => Valid(cell) && _blocked[Index(cell)] != 0;
+    private bool IsBlocked(Vector2I cell) => Valid(cell) && (_blocked[Index(cell)] != 0 || _water[Index(cell)] != 0);
 
     private void QueueOwnershipDelta(int cellIndex)
     {

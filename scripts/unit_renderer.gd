@@ -49,6 +49,7 @@ func _ready() -> void:
 	_legion_ghosts.z_index = 5
 	_legion_banners = _make_batch("LegionBanners", _make_flag_mesh(), true, true)
 	_legion_banners.z_index = 12
+	_legion_banners.material = _make_flag_material()
 	_infantry_units.material = _make_atlas_material(_make_team_texture_array())
 	_enemy_dragons.material = _make_single_atlas_material(RED_DRAGON_ATLAS)
 	_ally_dragons.material = _make_single_atlas_material(BLUE_DRAGON_ATLAS)
@@ -119,7 +120,7 @@ func _make_batch(node_name: String, mesh: Mesh, use_colors: bool, use_custom_dat
 	multimesh.use_colors = use_colors
 	multimesh.use_custom_data = use_custom_data
 	multimesh.mesh = mesh
-	multimesh.custom_aabb = AABB(Vector3(-2048.0, -2048.0, -1.0), Vector3(4096.0, 4096.0, 2.0))
+	multimesh.custom_aabb = AABB(Vector3(-4096.0, -1024.0, -1.0), Vector3(8192.0, 5120.0, 2.0))
 	multimesh.instance_count = 0
 	instance.multimesh = multimesh
 	add_child(instance)
@@ -216,9 +217,51 @@ func _make_diamond_mesh(width: float, height: float) -> ArrayMesh:
 
 
 func _make_flag_mesh() -> Mesh:
-	var mesh := QuadMesh.new()
-	mesh.size = Vector2(18, 24)
+	var vertices := PackedVector3Array([
+		Vector3(-1.4, 2.0, 0.0), Vector3(1.4, 2.0, 0.0), Vector3(1.4, -34.0, 0.0),
+		Vector3(-1.4, 2.0, 0.0), Vector3(1.4, -34.0, 0.0), Vector3(-1.4, -34.0, 0.0),
+		Vector3(-3.0, -35.0, 0.0), Vector3(0.0, -39.0, 0.0), Vector3(3.0, -35.0, 0.0),
+		Vector3(-3.0, -35.0, 0.0), Vector3(3.0, -35.0, 0.0), Vector3(0.0, -32.0, 0.0),
+		Vector3(0.0, -34.0, 0.0), Vector3(20.0, -30.0, 0.0), Vector3(14.0, -23.0, 0.0),
+		Vector3(0.0, -34.0, 0.0), Vector3(14.0, -23.0, 0.0), Vector3(0.0, -25.0, 0.0),
+	])
+	var uv := PackedVector2Array()
+	for index in 12: uv.append(Vector2(0.0, 0.0))
+	uv.append_array(PackedVector2Array([
+		Vector2(1.0, 0.0), Vector2(1.0, 0.2), Vector2(1.0, 0.8),
+		Vector2(1.0, 0.0), Vector2(1.0, 0.8), Vector2(1.0, 1.0),
+	]))
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_TEX_UV] = uv
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
+
+
+func _make_flag_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+render_mode unshaded;
+varying vec4 banner_color;
+varying float cloth_tag;
+void vertex() {
+	banner_color = COLOR;
+	cloth_tag = UV.x;
+	VERTEX.x += cloth_tag * sin(TIME * 4.2 + VERTEX.y * 0.21) * 1.15;
+}
+void fragment() {
+	float cloth = step(0.5, cloth_tag);
+	vec3 pole = vec3(0.66, 0.72, 0.78);
+	vec3 fabric = banner_color.rgb * (0.88 + 0.12 * sin(TIME * 3.4 + SCREEN_UV.y * 80.0));
+	COLOR = vec4(mix(pole, fabric, cloth), mix(0.72, banner_color.a, cloth));
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	return material
 
 
 func _mesh_from_polygon(points: PackedVector2Array) -> ArrayMesh:
