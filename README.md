@@ -166,3 +166,5 @@ Godot 4.5 .NET 에디터와 .NET SDK 9 이상이 필요합니다. 각 핵심 러
 이 버전의 GitHub Actions 검증 APK를 바로 받을 수 있습니다: [godottest1 v1.5.1 APK 직접 다운로드](https://github.com/jinhoofkepco/Godottest1/releases/download/v1.5.1/godottest1.apk)
 
 GitHub Actions 경로는 **Actions → Android Debug APK → 최신 성공 실행 → Artifacts → `godottest1-debug-apk` → `build/godottest1.apk`**입니다. 워크플로가 Godot 4.5 stable, Android SDK/build-tools, export template과 임시 debug keystore를 준비하므로 로컬 Android SDK나 저장소 Secret이 필요하지 않습니다.
+
+Actions는 APK 전달 시간을 줄이기 위한 빠른 게이트입니다. C# 빌드, Godot import, C# 경계·핵심 룰·화면 흐름, 아틀라스 구조, 짧은 메인 씬 실행과 APK 내부 DLL·서명을 검사합니다. AI 50+50판, 상성·장기 밸런스, 600/1500/3000유닛 및 보드 스트레스, 28장 시각 캡처는 위의 로컬 전체 검증 명령으로 필요할 때 실행합니다.
