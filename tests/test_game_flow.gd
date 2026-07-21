@@ -24,6 +24,7 @@ func run(tree: SceneTree) -> Array[String]:
 	var main_scene := load("res://scenes/main.tscn")
 	_expect(main_scene != null, "main scene exists")
 	if main_scene == null: return failures
+	await _test_match_settings_panel(tree, main_scene)
 	await _test_scene_and_bulk_render(tree, main_scene)
 	await _test_incremental_board_render(tree, main_scene)
 	await _test_build_selection_and_picking(tree, main_scene)
@@ -32,11 +33,101 @@ func run(tree: SceneTree) -> Array[String]:
 	return failures
 
 
-func _spawn_main(tree: SceneTree, main_scene: PackedScene):
+func _spawn_paused_main(tree: SceneTree, main_scene: PackedScene):
 	var main = main_scene.instantiate()
 	tree.root.add_child(main)
 	await tree.process_frame
 	return main
+
+
+func _spawn_main(tree: SceneTree, main_scene: PackedScene):
+	var main = await _spawn_paused_main(tree, main_scene)
+	var panel = main.get_node_or_null("MatchSettingsPanel")
+	if panel != null and panel.has_method("press_start"):
+		panel.press_start()
+	await tree.process_frame
+	return main
+
+
+func _test_match_settings_panel(tree: SceneTree, main_scene: PackedScene) -> void:
+	var main = await _spawn_paused_main(tree, main_scene)
+	var panel = main.get_node_or_null("MatchSettingsPanel")
+	_expect(panel != null, "portrait match settings panel is part of the main scene")
+	var initial_time := float(main.simulation.call("GetHudSnapshot").get("time_remaining", -1.0))
+	for frame in 30:
+		main._process(1.0 / 30.0)
+	main.step_simulation(1.0)
+	var paused_time := float(main.simulation.call("GetHudSnapshot").get("time_remaining", -2.0))
+	_expect(main.get("match_started") != true, "match starts in a paused pre-match state")
+	_expect(is_equal_approx(initial_time, paused_time), "simulation and manual stepping stay frozen for 30 pre-match frames")
+	_expect(not main.map_view.interaction_enabled and not main.try_build_spawner(Vector2i(4, 70)), "map input and build commands are blocked before START")
+	_expect(not main.hud.visible, "game HUD and its controls stay hidden behind pre-match settings")
+	if panel == null:
+		main.queue_free()
+		await tree.process_frame
+		return
+	_expect(panel.has_method("get_field_paths") and panel.has_method("set_field_value") and panel.has_method("press_start"), "settings panel exposes stable test controls")
+	_expect(panel.has_method("get_scroll_container") and panel.get_scroll_container() is ScrollContainer, "one portrait ScrollContainer owns the detailed field list")
+	var backdrop = panel.get_node_or_null("OpaqueBackdrop")
+	_expect(backdrop != null and backdrop.size == Vector2(GameConfig.VIEW_SIZE) and is_equal_approx(backdrop.color.a, 1.0), "settings modal has an opaque full-portrait backdrop")
+	_expect(panel.get_tab_order() == PackedStringArray(["melee", "ranged", "siege", "dragon"]), "unit tabs keep the fixed MELEE, RANGED, SIEGE, DRAGON order")
+	var paths: PackedStringArray = panel.get_field_paths()
+	var schema: Array = main.simulation.call("GetMatchSettingsSchema")
+	_expect(paths.size() == schema.size(), "every C# schema field, including nested damage multipliers, is editable")
+	_expect(paths.has("melee.damage_vs.ranged") and paths.has("siege.damage_vs.melee"), "dotted nested damage keys round-trip through the panel")
+	var integer_metadata: Dictionary = panel.get_field_metadata("dragon.production_batch")
+	_expect(bool(integer_metadata.get("integer", false)) and is_equal_approx(float(integer_metadata.get("step", 0.0)), 1.0), "integer schema metadata is preserved by the numeric editor")
+	panel.select_group("ranged")
+	_expect(panel.get_field_display_text("ranged.max_hp") == "20.4", "numeric editor displays an off-step runtime value without rounding it")
+	panel.set_field_value("dragon.production_batch", 2.7)
+	_expect(typeof(panel.get_field_value("dragon.production_batch")) == TYPE_INT and int(panel.get_field_value("dragon.production_batch")) == 3, "integer fields stay integer when edited")
+	panel.set_field_value("ranged.max_hp", 31.0)
+	panel.set_field_value("ranged.spawner_cost", 95)
+	panel.set_field_value("ranged.standoff_distance", 3.0)
+	panel.press_start()
+	_expect(panel.visible and main.get("match_started") != true, "invalid relational settings keep the modal open")
+	_expect(is_equal_approx(float(panel.get_field_value("ranged.standoff_distance")), 3.0), "validation feedback preserves pending edits")
+	_expect(not String(panel.get_feedback_text()).is_empty(), "validation failure is explained inside the panel")
+	panel.set_field_value("ranged.standoff_distance", 1.5)
+	var serialized: String = panel.serialize_settings(panel.get_pending_values())
+	var parsed = JSON.parse_string(serialized)
+	_expect(parsed is Dictionary and int(parsed.get("schema_version", 0)) == 1, "copied settings JSON carries schema_version 1")
+	_expect(is_equal_approx(float(parsed.settings.ranged.max_hp), 31.0) and int(parsed.settings.dragon.production_batch) == 3, "copied canonical JSON preserves edited float and integer values")
+	panel.press_copy()
+	_expect(panel.get_feedback_text().contains("SETTINGS COPIED"), "COPY SETTINGS confirms the clipboard action")
+	panel.press_defaults()
+	_expect(is_equal_approx(float(panel.get_field_value("ranged.max_hp")), 20.4) and int(panel.get_field_value("dragon.production_batch")) == 2, "DEFAULTS restores the shipped profile from schema defaults")
+	panel.set_field_value("ranged.max_hp", 31.0)
+	panel.set_field_value("ranged.spawner_cost", 95)
+	panel.set_field_value("ranged.standoff_distance", 1.5)
+	panel.set_field_value("dragon.production_batch", 3)
+	var panel_source := FileAccess.get_file_as_string("res://scripts/match_settings_panel.gd")
+	_expect(panel_source.contains("DisplayServer.clipboard_set") and panel_source.contains("sort_keys"), "COPY SETTINGS uses the OS clipboard and canonical sorted keys")
+	panel.press_start()
+	await tree.process_frame
+	_expect(main.get("match_started") == true and not panel.visible and main.map_view.interaction_enabled and main.hud.visible, "valid START atomically enables the match, map, and HUD")
+	_expect(is_equal_approx(float(main.simulation.call("GetMatchSettings").ranged.max_hp), 31.0), "normalized C# settings become the active match profile")
+	main.hud.select_build_kind(BUILD_RANGED)
+	_expect(main.hud.build_buttons[BUILD_RANGED].text.contains("95") and main.hud.instruction_label.text.contains("95"), "HUD button and current instruction read the active runtime spawner cost")
+	main.simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 1000})
+	_expect(main.simulation.call("TryBuild", TEAM_ALLY, Vector2i(4, 70), BUILD_RANGED), "restart fixture creates a disposable building")
+	main._sync_board_and_buildings(true)
+	_expect(not main.building_views.is_empty(), "restart fixture has live building presentation")
+	main.hud.open_rally_panel({"id": 99, "mode": 0, "formation": 0})
+	main._restart()
+	_expect(panel.visible and main.get("match_started") != true and not main.map_view.interaction_enabled, "RESTART returns to paused settings without scene reload")
+	_expect(not main.hud.visible, "restart settings hide the old HUD and block its controls")
+	_expect(not main.hud.result_overlay.visible and not main.hud.edit_panel.visible, "restart hides result and rally state")
+	var preserved_view = main.building_views.values()[0]
+	var preserved_count: int = main.building_views.size()
+	panel.set_field_value("ranged.standoff_distance", 3.0)
+	panel.press_start()
+	_expect(panel.visible and main.building_views.size() == preserved_count and is_instance_valid(preserved_view), "invalid restart settings preserve the existing battlefield presentation")
+	panel.set_field_value("ranged.standoff_distance", 1.5)
+	panel.press_start()
+	_expect(main.building_views.size() == 2 and main.building_records.size() == 2, "START clears stale presentation before reset IDs are reused")
+	main.queue_free()
+	await tree.process_frame
 
 
 func _test_incremental_board_render(tree: SceneTree, main_scene: PackedScene) -> void:

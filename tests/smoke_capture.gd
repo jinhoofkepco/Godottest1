@@ -24,6 +24,9 @@ func _run() -> void:
 	await process_frame
 	main.set_process(false)
 	await process_frame
+	await _save("smoke_match_settings.png")
+	main.settings_panel.press_start()
+	await process_frame
 	await _capture_opening()
 	await _capture_lake_overview()
 	await _capture_construction()
@@ -48,7 +51,7 @@ func _run() -> void:
 	await _capture_legion_engaged()
 	await _capture_legion_formation("smoke_legion_loose.png", 2)
 	await _capture_tactical_fx()
-	print("SMOKE CAPTURE PASS: 24 frames")
+	print("SMOKE CAPTURE PASS: 25 frames")
 	quit(0)
 
 

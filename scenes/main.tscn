@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource path="res://scripts/main.gd" type="Script" id="1_main"]
 [ext_resource path="res://scenes/grid.tscn" type="PackedScene" id="2_grid"]
@@ -7,6 +7,7 @@
 [ext_resource path="res://scenes/hud.tscn" type="PackedScene" id="5_hud"]
 [ext_resource path="res://scripts/map_view.gd" type="Script" id="6_map_view"]
 [ext_resource path="res://scripts/BattleSimulation.cs" type="Script" id="7_simulation"]
+[ext_resource path="res://scenes/match_settings_panel.tscn" type="PackedScene" id="8_settings"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -28,3 +29,5 @@ z_index = 5
 [node name="Fx" parent="MapView" instance=ExtResource("4_fx")]
 
 [node name="Hud" parent="." instance=ExtResource("5_hud")]
+
+[node name="MatchSettingsPanel" parent="." instance=ExtResource("8_settings")]

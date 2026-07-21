@@ -28,11 +28,13 @@ const BUILD_RALLY := 5
 @onready var fx: DefenseFx = $MapView/Fx
 @onready var hud: DefenseHud = $Hud
 @onready var simulation = $BattleSimulation
+@onready var settings_panel: MatchSettingsPanel = $MatchSettingsPanel
 
 var building_views: Dictionary = {}
 var building_records: Dictionary = {}
 var game_result := ""
 var selected_build_kind := BUILD_MELEE
+var match_started := false
 var _last_board_version := -1
 var _hud_snapshot: Dictionary = {}
 
@@ -49,15 +51,18 @@ func _ready() -> void:
 			GameConfig.VIEW_SIZE.y - GameConfig.WORLD_FRAME_TOP - GameConfig.WORLD_FRAME_BOTTOM
 		)
 	))
-	_sync_board_and_buildings(true)
+	map_view.set_interaction_enabled(false)
 	_update_hud()
+	hud.set_runtime_build_costs(simulation.call("GetMatchSettings"))
 	map_view.tile_tapped.connect(try_build_spawner)
 	hud.restart_pressed.connect(_restart)
 	hud.build_kind_selected.connect(_on_build_kind_selected)
 	hud.rally_config_changed.connect(_on_rally_config_changed)
 	hud.demolish_requested.connect(_on_demolish_requested)
 	hud.ai_income_level_changed.connect(_on_ai_income_level_changed)
-	hud.show_message("FRONTLINE ACTIVE", GameConfig.COLOR_TEXT)
+	settings_panel.start_requested.connect(_on_settings_start_requested)
+	hud.visible = false
+	settings_panel.open(simulation.call("GetMatchSettingsSchema"), simulation.call("GetMatchSettings"))
 	queue_redraw()
 
 
@@ -67,12 +72,12 @@ func _draw() -> void:
 
 
 func _process(delta: float) -> void:
-	if simulation != null and game_result == "":
+	if match_started and simulation != null and game_result == "":
 		step_simulation(delta)
 
 
 func try_build_spawner(cell: Vector2i) -> bool:
-	if game_result != "":
+	if not match_started or game_result != "":
 		return false
 	var existing_id := _building_at_cell(cell)
 	if existing_id >= 0:
@@ -94,7 +99,7 @@ func try_build_spawner(cell: Vector2i) -> bool:
 
 
 func step_simulation(delta: float) -> void:
-	if simulation == null:
+	if not match_started or simulation == null:
 		return
 	fx.begin_frame()
 	if game_result == "":
@@ -314,4 +319,55 @@ func _building_at_cell(cell: Vector2i) -> int:
 
 
 func _restart() -> void:
-	get_tree().reload_current_scene()
+	match_started = false
+	game_result = ""
+	map_view.set_interaction_enabled(false)
+	hud.visible = false
+	hud.hide_result()
+	hud.close_rally_panel()
+	settings_panel.open(simulation.call("GetMatchSettingsSchema"), simulation.call("GetMatchSettings"))
+
+
+func _on_settings_start_requested(values: Dictionary) -> void:
+	match_started = false
+	map_view.set_interaction_enabled(false)
+	var response: Dictionary = simulation.call("ConfigureAndReset", values)
+	if not bool(response.get("ok", false)):
+		settings_panel.show_validation_errors(Array(response.get("errors", [])))
+		return
+	_clear_match_presentation()
+	var normalized: Dictionary = response.get("normalized", {})
+	map_view.setup(grid, Rect2(
+		Vector2(GameConfig.WORLD_FRAME_MARGIN, GameConfig.WORLD_FRAME_TOP),
+		Vector2(
+			GameConfig.VIEW_SIZE.x - GameConfig.WORLD_FRAME_MARGIN * 2.0,
+			GameConfig.VIEW_SIZE.y - GameConfig.WORLD_FRAME_TOP - GameConfig.WORLD_FRAME_BOTTOM
+		)
+	))
+	# setup() deliberately restores input for ordinary resets; pre-match owns the gate.
+	map_view.set_interaction_enabled(false)
+	_sync_board_and_buildings(true)
+	unit_renderer.sync()
+	fx.begin_frame()
+	hud.set_runtime_build_costs(normalized)
+	_update_hud()
+	settings_panel.accept_normalized(normalized)
+	hud.visible = true
+	match_started = true
+	map_view.set_interaction_enabled(true)
+	hud.show_message("FRONTLINE ACTIVE", GameConfig.COLOR_TEXT)
+
+
+func _clear_match_presentation() -> void:
+	# ConfigureAndReset reuses IDs; free old views before any reset snapshot is rendered.
+	for view in building_views.values():
+		if is_instance_valid(view):
+			view.free()
+	building_views.clear()
+	building_records.clear()
+	fx.clear_all()
+	hud.hide_result()
+	hud.close_rally_panel()
+	game_result = ""
+	_hud_snapshot.clear()
+	_last_board_version = -1

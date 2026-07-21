@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource path="res://scripts/match_settings_panel.gd" type="Script" id="1_settings"]
+
+[node name="MatchSettingsPanel" type="Control"]
+offset_right = 540.0
+offset_bottom = 960.0
+script = ExtResource("1_settings")

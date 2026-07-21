@@ -52,6 +52,14 @@ var editing_building_id := -1
 var editing_mode := RALLY_ADVANCE
 var editing_formation := FORMATION_LINE
 var ai_income_level := GameConfig.AI_INCOME_LEVEL_DEFAULT
+var build_costs := {
+	BUILD_MELEE: GameConfig.MELEE_SPAWNER_COST,
+	BUILD_RANGED: GameConfig.RANGED_SPAWNER_COST,
+	BUILD_SIEGE: GameConfig.SIEGE_SPAWNER_COST,
+	BUILD_DRAGON: GameConfig.DRAGON_LAIR_COST,
+	BUILD_RALLY: GameConfig.RALLY_POINT_COST,
+	BUILD_TOWER: GameConfig.DEFENSE_TOWER_COST,
+}
 
 @export var message_duration := 1.1
 
@@ -90,6 +98,18 @@ func show_result(result: String) -> void:
 	result_label.text = "BLUE VICTORY" if victory else "BLUE DEFEAT"
 	result_label.add_theme_color_override("font_color", BLUE if victory else RED)
 	result_overlay.visible = true
+
+
+func hide_result() -> void:
+	result_overlay.visible = false
+
+
+func set_runtime_build_costs(settings: Dictionary) -> void:
+	build_costs[BUILD_MELEE] = int(Dictionary(settings.get("melee", {})).get("spawner_cost", GameConfig.MELEE_SPAWNER_COST))
+	build_costs[BUILD_RANGED] = int(Dictionary(settings.get("ranged", {})).get("spawner_cost", GameConfig.RANGED_SPAWNER_COST))
+	build_costs[BUILD_SIEGE] = int(Dictionary(settings.get("siege", {})).get("spawner_cost", GameConfig.SIEGE_SPAWNER_COST))
+	build_costs[BUILD_DRAGON] = int(Dictionary(settings.get("dragon", {})).get("spawner_cost", GameConfig.DRAGON_LAIR_COST))
+	_refresh_build_cost_labels()
 
 
 func show_message(text: String, color := Color.WHITE) -> void:
@@ -179,7 +199,7 @@ func _build_instruction() -> void:
 	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(plate)
 	instruction_label = _make_label(Vector2.ZERO, plate.size, 15, BLUE)
-	instruction_label.text = "TAP BLUE TERRITORY // MELEE SPAWNER 60"
+	instruction_label.text = "TAP BLUE TERRITORY // %s" % _build_description(BUILD_MELEE)
 	instruction_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	instruction_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	plate.add_child(instruction_label)
@@ -192,13 +212,10 @@ func _build_selector() -> void:
 	plate.color = Color(GameConfig.COLOR_PANEL, 0.94)
 	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(plate)
-	var specs := [
-		[BUILD_MELEE, "MELEE\n60"], [BUILD_RANGED, "RANGED\n80"], [BUILD_SIEGE, "SIEGE\n140"],
-		[BUILD_DRAGON, "DRAGON\n220"], [BUILD_RALLY, "RALLY\n80"], [BUILD_TOWER, "TOWER\n120"],
-	]
-	for index in specs.size():
-		var kind: int = specs[index][0]
-		var button := _make_selector_button(specs[index][1], Vector2(3 + index * 79, 8), Vector2(75, 54))
+	var kinds := [BUILD_MELEE, BUILD_RANGED, BUILD_SIEGE, BUILD_DRAGON, BUILD_RALLY, BUILD_TOWER]
+	for index in kinds.size():
+		var kind: int = kinds[index]
+		var button := _make_selector_button(_build_button_text(kind), Vector2(3 + index * 79, 8), Vector2(75, 54))
 		button.pressed.connect(func() -> void: select_build_kind(kind))
 		build_buttons[kind] = button
 		plate.add_child(button)
@@ -208,14 +225,37 @@ func _build_selector() -> void:
 func select_build_kind(build_kind: int) -> bool:
 	if build_kind not in [BUILD_MELEE, BUILD_RANGED, BUILD_TOWER, BUILD_DRAGON, BUILD_SIEGE, BUILD_RALLY]: return false
 	selected_build_kind = build_kind
-	var descriptions := {
-		BUILD_MELEE: "MELEE SPAWNER 60", BUILD_RANGED: "RANGED SPAWNER 80", BUILD_SIEGE: "SIEGE SPAWNER 140",
-		BUILD_DRAGON: "DRAGON LAIR 220", BUILD_RALLY: "RALLY POINT 80", BUILD_TOWER: "HQ 5x5 // TOWER 120",
-	}
-	instruction_label.text = "TAP BLUE TERRITORY // %s" % descriptions[build_kind]
+	_refresh_instruction()
 	_update_selector_styles()
 	build_kind_selected.emit(build_kind)
 	return true
+
+
+func _refresh_build_cost_labels() -> void:
+	for kind in build_buttons:
+		build_buttons[kind].text = _build_button_text(int(kind))
+	_refresh_instruction()
+
+
+func _refresh_instruction() -> void:
+	if instruction_label != null:
+		instruction_label.text = "TAP BLUE TERRITORY // %s" % _build_description(selected_build_kind)
+
+
+func _build_button_text(build_kind: int) -> String:
+	var names := {
+		BUILD_MELEE: "MELEE", BUILD_RANGED: "RANGED", BUILD_SIEGE: "SIEGE",
+		BUILD_DRAGON: "DRAGON", BUILD_RALLY: "RALLY", BUILD_TOWER: "TOWER",
+	}
+	return "%s\n%d" % [names[build_kind], int(build_costs[build_kind])]
+
+
+func _build_description(build_kind: int) -> String:
+	var names := {
+		BUILD_MELEE: "MELEE SPAWNER", BUILD_RANGED: "RANGED SPAWNER", BUILD_SIEGE: "SIEGE SPAWNER",
+		BUILD_DRAGON: "DRAGON LAIR", BUILD_RALLY: "RALLY POINT", BUILD_TOWER: "HQ 5x5 // TOWER",
+	}
+	return "%s %d" % [names[build_kind], int(build_costs[build_kind])]
 
 
 func _update_selector_styles() -> void:
