@@ -21,7 +21,7 @@ public partial class BattleSimulation
             AddSchemaField(schema, group, "attack_range", "ATTACK RANGE", 0.1f, 64f, 0.1f, unit.AttackRange);
             AddSchemaField(schema, group, "detect_range", "DETECT RANGE", 0.1f, 96f, 0.1f, unit.DetectRange);
             AddSchemaField(schema, group, "speed", "MOVE SPEED", 0.05f, 10f, 0.05f, unit.Speed);
-            AddSchemaField(schema, group, "radius", "UNIT RADIUS", 0.05f, 2f, 0.01f, unit.Radius);
+            AddSchemaField(schema, group, "radius", "UNIT RADIUS", 0.05f, BattleConfig.MaxTunableUnitRadius, 0.01f, unit.Radius);
             AddSchemaField(schema, group, "production_interval", "PRODUCTION SECONDS", 0.1f, 600f, 0.1f, unit.ProductionInterval);
             AddSchemaField(schema, group, "production_batch", "PRODUCTION BATCH", 1f, 50f, 1f, unit.ProductionBatch, true);
             AddSchemaField(schema, group, "spawner_cost", "BUILD COST", 1f, 10000f, 1f, unit.SpawnerCost, true);
@@ -113,14 +113,14 @@ public partial class BattleSimulation
         {
             string name = SettingGroupNames[kind];
             BattleMatchSettings.UnitTuning unit = settings.Units[kind];
-            ValidateRange(unit.MaxHp, 0.001f, 5000f, $"{name}.max_hp", errors);
-            ValidateRange(unit.Damage, 0.001f, 1000f, $"{name}.damage", errors);
-            ValidateRange(unit.AttackInterval, 0.01f, 30f, $"{name}.attack_interval", errors);
-            ValidateRange(unit.AttackRange, 0.01f, 64f, $"{name}.attack_range", errors);
-            ValidateRange(unit.DetectRange, 0.01f, 96f, $"{name}.detect_range", errors);
-            ValidateRange(unit.Speed, 0.01f, 10f, $"{name}.speed", errors);
-            ValidateRange(unit.Radius, 0.05f, 2f, $"{name}.radius", errors);
-            ValidateRange(unit.ProductionInterval, 0.01f, 600f, $"{name}.production_interval", errors);
+            ValidateRange(unit.MaxHp, 1f, 5000f, $"{name}.max_hp", errors);
+            ValidateRange(unit.Damage, 0.1f, 1000f, $"{name}.damage", errors);
+            ValidateRange(unit.AttackInterval, 0.05f, 30f, $"{name}.attack_interval", errors);
+            ValidateRange(unit.AttackRange, 0.1f, 64f, $"{name}.attack_range", errors);
+            ValidateRange(unit.DetectRange, 0.1f, 96f, $"{name}.detect_range", errors);
+            ValidateRange(unit.Speed, 0.05f, 10f, $"{name}.speed", errors);
+            ValidateRange(unit.Radius, 0.05f, BattleConfig.MaxTunableUnitRadius, $"{name}.radius", errors);
+            ValidateRange(unit.ProductionInterval, 0.1f, 600f, $"{name}.production_interval", errors);
             ValidateRange(unit.ProductionBatch, 1, 50, $"{name}.production_batch", errors);
             ValidateRange(unit.SpawnerCost, 1, 10000, $"{name}.spawner_cost", errors);
             if (unit.DetectRange < unit.AttackRange)
@@ -128,21 +128,21 @@ public partial class BattleSimulation
             for (int target = 0; target < unit.DamageVs.Length; target++)
                 ValidateRange(unit.DamageVs[target], 0f, 10f, $"{name}.damage_vs.{SettingGroupNames[target]}", errors);
         }
-        ValidateRange(settings.ShieldEnterRange, 0.01f, 32f, "melee.shield_enter_range", errors);
-        ValidateRange(settings.ShieldReleaseRange, 0.01f, 32f, "melee.shield_release_range", errors);
+        ValidateRange(settings.ShieldEnterRange, 0.1f, 32f, "melee.shield_enter_range", errors);
+        ValidateRange(settings.ShieldReleaseRange, 0.1f, 32f, "melee.shield_release_range", errors);
         ValidateRange(settings.ShieldSpeedMultiplier, 0.01f, 2f, "melee.shield_speed_multiplier", errors);
         ValidateRange(settings.ShieldRangedDamageTakenMultiplier, 0f, 2f, "melee.shield_ranged_damage_taken_multiplier", errors);
         if (settings.ShieldReleaseRange < settings.ShieldEnterRange)
             errors.Add("melee.shield_release_range must be at least shield_enter_range");
-        ValidateRange(settings.RangedStandoffDistance, 0.01f, 64f, "ranged.standoff_distance", errors);
+        ValidateRange(settings.RangedStandoffDistance, 0.1f, 64f, "ranged.standoff_distance", errors);
         ValidateRange(settings.RangedHighGroundBonus, 0f, 16f, "ranged.high_ground_bonus", errors);
         ValidateRange(settings.PreferredFiringRangeRatio, 0.1f, 1f, "ranged.preferred_firing_range_ratio", errors);
         if (settings.RangedStandoffDistance >= settings.Units[UnitRanged].AttackRange)
             errors.Add("ranged.standoff_distance must be less than attack_range");
         ValidateRange(settings.SiegeMinRange, 0f, 64f, "siege.min_range", errors);
-        ValidateRange(settings.SiegeBlastRadius, 0.01f, 32f, "siege.blast_radius", errors);
+        ValidateRange(settings.SiegeBlastRadius, 0.1f, 32f, "siege.blast_radius", errors);
         ValidateRange(settings.SiegeEdgeDamageMultiplier, 0f, 1f, "siege.edge_damage_multiplier", errors);
-        ValidateRange(settings.SiegeFlightSeconds, 0.01f, 10f, "siege.flight_seconds", errors);
+        ValidateRange(settings.SiegeFlightSeconds, 0.05f, 10f, "siege.flight_seconds", errors);
         if (settings.SiegeMinRange >= settings.Units[UnitSiege].AttackRange)
             errors.Add("siege.min_range must be less than attack_range");
     }

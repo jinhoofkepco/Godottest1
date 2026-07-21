@@ -245,8 +245,11 @@ public partial class BattleSimulation
         List<int>[] buckets = _teams[index] == TeamEnemy ? _enemyBuckets : _allyBuckets;
         Vector2I cell = CellAt(position);
         Vector2 separation = Vector2.Zero;
-        for (int row = Math.Max(0, cell.Y - 1); row <= Math.Min(BattleConfig.GridRows - 1, cell.Y + 1); row++)
-            for (int col = Math.Max(0, cell.X - 1); col <= Math.Min(BattleConfig.GridColumns - 1, cell.X + 1); col++)
+        float queryDistance = (UnitRadius(_kinds[index]) + MaximumUnitRadius()) * BattleConfig.UnitSeparationSpacingMultiplier;
+        int maximumHorizon = Mathf.CeilToInt(BattleConfig.MaxTunableUnitRadius * 2f * BattleConfig.UnitSeparationSpacingMultiplier);
+        int bucketRadius = Math.Min(maximumHorizon, Mathf.CeilToInt(queryDistance));
+        for (int row = Math.Max(0, cell.Y - bucketRadius); row <= Math.Min(BattleConfig.GridRows - 1, cell.Y + bucketRadius); row++)
+            for (int col = Math.Max(0, cell.X - bucketRadius); col <= Math.Min(BattleConfig.GridColumns - 1, cell.X + bucketRadius); col++)
                 foreach (int candidate in buckets[Index(new Vector2I(col, row))])
                 {
                     if (candidate == index || _hp[candidate] <= 0f) continue;

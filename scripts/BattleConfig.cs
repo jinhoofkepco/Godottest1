@@ -73,6 +73,7 @@ public static class BattleConfig
     public const float RangedDetectRange = RangedRange + RangedHighGroundRangeBonus + BuildingTargetRadius;
     public const float DragonDetectRange = UnitDetectRange * 1.5f;
     public const float UnitSeparationSpacingMultiplier = 1.2f;
+    public const float MaxTunableUnitRadius = 2f;
     public const float UnitAdvanceWeight = 0.70f;
     public const float UnitSeekWeight = 1.65f;
     public const float UnitSeparationWeight = 2.20f;

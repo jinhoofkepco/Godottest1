@@ -26,12 +26,14 @@ var failures: Array[String] = []
 
 func run() -> Array[String]:
 	_test_match_settings_profile()
+	_test_tuned_runtime_behavior()
 	_test_config_and_initial_state()
 	_test_build_and_economy()
 	_test_construction_population_and_ai_income()
 	_test_elevation_rules()
 	_test_cross_column_combat_and_air_targeting()
 	_test_radius_and_separation()
+	_test_tuned_radius_bucket_horizon()
 	_test_siege_rules_and_aoe()
 	_test_class_counter_matrix_and_composition()
 	_test_legion_slots_and_rotation()
@@ -66,6 +68,50 @@ func _test_match_settings_profile() -> void:
 	_expect(not bool(rejected.ok) and is_equal_approx(float(first.call("GetMatchSettings").ranged.max_hp), 31.5), "invalid payload is rejected without partial mutation")
 	first.free()
 	second.free()
+
+
+func _test_tuned_runtime_behavior() -> void:
+	var simulation = _new_simulation()
+	var tuned: Dictionary = simulation.call("GetMatchSettings")
+	tuned.melee.damage = 7.0
+	tuned.melee.attack_interval = 1.25
+	tuned.melee.attack_range = 2.5
+	tuned.melee.detect_range = 2.5
+	tuned.melee.speed = 0.4
+	tuned.melee.radius = 0.28
+	tuned.melee.spawner_cost = 73
+	tuned.melee.damage_vs.ranged = 2.0
+	var applied: Dictionary = simulation.call("ConfigureAndReset", tuned)
+	_expect(bool(applied.ok), "complete tuned runtime fixture applies")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 100, "enemy": 0})
+	_expect(simulation.call("TryBuild", TEAM_ALLY, Vector2i(3, 70), BUILD_MELEE), "tuned spawner cost is accepted by live build logic")
+	var built: Dictionary = simulation.call("GetDebugSnapshot")
+	var building := _building_by_id(built.buildings, _building_id_at(built.buildings, Vector2i(3, 70)))
+	_expect(int(built.ally_gold) == 27 and is_equal_approx(float(building.construction_duration), 7.3), "tuned cost drives gold deduction and construction time")
+	var flat := PackedByteArray()
+	flat.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	flat.fill(0)
+	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": flat})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(10.5, 70.5), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_RANGED, "position": Vector2(10.5, 68.6), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(30.5, 74.5), "exact": true})
+	simulation.call("Step", 1.0 / 30.0)
+	var combat: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(is_equal_approx(_unit_hp_by_team_kind(combat, TEAM_ENEMY, UNIT_RANGED), GameConfig.RANGED_UNIT_MAX_HP - 14.0), "tuned damage, class multiplier, and extended range affect a live hit")
+	_expect(is_equal_approx(float(combat.unit_cooldowns[0]), 1.25), "tuned attack interval becomes the live cooldown")
+	for tick in range(20): simulation.call("Step", 1.0 / 30.0)
+	var moving: Dictionary = simulation.call("GetDebugSnapshot")
+	var tuned_speed := Vector2(moving.unit_velocities[2]).length()
+	_expect(tuned_speed > 0.20 and tuned_speed <= 0.44, "tuned movement speed bounds live velocity")
+	var render: Dictionary = simulation.call("GetRenderSnapshot")
+	var infantry: PackedFloat32Array = render.infantry_buffer
+	var found_tuned_scale := false
+	for record in range(int(render.infantry_count)):
+		if absf(float(infantry[record * 16]) - 2.0) <= 0.01:
+			found_tuned_scale = true
+	_expect(found_tuned_scale, "tuned radius drives the bulk render transform scale")
+	simulation.free()
 
 
 func _new_simulation():
@@ -379,6 +425,25 @@ func _test_radius_and_separation() -> void:
 	for tick in range(45): simulation.call("Step", 1.0 / 30.0)
 	var snapshot: Dictionary = simulation.call("GetDebugSnapshot")
 	_expect(Vector2(snapshot.unit_positions[0]).distance_to(Vector2(snapshot.unit_positions[1])) > 0.08, "overlapping allies separate into individually visible units")
+	simulation.free()
+
+
+func _test_tuned_radius_bucket_horizon() -> void:
+	var simulation = _new_simulation()
+	var tuned: Dictionary = simulation.call("GetMatchSettings")
+	tuned.melee.radius = 1.2
+	var applied: Dictionary = simulation.call("ConfigureAndReset", tuned)
+	_expect(bool(applied.ok), "large-radius separation fixture accepts a valid runtime profile")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 4, "cell": Vector2i(6, 64), "unit_kind": UNIT_MELEE})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(5.3, 70.5), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(7.4, 70.5), "exact": true})
+	var before: Dictionary = simulation.call("GetDebugSnapshot")
+	var initial_distance := Vector2(before.unit_positions[0]).distance_to(Vector2(before.unit_positions[1]))
+	for tick in range(30): simulation.call("Step", 1.0 / 30.0)
+	var after: Dictionary = simulation.call("GetDebugSnapshot")
+	var final_distance := Vector2(after.unit_positions[0]).distance_to(Vector2(after.unit_positions[1]))
+	_expect(final_distance > initial_distance + 0.05, "tuned radii separate allies across more than one spatial bucket")
 	simulation.free()
 
 
