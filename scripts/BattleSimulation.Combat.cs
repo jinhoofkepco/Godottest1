@@ -158,15 +158,44 @@ public partial class BattleSimulation
                     continue;
                 int pointIndex = Index(new Vector2I(col, row));
                 int score = density[pointIndex];
-                if (score > bestScore || (score == bestScore && score > 0 && (distanceSq < bestDistanceSq - 0.000001f || (Mathf.IsEqualApprox(distanceSq, bestDistanceSq) && pointIndex < bestPointIndex))))
-                {
-                    bestScore = score;
-                    bestDistanceSq = distanceSq;
-                    bestPointIndex = pointIndex;
-                    bestPoint = point;
-                }
+                if (score <= 0) continue;
+                bool improves = score > bestScore || score == bestScore
+                    && (distanceSq < bestDistanceSq - 0.000001f || Mathf.IsEqualApprox(distanceSq, bestDistanceSq) && pointIndex < bestPointIndex);
+                if (!improves || !SiegePointHasValidTarget(unitIndex, point)) continue;
+                bestScore = score;
+                bestDistanceSq = distanceSq;
+                bestPointIndex = pointIndex;
+                bestPoint = point;
             }
         return bestScore > 0 ? bestPoint : new Vector2(-1f, -1f);
+    }
+
+    private bool SiegePointHasValidTarget(int unitIndex, Vector2 point)
+    {
+        Vector2 origin = _positions[unitIndex];
+        float minimumSq = _settings.SiegeMinRange * _settings.SiegeMinRange;
+        int team = _teams[unitIndex];
+        List<int>[] hostileBuckets = team == TeamEnemy ? _allyBuckets : _enemyBuckets;
+        Vector2I center = CellAt(point);
+        int radius = Mathf.CeilToInt(_settings.SiegeBlastRadius + MaximumUnitRadius());
+        for (int row = Math.Max(0, center.Y - radius); row <= Math.Min(BattleConfig.GridRows - 1, center.Y + radius); row++)
+            for (int col = Math.Max(0, center.X - radius); col <= Math.Min(BattleConfig.GridColumns - 1, center.X + radius); col++)
+                foreach (int candidate in hostileBuckets[Index(new Vector2I(col, row))])
+                {
+                    if (_hp[candidate] <= 0f || origin.DistanceSquaredTo(_positions[candidate]) < minimumSq) continue;
+                    Vector2 fallback = _teams[candidate] == TeamEnemy ? Vector2.Down : Vector2.Up;
+                    Vector2 predicted = PredictedSiegePosition(candidate, fallback, _settings.SiegeFlightSeconds);
+                    if (point.DistanceTo(predicted) <= _settings.SiegeBlastRadius + UnitRadius(_kinds[candidate])) return true;
+                }
+        for (int index = 0; index < _buildingCount; index++)
+        {
+            Building building = _buildings[index];
+            if (building.Destroyed || building.Team == team) continue;
+            Vector2 at = new(building.Cell.X + 0.5f, building.Cell.Y + 0.5f);
+            if (origin.DistanceSquaredTo(at) >= minimumSq
+                && point.DistanceTo(at) <= _settings.SiegeBlastRadius + BattleConfig.BuildingTargetRadius) return true;
+        }
+        return false;
     }
 
     private void CacheFoundTarget(int index)

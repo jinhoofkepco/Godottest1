@@ -19,13 +19,17 @@ func _run() -> void:
 	var contract_simulation = SIMULATION_SCENE.instantiate()
 	contract_simulation.call("Reset")
 	var shield_multiplier := float(contract_simulation.call("GetEffectiveClassDamageMultiplier", UNIT_RANGED, UNIT_MELEE, true))
+	var melee_siege_multiplier := float(contract_simulation.call("GetClassDamageMultiplier", UNIT_MELEE, UNIT_SIEGE))
 	contract_simulation.free()
 	var failed := false
 	print("COUNTER CONTRACT: RANGED>SHIELDED_MELEE effective_multiplier=%.3f" % shield_multiplier)
 	if not is_equal_approx(shield_multiplier, 0.17):
 		push_error("COUNTER MATRIX FAILED: shield-aware RANGED damage must use the effective multiplier")
 		failed = true
+	print("COUNTER CONTRACT: MELEE>SIEGE class_multiplier=%.3f" % melee_siege_multiplier)
 	var scenarios := [
+		{"name": "MELEE>SIEGE_CLOSE", "favored": UNIT_MELEE, "other": UNIT_SIEGE, "favored_count": 7, "other_count": 3, "gap": 0.3, "favored_spacing": 0.15, "other_spacing": 0.15, "favored_rank_spacing": 0.0, "other_rank_spacing": 0.0},
+		{"name": "SIEGE>MELEE_OPEN", "favored": UNIT_SIEGE, "other": UNIT_MELEE, "favored_count": 3, "other_count": 7, "gap": 10.0},
 		{"name": "DRAGON>RANGED", "favored": UNIT_DRAGON, "other": UNIT_RANGED, "favored_count": 4, "other_count": 11},
 		{"name": "DRAGON>SIEGE", "favored": UNIT_DRAGON, "other": UNIT_SIEGE, "favored_count": 7, "other_count": 11},
 	]
@@ -53,8 +57,12 @@ func _trial(scenario: Dictionary, trial: int) -> bool:
 	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": elevation})
 	var favored_team := TEAM_ALLY if trial % 2 == 0 else TEAM_ENEMY
 	var other_team := TEAM_ENEMY if favored_team == TEAM_ALLY else TEAM_ALLY
-	_spawn_group(simulation, favored_team, int(scenario.favored), int(scenario.favored_count), 23.1 if favored_team == TEAM_ALLY else 20.9)
-	_spawn_group(simulation, other_team, int(scenario.other), int(scenario.other_count), 23.1 if other_team == TEAM_ALLY else 20.9)
+	var gap := float(scenario.get("gap", 2.2))
+	var ally_y := 22.0 + gap * 0.5
+	var enemy_y := 22.0 - gap * 0.5
+	_spawn_group(simulation, favored_team, int(scenario.favored), int(scenario.favored_count), ally_y if favored_team == TEAM_ALLY else enemy_y, float(scenario.get("favored_spacing", 0.65)), float(scenario.get("favored_rank_spacing", 0.45)))
+	simulation.call("ApplyDebugCommand", {"op": "set_seed", "value": 9000 + trial})
+	_spawn_group(simulation, other_team, int(scenario.other), int(scenario.other_count), ally_y if other_team == TEAM_ALLY else enemy_y, float(scenario.get("other_spacing", 0.65)), float(scenario.get("other_rank_spacing", 0.45)))
 	var snapshot: Dictionary = {}
 	for step in range(340):
 		simulation.call("Step", 8.0 / 30.0)
@@ -72,11 +80,11 @@ func _trial(scenario: Dictionary, trial: int) -> bool:
 	return favored_hp > other_hp
 
 
-func _spawn_group(simulation, team: int, kind: int, count: int, y: float) -> void:
+func _spawn_group(simulation, team: int, kind: int, count: int, y: float, spacing: float, rank_spacing: float) -> void:
 	for index in count:
 		var column := index % 6
 		var rank := index / 6
-		var position := Vector2(7.75 + float(column) * 0.65, y + (float(rank) * 0.45 if team == TEAM_ALLY else -float(rank) * 0.45))
+		var position := Vector2(7.75 + float(column) * spacing, y + (float(rank) * rank_spacing if team == TEAM_ALLY else -float(rank) * rank_spacing))
 		simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": team, "kind": kind, "position": position, "exact": true})
 
 

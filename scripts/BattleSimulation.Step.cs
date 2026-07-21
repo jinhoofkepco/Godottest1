@@ -112,6 +112,8 @@ public partial class BattleSimulation
                 maximumSpeed *= GroundSpeedMultiplier(position, position + desired.Normalized());
             Vector2 targetVelocity = desired.LengthSquared() > 0.000001f ? desired.Normalized() * maximumSpeed : Vector2.Zero;
             _velocities[index] = _velocities[index].MoveToward(targetVelocity, maximumSpeed * BattleConfig.UnitTurnRate * delta);
+            if (_velocities[index].LengthSquared() > maximumSpeed * maximumSpeed)
+                _velocities[index] = _velocities[index].Normalized() * maximumSpeed;
             _positions[index] = _kinds[index] == UnitDragon
                 ? MoveFlying(position, _velocities[index] * delta)
                 : MoveGround(position, _velocities[index] * delta);
