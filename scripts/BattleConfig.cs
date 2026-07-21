@@ -160,6 +160,7 @@ public static class BattleConfig
     public const float LegionDisengageSeconds = 1.2f;
     public const float LegionHeadingTurnRate = 5.5f;
     public const float LegionWaypointTolerance = 0.65f;
+    public const float LegionAnchorMaxLead = 1.75f;
     public const float DefenseTowerMaxHp = 1600f;
     public const float DefenseTowerRange = 3.6f;
     public const float DefenseTowerDamage = 6f;

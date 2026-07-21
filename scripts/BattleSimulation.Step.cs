@@ -128,6 +128,7 @@ public partial class BattleSimulation
                 bool grouped = legionIndex >= 0 && _legionStates[legionIndex] != LegionBroken;
                 bool engagedLegion = grouped && _legionStates[legionIndex] == LegionEngaged;
                 bool rallying = !grouped && _rallyPointIds[index] > 0;
+                bool rallyEgress = grouped && !engagedLegion && IsRallyEgressUnit(index, legionIndex);
                 Vector2 advance = grouped && !engagedLegion ? LegionSteering(index) : rallying ? RallySteering(index) : AdvanceDirection(index);
                 Vector2 seek = _foundTargetId != 0
                     ? (_kinds[index] == UnitRanged ? FiringSeekDirection(index, _foundTargetPosition) : position.DirectionTo(_foundTargetPosition))
@@ -135,9 +136,9 @@ public partial class BattleSimulation
                 Vector2 separation = CalculateSeparation(index);
                 bool firingQueueWait = !rallying && _kinds[index] == UnitRanged && _foundTargetId != 0
                     && ShouldWaitForFiringQueue(index, position.DirectionTo(_foundTargetPosition));
-                bool waiting = !rallying && _kinds[index] != UnitDragon
+                bool waiting = !rallying && !rallyEgress && _kinds[index] != UnitDragon
                     && (firingQueueWait || ShouldWait(index, advance)) && !HasUsableLateralFiringSlot(index);
-                Vector2 steering = separation * (waiting ? BattleConfig.WaitSeparationWeight : BattleConfig.UnitSeparationWeight);
+                Vector2 steering = separation * (waiting || rallyEgress ? BattleConfig.WaitSeparationWeight : BattleConfig.UnitSeparationWeight);
                 if (!waiting)
                 {
                     steering += advance * (grouped && !engagedLegion ? 1f : BattleConfig.UnitAdvanceWeight) + seek * BattleConfig.UnitSeekWeight;

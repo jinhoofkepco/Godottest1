@@ -36,6 +36,8 @@ public partial class BattleSimulation
     private readonly byte[] _legionDefending = new byte[MaxLegions];
     private readonly float[] _legionGatheringElapsed = new float[MaxLegions];
     private readonly float[] _legionDisengageTimers = new float[MaxLegions];
+    private readonly Vector2[] _legionMemberPositionSums = new Vector2[MaxLegions];
+    private readonly int[] _legionMemberPositionCounts = new int[MaxLegions];
     private readonly List<int>[] _rallyMembers = NewRallyMemberLists();
     private int _legionCount;
     private int _nextLegionId;
@@ -232,6 +234,15 @@ public partial class BattleSimulation
         return LegionMinimumSpeed(legion);
     }
 
+    private bool IsRallyEgressUnit(int unitIndex, int legionIndex)
+    {
+        if (legionIndex < 0 || _legionDefending[legionIndex] != 0 || _legionStates[legionIndex] != LegionMarching) return false;
+        int rallyIndex = BuildingIndexFromId(_legionRallyIds[legionIndex]);
+        if (!IsFriendlyRally(rallyIndex, _teams[unitIndex])) return false;
+        float radius = BattleConfig.RallyArrivalRadius;
+        return _positions[unitIndex].DistanceSquaredTo(RallyAnchor(_buildings[rallyIndex])) <= radius * radius;
+    }
+
     private void UpdateRallyPoints(float delta)
     {
         _ = delta;
@@ -336,16 +347,19 @@ public partial class BattleSimulation
         _legionDefending[index] = defending ? (byte)1 : (byte)0;
         _legionHeadings[index] = team == TeamEnemy ? Vector2.Down : Vector2.Up;
         int rallyIndex = BuildingIndexFromId(rallyId);
-        _legionAnchors[index] = rallyIndex >= 0 ? RallyAnchor(_buildings[rallyIndex]) : _positions[members[start]];
         _legionHasWaypoint[index] = 0;
         _legionGatheringElapsed[index] = 0f;
         _legionDisengageTimers[index] = 0f;
+        Vector2 memberCenter = Vector2.Zero;
         for (int cursor = 0; cursor < count; cursor++)
         {
             int unit = members[start + cursor];
             _legionIds[unit] = id;
             _rallyPointIds[unit] = -1;
+            memberCenter += _positions[unit];
         }
+        memberCenter /= count;
+        _legionAnchors[index] = defending && rallyIndex >= 0 ? RallyAnchor(_buildings[rallyIndex]) : memberCenter;
         RebuildLegionSlots(index);
         QueueStructural("legion_launched", team, id, rallyIndex >= 0 ? _buildings[rallyIndex].Cell : CellAt(_legionAnchors[index]), BuildingRallyPoint, count);
         return id;
@@ -395,6 +409,7 @@ public partial class BattleSimulation
 
     private void UpdateLegions(float delta)
     {
+        CacheLegionMemberPositions();
         for (int i = 0; i < _legionCount; i++)
         {
             if (_legionStates[i] == LegionBroken) continue;
@@ -438,7 +453,30 @@ public partial class BattleSimulation
             if (direction.LengthSquared() <= 0.0001f) direction = _legionTeams[i] == TeamEnemy ? Vector2.Down : Vector2.Up;
             _legionHeadings[i] = _legionHeadings[i].Slerp(direction.Normalized(), Mathf.Clamp(delta * BattleConfig.LegionHeadingTurnRate, 0f, 1f)).Normalized();
             Vector2 motion = _legionHeadings[i] * LegionMinimumSpeed(i) * delta;
-            _legionAnchors[i] = LegionIsAirOnly(i) ? MoveFlying(_legionAnchors[i], motion) : MoveGround(_legionAnchors[i], motion, LegionGroundRadius(i));
+            Vector2 nextAnchor = LegionIsAirOnly(i) ? MoveFlying(_legionAnchors[i], motion) : MoveGround(_legionAnchors[i], motion, LegionGroundRadius(i));
+            if (_legionMemberPositionCounts[i] > 0)
+            {
+                Vector2 center = _legionMemberPositionSums[i] / _legionMemberPositionCounts[i];
+                Vector2 lead = nextAnchor - center;
+                if (lead.LengthSquared() > BattleConfig.LegionAnchorMaxLead * BattleConfig.LegionAnchorMaxLead)
+                    nextAnchor = center + lead.Normalized() * BattleConfig.LegionAnchorMaxLead;
+            }
+            _legionAnchors[i] = nextAnchor;
+        }
+    }
+
+    private void CacheLegionMemberPositions()
+    {
+        if (_legionCount == 0) return;
+        Array.Clear(_legionMemberPositionSums, 0, _legionCount);
+        Array.Clear(_legionMemberPositionCounts, 0, _legionCount);
+        for (int unit = 0; unit < _unitCount; unit++)
+        {
+            if (_hp[unit] <= 0f) continue;
+            int legion = LegionIndexFromId(_legionIds[unit]);
+            if (legion < 0 || _legionStates[legion] == LegionBroken) continue;
+            _legionMemberPositionSums[legion] += _positions[unit];
+            _legionMemberPositionCounts[legion]++;
         }
     }
 

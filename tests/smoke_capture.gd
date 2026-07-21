@@ -51,13 +51,14 @@ func _run() -> void:
 	await _capture_closeup("smoke_siege_closeup.png", true)
 	await _capture_legion_gathering()
 	await _capture_rally_mode("smoke_rally_defend.png", 1)
+	await _capture_rally_defend_egress()
 	await _capture_rally_mode("smoke_rally_advance.png", 0)
 	await _capture_legion_formation("smoke_legion_line.png", 0)
 	await _capture_legion_formation("smoke_legion_wedge.png", 1)
 	await _capture_legion_engaged()
 	await _capture_legion_formation("smoke_legion_loose.png", 2)
 	await _capture_tactical_fx()
-	print("SMOKE CAPTURE PASS: 27 frames")
+	print("SMOKE CAPTURE PASS: 28 frames")
 	quit(0)
 
 
@@ -328,6 +329,28 @@ func _capture_rally_mode(file_name: String, mode: int) -> void:
 	var focus: Vector2 = main.map_view.to_global(main.grid.position_to_world(Vector2(20.5, 63.8)))
 	main.map_view.set_zoom_at(7.0, focus)
 	await _save(file_name)
+
+
+func _capture_rally_defend_egress() -> void:
+	_reset()
+	main.simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	main.simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 4, "cell": Vector2i(20, 64), "unit_kind": UNIT_MELEE})
+	var rally_id := -1
+	for building in Array(main.simulation.call("GetBoardSnapshot").buildings):
+		if int(building.kind) == 4 and int(building.team) == TEAM_ALLY: rally_id = int(building.id)
+	main.simulation.call("ConfigureRally", rally_id, 1, 0)
+	for index in GameConfig.RALLY_DEFENSE_CAPACITY:
+		_spawn(TEAM_ALLY, UNIT_MELEE, Vector2(19.0 + float(index % 8) * 0.38, 62.9 + float(index / 8) * 0.30))
+	for tick in 12: main.simulation.call("Step", 1.0 / 30.0)
+	for index in 5:
+		_spawn(TEAM_ALLY, UNIT_MELEE, Vector2(20.2 + float(index % 2) * 0.25, 63.7 + float(index / 2) * 0.18))
+		for tick in 4: main.simulation.call("Step", 1.0 / 30.0)
+	for tick in 120: main.simulation.call("Step", 1.0 / 30.0)
+	main._sync_board_and_buildings(true)
+	main.unit_renderer.sync()
+	var focus: Vector2 = main.map_view.to_global(main.grid.position_to_world(Vector2(20.5, 60.5)))
+	main.map_view.set_zoom_at(7.0, focus)
+	await _save("smoke_rally_defend_egress.png")
 
 
 func _capture_legion_formation(file_name: String, formation: int) -> void:
