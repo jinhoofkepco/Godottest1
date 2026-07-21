@@ -1,8 +1,12 @@
 extends SceneTree
 
 const SIMULATION_SCENE = preload("res://scenes/battle_simulation.tscn")
+const SimulationPreflight = preload("res://tests/simulation_preflight.gd")
 
 func _initialize() -> void:
+	if not SimulationPreflight.verify():
+		quit(1)
+		return
 	var simulation = SIMULATION_SCENE.instantiate()
 	simulation.call("Reset")
 	simulation.call("ApplyDebugCommand", {"op": "set_seed", "value": 12000})

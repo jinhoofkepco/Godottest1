@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SIMULATION_SCENE = preload("res://scenes/battle_simulation.tscn")
+const SimulationPreflight = preload("res://tests/simulation_preflight.gd")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 
@@ -10,6 +11,9 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	if not SimulationPreflight.verify():
+		quit(1)
+		return
 	var passive := _simulate(false)
 	var active := _simulate(true)
 	print("BALANCE PATHS: passive=%s %.1fs occupancy=%.3f active=%s %.1fs occupancy=%.3f" % [passive.result, passive.elapsed, passive.occupancy, active.result, active.elapsed, active.occupancy])
@@ -26,6 +30,7 @@ func _simulate(active: bool) -> Dictionary:
 	simulation.call("ApplyDebugCommand", {"op": "set_seed", "value": 13004 if active else 12000})
 	if active:
 		simulation.call("ApplyDebugCommand", {"op": "set_gold", "ally": 180, "enemy": 180})
+		simulation.call("SetAiIncomeLevel", 1)
 		simulation.call("SetAiEnabled", TEAM_ENEMY, true)
 		simulation.call("SetAiEnabled", TEAM_ALLY, true)
 	var elapsed := 0.0

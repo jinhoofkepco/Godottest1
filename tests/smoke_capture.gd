@@ -2,6 +2,7 @@ extends SceneTree
 
 const GameConfig = preload("res://scripts/game_config.gd")
 const MAIN_SCENE = preload("res://scenes/main.tscn")
+const SimulationPreflight = preload("res://tests/simulation_preflight.gd")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const UNIT_MELEE := 0
@@ -17,6 +18,9 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	if not SimulationPreflight.verify():
+		quit(1)
+		return
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://build"))
 	root.size = Vector2i(GameConfig.VIEW_SIZE)
 	main = MAIN_SCENE.instantiate()
@@ -35,11 +39,13 @@ func _run() -> void:
 	await _capture_cluster("smoke_cluster.png", 110)
 	await _capture_army("smoke_persistent_flank.png", TEAM_ALLY, 36, true)
 	await _capture_flow_split()
+	await _capture_cliff_detour()
 	await _capture_closeup("smoke_infantry_closeup.png", false)
 	await _capture_visual_hierarchy()
 	await _capture_elevation_overview()
 	await _capture_territory_flash()
 	await _capture_high_ground()
+	await _capture_firing_line()
 	await _capture_cluster("smoke_large_army.png", 360)
 	await _capture_siege_impact()
 	await _capture_closeup("smoke_siege_closeup.png", true)
@@ -51,7 +57,7 @@ func _run() -> void:
 	await _capture_legion_engaged()
 	await _capture_legion_formation("smoke_legion_loose.png", 2)
 	await _capture_tactical_fx()
-	print("SMOKE CAPTURE PASS: 25 frames")
+	print("SMOKE CAPTURE PASS: 27 frames")
 	quit(0)
 
 
@@ -64,6 +70,8 @@ func _reset() -> void:
 	main.building_records.clear()
 	main._last_board_version = -1
 	main.game_result = ""
+	main.hud.message_time_left = 0.0
+	main.hud.message_label.visible = false
 	main.map_view.set_interaction_enabled(true)
 	main.map_view.setup(main.grid, main.map_view.frame_rect)
 	main._sync_board_and_buildings(true)
@@ -156,6 +164,26 @@ func _capture_flow_split() -> void:
 	await _save("smoke_flow_split.png")
 
 
+func _capture_cliff_detour() -> void:
+	_reset()
+	main.simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	var elevation := PackedByteArray()
+	elevation.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	elevation.fill(0)
+	elevation[27 * GameConfig.GRID_COLUMNS + 22] = 2
+	main.simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": elevation})
+	for wave in 3:
+		for index in 6:
+			_spawn(TEAM_ALLY, UNIT_MELEE, Vector2(21.9 + float(index % 3) * 0.3, 30.2 + float(index / 3) * 0.3))
+		for tick in 55:
+			main.simulation.call("Step", 1.0 / 30.0)
+	main._sync_board_and_buildings(true)
+	main.unit_renderer.sync()
+	var focus: Vector2 = main.map_view.to_global(main.grid.position_to_world(Vector2(22.5, 27.5)))
+	main.map_view.set_zoom_at(14.0, focus)
+	await _save("smoke_cliff_detour.png")
+
+
 func _capture_closeup(file_name: String, siege: bool) -> void:
 	_reset()
 	var center := Vector2(10.5, 22.5)
@@ -220,6 +248,39 @@ func _capture_high_ground() -> void:
 	main._sync_board_and_buildings(true)
 	main.unit_renderer.sync()
 	await _save("smoke_high_ground_combat.png")
+
+
+func _capture_firing_line() -> void:
+	_reset()
+	var original_settings: Dictionary = main.simulation.call("GetMatchSettings")
+	var tuned_settings := original_settings.duplicate(true)
+	tuned_settings.melee.max_hp = 5000.0
+	tuned_settings.melee.damage = 0.1
+	tuned_settings.melee.speed = 0.05
+	tuned_settings.ranged.damage = 0.1
+	main.simulation.call("ConfigureAndReset", tuned_settings)
+	main.simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	var elevation := PackedByteArray()
+	elevation.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	elevation.fill(0)
+	main.simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": elevation})
+	for enemy_position in [Vector2(22.5, 30.4), Vector2(21.8, 30.4), Vector2(23.2, 30.4)]:
+		_spawn(TEAM_ENEMY, UNIT_MELEE, enemy_position)
+	for index in range(3):
+		main.simulation.call("ApplyDebugCommand", {
+			"op": "set_unit", "index": index, "hp": 5000.0, "cooldown": 999.0,
+		})
+	for index in 8:
+		_spawn(TEAM_ALLY, UNIT_RANGED, Vector2(22.5, 33.0 + float(index) * 0.34))
+	for tick in 150:
+		main.simulation.call("Step", 1.0 / 30.0)
+	main._consume_event_channels(main.simulation.call("DrainEvents"))
+	main._sync_board_and_buildings(true)
+	main.unit_renderer.sync()
+	var focus: Vector2 = main.map_view.to_global(main.grid.position_to_world(Vector2(22.5, 31.4)))
+	main.map_view.set_zoom_at(16.0, focus)
+	await _save("smoke_firing_line.png")
+	main.simulation.call("ConfigureAndReset", original_settings)
 
 
 func _capture_siege_impact() -> void:

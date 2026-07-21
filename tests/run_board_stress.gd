@@ -2,6 +2,7 @@ extends SceneTree
 
 const GameConfig = preload("res://scripts/game_config.gd")
 const MAIN_SCENE = preload("res://scenes/main.tscn")
+const SimulationPreflight = preload("res://tests/simulation_preflight.gd")
 const FLIP_COUNT := 30
 const WARMUP_ROUNDS := 3
 const MEASURED_ROUNDS := 18
@@ -12,6 +13,9 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	if not SimulationPreflight.verify():
+		quit(1)
+		return
 	var main = MAIN_SCENE.instantiate()
 	root.add_child(main)
 	await process_frame

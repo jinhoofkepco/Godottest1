@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SIMULATION_SCENE = preload("res://scenes/battle_simulation.tscn")
+const SimulationPreflight = preload("res://tests/simulation_preflight.gd")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
 const DEFAULT_MATCHES := 50
@@ -13,6 +14,9 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	if not SimulationPreflight.verify():
+		quit(1)
+		return
 	var matches := DEFAULT_MATCHES
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--matches="): matches = maxi(1, int(argument.trim_prefix("--matches=")))

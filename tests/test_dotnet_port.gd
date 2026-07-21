@@ -16,8 +16,9 @@ func run_all(tree: SceneTree) -> Array[String]:
 
 
 func run_siege_contracts() -> Array[String]:
-	_expect(is_equal_approx(GameConfig.SIEGE_UNIT_ATTACK_RANGE, 7.0), "SIEGE maximum range is doubled to 7.0 cells")
+	_expect(is_equal_approx(GameConfig.SIEGE_UNIT_ATTACK_RANGE, 14.0), "SIEGE maximum range is doubled again to 14.0 cells")
 	_expect(is_equal_approx(GameConfig.SIEGE_UNIT_ATTACK_DAMAGE, 55.8), "SIEGE base damage is multiplied by 1.8")
+	_expect(is_equal_approx(GameConfig.SIEGE_BLAST_RADIUS, 1.8), "SIEGE blast radius is doubled to 1.8 cells")
 	_expect(is_equal_approx(GameConfig.MATCH_DURATION, 420.0), "the slower match timer is seven minutes")
 	_expect(is_equal_approx(GameConfig.OCCUPANCY_WIN_RATIO, 0.92), "territory victory requires ninety-two percent")
 	_expect(is_equal_approx(GameConfig.PASSIVE_INCOME_PER_SECOND, 2.25), "passive income is reduced to seventy-five percent")
@@ -25,7 +26,10 @@ func run_siege_contracts() -> Array[String]:
 	_expect(is_equal_approx(GameConfig.HQ_MAX_HP, 12000.0), "both HQs use five-times building durability")
 	_expect(is_equal_approx(GameConfig.RANGED_UNIT_MAX_HP, 20.4), "RANGED HP is reduced to sixty percent")
 	_expect(is_equal_approx(GameConfig.UNIT_SPEED, 1.015) and is_equal_approx(GameConfig.RANGED_UNIT_SPEED, 0.875) and is_equal_approx(GameConfig.SIEGE_UNIT_SPEED, 0.56) and is_equal_approx(GameConfig.DRAGON_UNIT_SPEED, 1.19), "all class speeds are reduced to seventy percent")
-	_expect(is_equal_approx(GameConfig.SPAWNER_PRODUCTION_INTERVAL, 5.76) and is_equal_approx(GameConfig.SIEGE_PRODUCTION_INTERVAL, 17.28) and is_equal_approx(GameConfig.DRAGON_PRODUCTION_INTERVAL, 45.0), "all unit production rates are halved")
+	_expect(is_equal_approx(GameConfig.SPAWNER_PRODUCTION_INTERVAL, 5.76), "MELEE and RANGED keep the slowed 5.76-second production interval")
+	_expect(absf(GameConfig.SIEGE_PRODUCTION_INTERVAL - 12.342857) <= 0.0001, "SIEGE production is forty percent faster than its prior 17.28-second interval")
+	_expect(is_equal_approx(GameConfig.DRAGON_PRODUCTION_INTERVAL, 45.0) and GameConfig.DRAGON_PRODUCTION_BATCH == 2, "DRAGON production emits two units every 45 seconds")
+	_expect(is_equal_approx(GameConfig.DRAGON_UNIT_MAX_HP, 520.0) and is_equal_approx(GameConfig.DRAGON_UNIT_ATTACK_DAMAGE, 36.0), "DRAGON HP and damage are doubled")
 	_expect(GameConfig.RALLY_LAUNCH_SIZE == 20 and GameConfig.RALLY_DEFENSE_CAPACITY == 28, "rally launch and defense thresholds are doubled")
 	_expect(GameConfig.TEAM_UNIT_CAP == 300 and GameConfig.AI_INCOME_LEVEL_DEFAULT == 3, "population cap and enemy economy default are locked")
 	var renderer_source := FileAccess.get_file_as_string("res://scripts/unit_renderer.gd")

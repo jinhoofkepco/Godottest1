@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SIMULATION_SCENE = preload("res://scenes/battle_simulation.tscn")
+const SimulationPreflight = preload("res://tests/simulation_preflight.gd")
 const GameConfig = preload("res://scripts/game_config.gd")
 const COUNTS := [600, 1500, 3000]
 const WARMUP_TICKS := 30
@@ -12,6 +13,9 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	if not SimulationPreflight.verify():
+		quit(1)
+		return
 	var failed := false
 	var budget_600 := _environment_budget("STRESS_600_BUDGET_MS", 2.0)
 	var budget_3000 := _environment_budget("STRESS_3000_BUDGET_MS", 9.0)

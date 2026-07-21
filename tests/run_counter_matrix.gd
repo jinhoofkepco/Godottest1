@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SIMULATION_SCENE = preload("res://scenes/battle_simulation.tscn")
+const SimulationPreflight = preload("res://tests/simulation_preflight.gd")
 const GameConfig = preload("res://scripts/game_config.gd")
 const TEAM_ENEMY := 1
 const TEAM_ALLY := 2
@@ -16,6 +17,9 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	if not SimulationPreflight.verify():
+		quit(1)
+		return
 	var contract_simulation = SIMULATION_SCENE.instantiate()
 	contract_simulation.call("Reset")
 	var shield_multiplier := float(contract_simulation.call("GetEffectiveClassDamageMultiplier", UNIT_RANGED, UNIT_MELEE, true))
