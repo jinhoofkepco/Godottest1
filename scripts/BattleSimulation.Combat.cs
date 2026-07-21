@@ -161,31 +161,25 @@ public partial class BattleSimulation
         float bestDistanceSq = float.PositiveInfinity;
         int bestPointIndex = int.MaxValue;
         Vector2 bestPoint = new(-1f, -1f);
+        int candidateGeneration = 0;
         for (; occupiedIndex < occupiedCount && occupiedCells[occupiedIndex] < occupiedEnd; occupiedIndex++)
         {
             int bucketIndex = occupiedCells[occupiedIndex];
             int col = bucketIndex % BattleConfig.GridColumns;
             if (Math.Abs(col - originCell.X) > radius) continue;
             foreach (int candidate in hostileBuckets[bucketIndex])
-                {
-                    if (_hp[candidate] <= 0f) continue;
-                    float currentDistanceSq = origin.DistanceSquaredTo(_positions[candidate]);
-                    if (currentDistanceSq < minimumSq || currentDistanceSq > queryRangeSq) continue;
-                    Vector2 fallback = _teams[candidate] == TeamEnemy ? Vector2.Down : Vector2.Up;
-                    Vector2 point = PredictedSiegePosition(candidate, fallback, _settings.SiegeFlightSeconds);
-                    float distanceSq = origin.DistanceSquaredTo(point);
-                    if (distanceSq < minimumSq || distanceSq > rangeSq) continue;
-                    int pointIndex = Index(CellAt(point));
-                    int score = density[pointIndex];
-                    if (score <= 0) continue;
-                    bool improves = score > bestScore || score == bestScore
-                        && (distanceSq < bestDistanceSq - 0.000001f || Mathf.IsEqualApprox(distanceSq, bestDistanceSq) && pointIndex < bestPointIndex);
-                    if (!improves) continue;
-                    bestScore = score;
-                    bestDistanceSq = distanceSq;
-                    bestPointIndex = pointIndex;
-                    bestPoint = point;
-                }
+            {
+                if (_hp[candidate] <= 0f) continue;
+                float currentDistanceSq = origin.DistanceSquaredTo(_positions[candidate]);
+                if (currentDistanceSq < minimumSq || currentDistanceSq > queryRangeSq) continue;
+                Vector2 fallback = _teams[candidate] == TeamEnemy ? Vector2.Down : Vector2.Up;
+                Vector2 predicted = PredictedSiegePosition(candidate, fallback, _settings.SiegeFlightSeconds);
+                float predictedDistanceSq = origin.DistanceSquaredTo(predicted);
+                if (predictedDistanceSq < minimumSq || predictedDistanceSq > rangeSq) continue;
+                if (candidateGeneration == 0) candidateGeneration = NextSiegeCandidateGeneration();
+                ScoreSiegeAimCells(origin, predicted, UnitRadius(_kinds[candidate]), density, minimumSq, rangeSq,
+                    candidateGeneration, ref bestScore, ref bestDistanceSq, ref bestPointIndex, ref bestPoint);
+            }
         }
         int team = _teams[unitIndex];
         for (int index = 0; index < _buildingCount; index++)
@@ -195,18 +189,55 @@ public partial class BattleSimulation
             Vector2 at = new(building.Cell.X + 0.5f, building.Cell.Y + 0.5f);
             float distanceSq = origin.DistanceSquaredTo(at);
             if (distanceSq < minimumSq || distanceSq > rangeSq) continue;
-            int pointIndex = Index(building.Cell);
-            int score = density[pointIndex];
-            if (score <= 0) continue;
-            bool improves = score > bestScore || score == bestScore
-                && (distanceSq < bestDistanceSq - 0.000001f || Mathf.IsEqualApprox(distanceSq, bestDistanceSq) && pointIndex < bestPointIndex);
-            if (!improves) continue;
-            bestScore = score;
-            bestDistanceSq = distanceSq;
-            bestPointIndex = pointIndex;
-            bestPoint = at;
+            if (candidateGeneration == 0) candidateGeneration = NextSiegeCandidateGeneration();
+            ScoreSiegeAimCells(origin, at, BattleConfig.BuildingTargetRadius, density, minimumSq, rangeSq,
+                candidateGeneration, ref bestScore, ref bestDistanceSq, ref bestPointIndex, ref bestPoint);
         }
         return bestScore > 0 ? bestPoint : new Vector2(-1f, -1f);
+    }
+
+    private int NextSiegeCandidateGeneration()
+    {
+        if (_siegeCandidateGeneration == int.MaxValue)
+        {
+            Array.Clear(_siegeCandidateStamps);
+            _siegeCandidateGeneration = 1;
+        }
+        else
+        {
+            _siegeCandidateGeneration++;
+        }
+        return _siegeCandidateGeneration;
+    }
+
+    private void ScoreSiegeAimCells(Vector2 origin, Vector2 target, float targetRadius, int[] density,
+        float minimumSq, float rangeSq, int generation, ref int bestScore, ref float bestDistanceSq,
+        ref int bestPointIndex, ref Vector2 bestPoint)
+    {
+        float influence = _settings.SiegeBlastRadius + targetRadius;
+        float influenceSq = influence * influence;
+        int radius = Mathf.CeilToInt(influence);
+        Vector2I center = CellAt(target);
+        for (int row = Math.Max(0, center.Y - radius); row <= Math.Min(BattleConfig.GridRows - 1, center.Y + radius); row++)
+            for (int col = Math.Max(0, center.X - radius); col <= Math.Min(BattleConfig.GridColumns - 1, center.X + radius); col++)
+            {
+                Vector2 point = new(col + 0.5f, row + 0.5f);
+                if (point.DistanceSquaredTo(target) > influenceSq) continue;
+                float distanceSq = origin.DistanceSquaredTo(point);
+                if (distanceSq < minimumSq || distanceSq > rangeSq) continue;
+                int pointIndex = Index(new Vector2I(col, row));
+                if (_siegeCandidateStamps[pointIndex] == generation) continue;
+                _siegeCandidateStamps[pointIndex] = generation;
+                int score = density[pointIndex];
+                if (score <= 0) continue;
+                bool improves = score > bestScore || score == bestScore
+                    && (distanceSq < bestDistanceSq - 0.000001f || Mathf.IsEqualApprox(distanceSq, bestDistanceSq) && pointIndex < bestPointIndex);
+                if (!improves) continue;
+                bestScore = score;
+                bestDistanceSq = distanceSq;
+                bestPointIndex = pointIndex;
+                bestPoint = point;
+            }
     }
 
     private static int LowerBound(int[] values, int count, int target)

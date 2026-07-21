@@ -565,6 +565,33 @@ func _test_siege_rules_and_aoe() -> void:
 	_expect(not _has_event(minimum_sim.call("DrainEvents").events, "siege_projectile"), "SIEGE emits no shot when every real hostile is inside minimum range")
 	minimum_sim.free()
 
+	var midpoint_sim = _new_simulation()
+	var midpoint_settings: Dictionary = midpoint_sim.call("GetMatchSettings")
+	midpoint_settings.melee.speed = 0.05
+	midpoint_settings.siege.damage = 10.0
+	midpoint_settings.siege.flight_seconds = 0.05
+	_expect(bool(midpoint_sim.call("ConfigureAndReset", midpoint_settings).ok), "SIEGE midpoint fixture accepts deterministic low-speed settings")
+	midpoint_sim.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	midpoint_sim.call("ApplyDebugCommand", {"op": "set_elevation", "values": flat})
+	midpoint_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_SIEGE, "position": Vector2(11.5, 24.5), "exact": true})
+	midpoint_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_MELEE, "position": Vector2(10.3, 20.0), "exact": true})
+	midpoint_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_MELEE, "position": Vector2(13.3, 20.0), "exact": true})
+	midpoint_sim.call("Step", 1.0 / 30.0)
+	var launch_events: Array = midpoint_sim.call("DrainEvents").events
+	var impact_target := Vector2(-1.0, -1.0)
+	for event: Dictionary in launch_events:
+		if String(event.get("type", "")) == "siege_projectile":
+			impact_target = Vector2(event.position)
+	_expect(impact_target.is_equal_approx(Vector2(11.5, 20.5)), "SIEGE selects the empty highest-density cell shared by separated targets")
+	for tick in range(2): midpoint_sim.call("Step", 1.0 / 30.0)
+	var midpoint_hit: Dictionary = midpoint_sim.call("GetDebugSnapshot")
+	var wounded_targets := 0
+	for index in PackedInt32Array(midpoint_hit.unit_teams).size():
+		if int(midpoint_hit.unit_teams[index]) == TEAM_ENEMY and int(midpoint_hit.unit_kinds[index]) == UNIT_MELEE and float(midpoint_hit.unit_hp[index]) < GameConfig.UNIT_MAX_HP:
+			wounded_targets += 1
+	_expect(wounded_targets == 2, "SIEGE midpoint impact damages both targets contributing to the dense aim cell")
+	midpoint_sim.free()
+
 	var simulation = _new_simulation()
 	_expect(is_zero_approx(float(simulation.call("GetSiegeDamageAtDistance", 1.94, 0.13, 55.8))), "SIEGE AoE rejects targets outside blast plus target radius")
 	var center_damage := float(simulation.call("GetSiegeDamageAtDistance", 0.0, 0.13, 55.8))

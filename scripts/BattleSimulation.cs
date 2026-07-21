@@ -151,6 +151,8 @@ public partial class BattleSimulation : Node
     private readonly int[] _allyDensity = new int[BattleConfig.CellCount];
     private readonly int[] _enemySiegeDensity = new int[BattleConfig.CellCount];
     private readonly int[] _allySiegeDensity = new int[BattleConfig.CellCount];
+    private readonly int[] _siegeCandidateStamps = new int[BattleConfig.CellCount];
+    private int _siegeCandidateGeneration;
     private readonly byte[] _flowBlocked = new byte[BattleConfig.CellCount];
 
     private readonly RandomNumberGenerator _rng = new();
