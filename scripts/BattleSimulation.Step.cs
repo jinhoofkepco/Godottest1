@@ -66,9 +66,13 @@ public partial class BattleSimulation
                 _lungeDirections[index] = position.DirectionTo(_foundTargetPosition);
                 bool shouldKite = _kinds[index] == UnitRanged && _foundUnitIndex >= 0
                     && targetDistanceSq < _settings.RangedStandoffDistance * _settings.RangedStandoffDistance;
-                Vector2 combatVelocity = shouldKite
-                    ? _foundTargetPosition.DirectionTo(position) * UnitSpeed(_kinds[index])
-                    : Vector2.Zero;
+                Vector2 combatDirection = shouldKite ? _foundTargetPosition.DirectionTo(position) : Vector2.Zero;
+                if (shouldKite && _recoveryActive[index] != 0)
+                {
+                    Vector2 recovery = RecoveryDirection(index);
+                    if (recovery.LengthSquared() > 0.000001f) combatDirection = recovery;
+                }
+                Vector2 combatVelocity = combatDirection * UnitSpeed(_kinds[index]);
                 _velocities[index] = _velocities[index].MoveToward(combatVelocity, UnitSpeed(_kinds[index]) * BattleConfig.UnitTurnRate * delta);
                 if (_cooldowns[index] <= 0f)
                 {
@@ -76,7 +80,15 @@ public partial class BattleSimulation
                     else AttackTarget(index, _foundUnitIndex, _foundBuildingIndex);
                 }
                 if (shouldKite)
-                    _positions[index] = MoveGround(position, _velocities[index] * delta, UnitRadius(_kinds[index]));
+                {
+                    Vector2 kitePosition = MoveGround(position, _velocities[index] * delta, UnitRadius(_kinds[index]));
+                    _positions[index] = kitePosition;
+                    if (refresh) UpdateNavigationProgress(index, kitePosition, combatVelocity.LengthSquared(), delta * BattleConfig.DecisionGroupCount);
+                }
+                else
+                {
+                    ClearNavigationProgress(index, position);
+                }
                 continue;
             }
 
@@ -104,7 +116,11 @@ public partial class BattleSimulation
             }
             bool isWaiting = _cachedWaiting[index] != 0;
             Vector2 desired = _cachedSteering[index];
-            if (_kinds[index] != UnitDragon && _recoveryActive[index] != 0)
+            if (isWaiting)
+            {
+                ClearNavigationProgress(index, position);
+            }
+            else if (_kinds[index] != UnitDragon && _recoveryActive[index] != 0)
             {
                 Vector2 recovery = RecoveryDirection(index);
                 if (recovery.LengthSquared() > 0.000001f)
@@ -127,7 +143,7 @@ public partial class BattleSimulation
                 ? MoveFlying(position, _velocities[index] * delta)
                 : MoveGround(position, _velocities[index] * delta, UnitRadius(_kinds[index]));
             _positions[index] = movedPosition;
-            if (refresh) UpdateNavigationProgress(index, movedPosition, targetVelocity.LengthSquared(), delta * BattleConfig.DecisionGroupCount);
+            if (refresh && !isWaiting) UpdateNavigationProgress(index, movedPosition, targetVelocity.LengthSquared(), delta * BattleConfig.DecisionGroupCount);
             if (_profilingEnabled) _profileSeparationUsec += Usec(separationStart);
         }
         _decisionCursor = (_decisionCursor + 1) % BattleConfig.DecisionGroupCount;
@@ -308,12 +324,12 @@ public partial class BattleSimulation
         byte[] heavyBlocked = team == TeamEnemy ? _enemyHeavyBlocked : _allyHeavyBlocked;
         float infantryRadius = InfantryClearanceRadius();
         float heavyRadius = HeavyClearanceRadius();
-        GroundNavigation.BuildClearanceMask(_flowBlocked, BattleConfig.GridColumns, BattleConfig.GridRows, infantryRadius, infantryBlocked);
+        GroundNavigation.BuildClearanceMask(_flowBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows, infantryRadius, infantryBlocked);
         infantryBlocked[Index(goal)] = 0;
         bool sharesInfantry = infantryRadius <= 0.5f && heavyRadius <= 0.5f;
         if (!sharesInfantry)
         {
-            GroundNavigation.BuildClearanceMask(_flowBlocked, BattleConfig.GridColumns, BattleConfig.GridRows, heavyRadius, heavyBlocked);
+            GroundNavigation.BuildClearanceMask(_flowBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows, heavyRadius, heavyBlocked);
             heavyBlocked[Index(goal)] = 0;
             sharesInfantry = GroundNavigation.MasksEqual(infantryBlocked, heavyBlocked);
         }

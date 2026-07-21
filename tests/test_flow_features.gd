@@ -10,9 +10,12 @@ func run() -> Array[String]:
 	_test_lake_ground_detour_and_dragon_crossing()
 	_test_flow_detour()
 	_test_diagonal_corner_and_radius_clearance()
+	_test_large_radius_flow_rejects_cliff_pinch()
 	_test_physical_cliff_protrusion_detour()
 	_test_legion_cliff_protrusion_detour()
 	_test_wait_enter_and_release()
+	_test_wait_and_attack_navigation_lifecycle()
+	_test_blocked_kite_enters_recovery()
 	_test_bulk_boundary_source()
 	return failures
 
@@ -71,6 +74,20 @@ func _test_diagonal_corner_and_radius_clearance() -> void:
 	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": elevation})
 	_expect(simulation.call("IsGroundPositionClear", Vector2(10.5, 10.5), 0.14), "infantry radius fits beside a cliff face")
 	_expect(not simulation.call("IsGroundPositionClear", Vector2(10.5, 10.5), 0.60), "larger tuned radius requires wider cliff clearance")
+	simulation.free()
+
+
+func _test_large_radius_flow_rejects_cliff_pinch() -> void:
+	var simulation = _new_simulation()
+	var tuned: Dictionary = simulation.call("GetMatchSettings")
+	tuned.siege.radius = 0.60
+	_expect(bool(simulation.call("ConfigureAndReset", tuned).ok), "large-radius cliff fixture accepts a valid runtime profile")
+	var elevation := PackedByteArray()
+	elevation.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	elevation.fill(0)
+	elevation[10 * GameConfig.GRID_COLUMNS + 10] = 2
+	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": elevation})
+	_expect(not simulation.call("CanGroundStepForKind", 2, 3, Vector2i(9, 11), Vector2i(9, 10)), "large-radius heavy flow rejects a cell whose footprint overlaps a cliff")
 	simulation.free()
 
 
@@ -173,6 +190,57 @@ func _test_wait_enter_and_release() -> void:
 	for tick in range(6): simulation.call("Step", 1.0 / 30.0)
 	var released: Dictionary = simulation.call("GetDebugSnapshot")
 	_expect(not PackedInt32Array(released.unit_states).has(2), "WAIT releases after the lane clears")
+	simulation.free()
+
+
+func _test_wait_and_attack_navigation_lifecycle() -> void:
+	var simulation = _new_simulation()
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	simulation.call("ApplyDebugCommand", {"op": "clear_units"})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 2, "kind": 0, "position": Vector2(10.5, 29.88), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 2, "kind": 0, "position": Vector2(10.5, 29.5), "exact": true})
+	simulation.call("ApplyDebugCommand", {
+		"op": "set_unit", "index": 0, "cached_waiting": true,
+		"stuck_timer": 0.39, "recovery_active": true, "recovery_target": Vector2(12.5, 28.5),
+	})
+	simulation.call("Step", 1.0 / 30.0)
+	var waiting: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(int(waiting.unit_states[0]) == 2, "intentional WAIT remains WAIT instead of following stale recovery")
+	_expect(int(waiting.unit_recovery_active[0]) == 0 and is_zero_approx(float(waiting.unit_stuck_timers[0])), "WAIT clears stuck and recovery lifecycle state")
+
+	simulation.call("ApplyDebugCommand", {"op": "clear_units"})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 2, "kind": 0, "position": Vector2(14.5, 24.5), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 1, "kind": 0, "position": Vector2(14.5, 24.9), "exact": true})
+	simulation.call("ApplyDebugCommand", {
+		"op": "set_unit", "index": 0, "stuck_timer": 0.39,
+		"recovery_active": true, "recovery_target": Vector2(16.5, 24.5),
+	})
+	for tick in range(3): simulation.call("Step", 1.0 / 30.0)
+	var attacking: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(int(attacking.unit_states[0]) == 1, "stationary in-range unit remains in ATTACK")
+	_expect(int(attacking.unit_recovery_active[0]) == 0 and is_zero_approx(float(attacking.unit_stuck_timers[0])), "stationary attacker clears stale recovery without starting a new one")
+	simulation.free()
+
+
+func _test_blocked_kite_enters_recovery() -> void:
+	var simulation = _new_simulation()
+	var tuned: Dictionary = simulation.call("GetMatchSettings")
+	tuned.melee.damage = 0.10
+	tuned.ranged.damage = 0.10
+	_expect(bool(simulation.call("ConfigureAndReset", tuned).ok), "blocked-kite fixture accepts durable combat tuning")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	simulation.call("ApplyDebugCommand", {"op": "clear_units"})
+	var elevation := PackedByteArray()
+	elevation.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	elevation.fill(0)
+	elevation[19 * GameConfig.GRID_COLUMNS + 10] = 2
+	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": elevation})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 2, "kind": 1, "position": Vector2(10.5, 20.15), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 1, "kind": 0, "position": Vector2(10.5, 20.65), "exact": true})
+	for tick in range(45): simulation.call("Step", 1.0 / 30.0)
+	var recovered: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(int(recovered.navigation_recovery_count) > 0, "blocked ranged kiting contributes actual-progress recovery")
+	_expect(absf(Vector2(recovered.unit_positions[0]).x - 10.5) > 0.20, "blocked ranged kiting follows a lateral recovery route")
 	simulation.free()
 
 

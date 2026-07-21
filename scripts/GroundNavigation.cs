@@ -11,9 +11,9 @@ internal static class GroundNavigation
 
     private static int Index(Vector2I cell, int width) => cell.Y * width + cell.X;
 
-    public static void BuildClearanceMask(byte[] blocked, int width, int height, float radius, byte[] output)
+    public static void BuildClearanceMask(byte[] blocked, byte[] elevation, int width, int height, float radius, byte[] output)
     {
-        if (blocked.Length != width * height || output.Length != blocked.Length)
+        if (blocked.Length != width * height || elevation.Length != blocked.Length || output.Length != blocked.Length)
             throw new ArgumentException("ground navigation mask size mismatch");
         if (radius <= 0.5f)
         {
@@ -25,7 +25,7 @@ internal static class GroundNavigation
             {
                 var cell = new Vector2I(col, row);
                 output[Index(cell, width)] = CanOccupyPosition(
-                    new Vector2(col + 0.5f, row + 0.5f), radius, blocked, null, width, height) ? (byte)0 : (byte)1;
+                    new Vector2(col + 0.5f, row + 0.5f), radius, blocked, elevation, width, height) ? (byte)0 : (byte)1;
             }
     }
 

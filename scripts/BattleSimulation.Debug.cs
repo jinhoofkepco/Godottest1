@@ -213,6 +213,11 @@ public partial class BattleSimulation
                     if (command.ContainsKey("lunge_timer")) _lungeTimers[index] = DFloat(command, "lunge_timer", _lungeTimers[index]);
                     if (command.ContainsKey("lunge_direction")) _lungeDirections[index] = DVector2(command, "lunge_direction", _lungeDirections[index]);
                     if (command.ContainsKey("shield_mode")) _shieldModes[index] = DBool(command, "shield_mode", _shieldModes[index] != 0) ? (byte)1 : (byte)0;
+                    if (command.ContainsKey("cached_waiting")) _cachedWaiting[index] = DBool(command, "cached_waiting", _cachedWaiting[index] != 0) ? (byte)1 : (byte)0;
+                    if (command.ContainsKey("stuck_timer")) _stuckTimers[index] = DFloat(command, "stuck_timer", _stuckTimers[index]);
+                    if (command.ContainsKey("progress_origin")) _progressOrigins[index] = DVector2(command, "progress_origin", _progressOrigins[index]);
+                    if (command.ContainsKey("recovery_active")) _recoveryActive[index] = DBool(command, "recovery_active", _recoveryActive[index] != 0) ? (byte)1 : (byte)0;
+                    if (command.ContainsKey("recovery_target")) _recoveryTargets[index] = DVector2(command, "recovery_target", _recoveryTargets[index]);
                     return true;
                 }
             case "set_elevation":

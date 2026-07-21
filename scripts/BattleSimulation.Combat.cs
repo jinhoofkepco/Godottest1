@@ -599,6 +599,14 @@ public partial class BattleSimulation
         RecoveryDirection(index);
     }
 
+    private void ClearNavigationProgress(int index, Vector2 position)
+    {
+        _stuckTimers[index] = 0f;
+        _progressOrigins[index] = position;
+        _recoveryActive[index] = 0;
+        _recoveryTargets[index] = position;
+    }
+
     private static Vector2 MoveFlying(Vector2 position, Vector2 motion)
     {
         Vector2 candidate = position + motion;
