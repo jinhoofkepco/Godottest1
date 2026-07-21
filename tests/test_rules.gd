@@ -27,6 +27,8 @@ var failures: Array[String] = []
 func run() -> Array[String]:
 	_test_match_settings_profile()
 	_test_tuned_runtime_behavior()
+	_test_large_radius_spawner_production()
+	_test_siege_detect_range_runtime()
 	_test_config_and_initial_state()
 	_test_shield_stance_and_heavy_defaults()
 	_test_build_and_economy()
@@ -112,6 +114,51 @@ func _test_tuned_runtime_behavior() -> void:
 		if absf(float(infantry[record * 16]) - 2.0) <= 0.01:
 			found_tuned_scale = true
 	_expect(found_tuned_scale, "tuned radius drives the bulk render transform scale")
+	simulation.free()
+
+
+func _test_large_radius_spawner_production() -> void:
+	var simulation = _new_simulation()
+	var tuned: Dictionary = simulation.call("GetMatchSettings")
+	tuned.melee.radius = 2.0
+	var applied: Dictionary = simulation.call("ConfigureAndReset", tuned)
+	_expect(bool(applied.ok), "the maximum 2.0-cell unit radius remains a valid match setting")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	var flat := PackedByteArray()
+	flat.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	flat.fill(0)
+	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": flat})
+	_expect(simulation.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 1, "cell": Vector2i(10, 70), "unit_kind": UNIT_MELEE}), "large-radius production fixture builds")
+	var spawner_id := _building_id_at(simulation.call("GetDebugSnapshot").buildings, Vector2i(10, 70))
+	simulation.call("ApplyDebugCommand", {"op": "set_building_spawn_timer", "id": spawner_id, "value": 0.0})
+	simulation.call("Step", 1.0 / 30.0)
+	var produced: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(int(produced.ally_unit_count) == 1, "a valid large-radius unit spawns outside its production building")
+	if int(produced.ally_unit_count) == 1:
+		var position := Vector2(produced.unit_positions[0])
+		_expect(simulation.call("IsGroundPositionClear", position, 2.0), "large-radius production chooses a collision-free ground position")
+	simulation.free()
+
+
+func _test_siege_detect_range_runtime() -> void:
+	var simulation = _new_simulation()
+	var tuned: Dictionary = simulation.call("GetMatchSettings")
+	tuned.siege.attack_range = 3.0
+	tuned.siege.detect_range = 8.0
+	tuned.siege.min_range = 1.0
+	var applied: Dictionary = simulation.call("ConfigureAndReset", tuned)
+	_expect(bool(applied.ok), "extended SIEGE detection fixture applies")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	var flat := PackedByteArray()
+	flat.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	flat.fill(0)
+	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": flat})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_SIEGE, "position": Vector2(10.5, 70.5), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_MELEE, "position": Vector2(16.5, 70.5), "exact": true})
+	simulation.call("Step", 1.0 / 30.0)
+	var detected: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(int(detected.unit_target_ids[0]) != 0, "SIEGE detect_range acquires an enemy outside attack_range for approach")
+	_expect(not _has_event(simulation.call("DrainEvents").events, "siege_projectile"), "SIEGE does not fire until the detected enemy enters attack_range")
 	simulation.free()
 
 

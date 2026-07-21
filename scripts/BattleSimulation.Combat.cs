@@ -147,10 +147,12 @@ public partial class BattleSimulation
         int occupiedCount = _teams[unitIndex] == TeamEnemy ? _allyOccupiedBucketCount : _enemyOccupiedBucketCount;
         Vector2I originCell = CellAt(origin);
         float siegeRange = UnitAttackRange(UnitSiege, origin);
+        float detectRange = Math.Max(siegeRange, UnitDetectRange(UnitSiege));
         float minimumSq = _settings.SiegeMinRange * _settings.SiegeMinRange;
         float rangeSq = siegeRange * siegeRange;
+        float detectRangeSq = detectRange * detectRange;
         float predictionHorizon = MaximumUnitSpeed() * (1f + BattleConfig.UnitSpeedVariation) * _settings.SiegeFlightSeconds;
-        float queryRange = siegeRange + predictionHorizon;
+        float queryRange = detectRange + predictionHorizon;
         float queryRangeSq = queryRange * queryRange;
         int radius = Mathf.CeilToInt(queryRange);
         int minimumRow = Math.Max(0, originCell.Y - radius);
@@ -161,6 +163,8 @@ public partial class BattleSimulation
         float bestDistanceSq = float.PositiveInfinity;
         int bestPointIndex = int.MaxValue;
         Vector2 bestPoint = new(-1f, -1f);
+        float approachDistanceSq = float.PositiveInfinity;
+        Vector2 approachPoint = new(-1f, -1f);
         int candidateGeneration = 0;
         for (; occupiedIndex < occupiedCount && occupiedCells[occupiedIndex] < occupiedEnd; occupiedIndex++)
         {
@@ -175,10 +179,18 @@ public partial class BattleSimulation
                 Vector2 fallback = _teams[candidate] == TeamEnemy ? Vector2.Down : Vector2.Up;
                 Vector2 predicted = PredictedSiegePosition(candidate, fallback, _settings.SiegeFlightSeconds);
                 float predictedDistanceSq = origin.DistanceSquaredTo(predicted);
-                if (predictedDistanceSq < minimumSq || predictedDistanceSq > rangeSq) continue;
-                if (candidateGeneration == 0) candidateGeneration = NextSiegeCandidateGeneration();
-                ScoreSiegeAimCells(origin, predicted, UnitRadius(_kinds[candidate]), density, minimumSq, rangeSq,
-                    candidateGeneration, ref bestScore, ref bestDistanceSq, ref bestPointIndex, ref bestPoint);
+                if (predictedDistanceSq < minimumSq || predictedDistanceSq > detectRangeSq) continue;
+                if (predictedDistanceSq <= rangeSq)
+                {
+                    if (candidateGeneration == 0) candidateGeneration = NextSiegeCandidateGeneration();
+                    ScoreSiegeAimCells(origin, predicted, UnitRadius(_kinds[candidate]), density, minimumSq, rangeSq,
+                        candidateGeneration, ref bestScore, ref bestDistanceSq, ref bestPointIndex, ref bestPoint);
+                }
+                else if (predictedDistanceSq < approachDistanceSq)
+                {
+                    approachDistanceSq = predictedDistanceSq;
+                    approachPoint = predicted;
+                }
             }
         }
         int team = _teams[unitIndex];
@@ -188,12 +200,20 @@ public partial class BattleSimulation
             if (building.Destroyed || building.Team == team) continue;
             Vector2 at = new(building.Cell.X + 0.5f, building.Cell.Y + 0.5f);
             float distanceSq = origin.DistanceSquaredTo(at);
-            if (distanceSq < minimumSq || distanceSq > rangeSq) continue;
-            if (candidateGeneration == 0) candidateGeneration = NextSiegeCandidateGeneration();
-            ScoreSiegeAimCells(origin, at, BattleConfig.BuildingTargetRadius, density, minimumSq, rangeSq,
-                candidateGeneration, ref bestScore, ref bestDistanceSq, ref bestPointIndex, ref bestPoint);
+            if (distanceSq < minimumSq || distanceSq > detectRangeSq) continue;
+            if (distanceSq <= rangeSq)
+            {
+                if (candidateGeneration == 0) candidateGeneration = NextSiegeCandidateGeneration();
+                ScoreSiegeAimCells(origin, at, BattleConfig.BuildingTargetRadius, density, minimumSq, rangeSq,
+                    candidateGeneration, ref bestScore, ref bestDistanceSq, ref bestPointIndex, ref bestPoint);
+            }
+            else if (distanceSq < approachDistanceSq)
+            {
+                approachDistanceSq = distanceSq;
+                approachPoint = at;
+            }
         }
-        return bestScore > 0 ? bestPoint : new Vector2(-1f, -1f);
+        return bestScore > 0 ? bestPoint : approachPoint;
     }
 
     private int NextSiegeCandidateGeneration()
@@ -798,20 +818,55 @@ public partial class BattleSimulation
     {
         bool flying = unitKind == UnitDragon;
         int forward = team == TeamAlly ? -1 : 1;
-        Span<Vector2I> candidates = stackalloc Vector2I[6]
+        float radius = UnitRadius(unitKind);
+        int maximumRing = flying ? 1 : Math.Max(1, Mathf.CeilToInt(radius + 0.5f) + 2);
+        for (int ring = 1; ring <= maximumRing; ring++)
         {
-            cell + new Vector2I(0, forward), cell + new Vector2I(-1, forward), cell + new Vector2I(1, forward),
-            cell + Vector2I.Left, cell + Vector2I.Right, cell + new Vector2I(0, -forward),
-        };
-        foreach (Vector2I candidate in candidates)
-        {
-            if (!Valid(candidate)) continue;
-            Vector2 position = new(candidate.X + 0.5f, candidate.Y + 0.5f);
-            if (flying || _terrain.CanStep(cell, candidate)
-                && GroundNavigation.CanOccupyPosition(position, UnitRadius(unitKind), _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows))
+            if (TrySpawnPosition(cell, cell + new Vector2I(0, forward * ring), unitKind, flying, radius, out Vector2 position))
                 return position;
+            for (int lateral = 1; lateral <= ring; lateral++)
+            {
+                if (TrySpawnPosition(cell, cell + new Vector2I(-lateral, forward * ring), unitKind, flying, radius, out position))
+                    return position;
+                if (TrySpawnPosition(cell, cell + new Vector2I(lateral, forward * ring), unitKind, flying, radius, out position))
+                    return position;
+            }
+            for (int depth = ring - 1; depth >= -ring + 1; depth--)
+            {
+                if (TrySpawnPosition(cell, cell + new Vector2I(-ring, forward * depth), unitKind, flying, radius, out position))
+                    return position;
+                if (TrySpawnPosition(cell, cell + new Vector2I(ring, forward * depth), unitKind, flying, radius, out position))
+                    return position;
+            }
+            if (TrySpawnPosition(cell, cell + new Vector2I(0, -forward * ring), unitKind, flying, radius, out position))
+                return position;
+            for (int lateral = 1; lateral <= ring; lateral++)
+            {
+                if (TrySpawnPosition(cell, cell + new Vector2I(-lateral, -forward * ring), unitKind, flying, radius, out position))
+                    return position;
+                if (TrySpawnPosition(cell, cell + new Vector2I(lateral, -forward * ring), unitKind, flying, radius, out position))
+                    return position;
+            }
         }
         return new Vector2(-1f, -1f);
+    }
+
+    private bool TrySpawnPosition(Vector2I source, Vector2I candidate, int unitKind, bool flying, float radius, out Vector2 position)
+    {
+        position = new Vector2(-1f, -1f);
+        if (!Valid(candidate)) return false;
+        Vector2 center = new(candidate.X + 0.5f, candidate.Y + 0.5f);
+        if (!flying)
+        {
+            int dx = Math.Abs(candidate.X - source.X);
+            int dy = Math.Abs(candidate.Y - source.Y);
+            if (Math.Max(dx, dy) == 1 && !_terrain.CanStep(source, candidate))
+                return false;
+            if (!GroundNavigation.CanOccupyPosition(center, radius, _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows))
+                return false;
+        }
+        position = center;
+        return true;
     }
 
     private bool BucketCanContainNearer(Vector2 position, int col, int row, float bestDistanceSq)

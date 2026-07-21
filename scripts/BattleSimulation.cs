@@ -411,7 +411,13 @@ public partial class BattleSimulation : Node
         _ids[index] = id;
         _teams[index] = team;
         _kinds[index] = unitKind;
-        position.X = Mathf.Clamp(position.X + _rng.RandfRange(-BattleConfig.UnitSpawnXVariation, BattleConfig.UnitSpawnXVariation), 0.2f, BattleConfig.GridColumns - 0.2f);
+        float unitRadius = UnitRadius(unitKind);
+        float boundary = Mathf.Clamp(unitRadius, 0.2f, Math.Min(BattleConfig.GridColumns, BattleConfig.GridRows) * 0.5f);
+        Vector2 variedPosition = new(
+            Mathf.Clamp(position.X + _rng.RandfRange(-BattleConfig.UnitSpawnXVariation, BattleConfig.UnitSpawnXVariation), boundary, BattleConfig.GridColumns - boundary),
+            Mathf.Clamp(position.Y, boundary, BattleConfig.GridRows - boundary));
+        if (unitKind == UnitDragon || GroundNavigation.CanOccupyPosition(variedPosition, unitRadius, _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows))
+            position = variedPosition;
         _positions[index] = position;
         _hp[index] = UnitMaxHp(unitKind);
         _states[index] = StateAdvance;
