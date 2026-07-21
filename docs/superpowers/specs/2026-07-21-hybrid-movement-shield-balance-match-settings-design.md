@@ -127,4 +127,3 @@ Automated tests must cover:
 - 600-unit stress after firing reservations and expanded SIEGE searches
 
 Godot runtime verification uses the official Godot 4.5 .NET executable. Test runners must fail if `BattleSimulation` does not load, preventing false PASS results from a non-.NET editor.
-
