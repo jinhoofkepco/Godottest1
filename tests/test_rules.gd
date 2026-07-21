@@ -25,6 +25,7 @@ var failures: Array[String] = []
 
 
 func run() -> Array[String]:
+	_test_match_settings_profile()
 	_test_config_and_initial_state()
 	_test_build_and_economy()
 	_test_construction_population_and_ai_income()
@@ -45,6 +46,26 @@ func run() -> Array[String]:
 	_test_territory_cache_and_terminal_result()
 	_test_packed_events_and_profile()
 	return failures
+
+
+func _test_match_settings_profile() -> void:
+	var first = _new_simulation()
+	var second = _new_simulation()
+	_expect(first.has_method("GetMatchSettingsSchema") and first.has_method("ConfigureAndReset"), "bulk match settings API exists")
+	var defaults: Dictionary = first.call("GetMatchSettings")
+	_expect(defaults.has("melee") and defaults.has("ranged") and defaults.has("siege") and defaults.has("dragon"), "settings expose four unit profiles")
+	var changed := defaults.duplicate(true)
+	changed.ranged.max_hp = 31.5
+	var applied: Dictionary = first.call("ConfigureAndReset", changed)
+	_expect(bool(applied.ok) and is_equal_approx(float(first.call("GetMatchSettings").ranged.max_hp), 31.5), "settings apply atomically before reset")
+	_expect(not is_equal_approx(float(second.call("GetMatchSettings").ranged.max_hp), 31.5), "simulation settings are instance isolated")
+	var invalid := changed.duplicate(true)
+	invalid.siege.min_range = 20.0
+	invalid.siege.attack_range = 10.0
+	var rejected: Dictionary = first.call("ConfigureAndReset", invalid)
+	_expect(not bool(rejected.ok) and is_equal_approx(float(first.call("GetMatchSettings").ranged.max_hp), 31.5), "invalid payload is rejected without partial mutation")
+	first.free()
+	second.free()
 
 
 func _new_simulation():

@@ -38,6 +38,7 @@ public partial class BattleSimulation : Node
     private const int MaxGhosts = 1024;
     private const int MaxEvents = 32768;
     private const int SiegeTargetSentinel = -2147483647;
+    private BattleMatchSettings _settings = BattleMatchSettings.CreateDefault();
 
     private struct Building
     {
@@ -406,9 +407,8 @@ public partial class BattleSimulation : Node
             BuildingRallyPoint => BattleConfig.RallyPointMaxHp,
             _ => BattleConfig.HqMaxHp,
         };
-        float production = kind == BuildingDragonLair ? BattleConfig.DragonProductionInterval
-            : kind == BuildingSpawner && unitKind == UnitSiege ? BattleConfig.SiegeProductionInterval
-            : kind == BuildingSpawner ? BattleConfig.SpawnerProductionInterval : 0f;
+        float production = kind == BuildingDragonLair || kind == BuildingSpawner
+            ? ProductionInterval(unitKind) : 0f;
         int id = _nextBuildingId++;
         bool complete = constructionDuration <= 0f || kind == BuildingHq;
         float startingHp = complete ? maximumHp : maximumHp * BattleConfig.BuildingConstructionStartHpRatio;

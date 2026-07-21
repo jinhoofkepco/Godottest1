@@ -425,11 +425,11 @@ public partial class BattleSimulation
     private float LegionMinimumSpeed(int legionIndex)
     {
         float speed = float.MaxValue;
-        if (_legionMeleeCounts[legionIndex] > 0) speed = Math.Min(speed, BattleConfig.MeleeSpeed);
-        if (_legionRangedCounts[legionIndex] > 0) speed = Math.Min(speed, BattleConfig.RangedSpeed);
-        if (_legionSiegeCounts[legionIndex] > 0) speed = Math.Min(speed, BattleConfig.SiegeSpeed);
-        if (_legionDragonCounts[legionIndex] > 0) speed = Math.Min(speed, BattleConfig.DragonSpeed);
-        return speed == float.MaxValue ? BattleConfig.MeleeSpeed : speed;
+        if (_legionMeleeCounts[legionIndex] > 0) speed = Math.Min(speed, UnitSpeed(UnitMelee));
+        if (_legionRangedCounts[legionIndex] > 0) speed = Math.Min(speed, UnitSpeed(UnitRanged));
+        if (_legionSiegeCounts[legionIndex] > 0) speed = Math.Min(speed, UnitSpeed(UnitSiege));
+        if (_legionDragonCounts[legionIndex] > 0) speed = Math.Min(speed, UnitSpeed(UnitDragon));
+        return speed == float.MaxValue ? UnitSpeed(UnitMelee) : speed;
     }
 
     private void EvaluateLegionBroken(int legionIndex)

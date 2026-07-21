@@ -103,6 +103,11 @@ public static class BattleConfig
     public const float DragonVsSiege = 1.5f;
     public const float MeleeVsDragon = 0.6f;
     public const float SiegeVsMelee = 1.5f;
+    public const float ShieldEnterRange = 2.5f;
+    public const float ShieldReleaseRange = 3f;
+    public const float ShieldSpeedMultiplier = 0.20f;
+    public const float ShieldRangedDamageTakenMultiplier = 0.10f;
+    public const float PreferredFiringRangeRatio = 0.82f;
 
     public const float BuildingConstructionSecondsPerGold = 0.10f;
     public const float BuildingConstructionStartHpRatio = 0.20f;
@@ -110,6 +115,10 @@ public static class BattleConfig
     public const float SpawnerProductionInterval = 5.76f;
     public const float SiegeProductionInterval = 17.28f;
     public const float DragonProductionInterval = 45f;
+    public const int MeleeProductionBatch = 1;
+    public const int RangedProductionBatch = 1;
+    public const int SiegeProductionBatch = 1;
+    public const int DragonProductionBatch = 1;
     public const float RallyPointMaxHp = 1300f;
     public const int RallyLaunchSize = 20;
     public const int RallyDefenseCapacity = 28;

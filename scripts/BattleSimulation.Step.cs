@@ -58,13 +58,13 @@ public partial class BattleSimulation
             float targetDistanceSq = position.DistanceSquaredTo(_foundTargetPosition);
             bool inRange = _foundTargetId != 0 && targetDistanceSq <= contactRange * contactRange;
             if (_kinds[index] == UnitSiege)
-                inRange = _foundTargetId != 0 && targetDistanceSq >= BattleConfig.SiegeMinRange * BattleConfig.SiegeMinRange && targetDistanceSq <= range * range;
+                inRange = _foundTargetId != 0 && targetDistanceSq >= _settings.SiegeMinRange * _settings.SiegeMinRange && targetDistanceSq <= range * range;
             if (inRange)
             {
                 _states[index] = StateAttack;
                 _lungeDirections[index] = position.DirectionTo(_foundTargetPosition);
                 bool shouldKite = _kinds[index] == UnitRanged && _foundUnitIndex >= 0
-                    && targetDistanceSq < BattleConfig.RangedStandoffDistance * BattleConfig.RangedStandoffDistance;
+                    && targetDistanceSq < _settings.RangedStandoffDistance * _settings.RangedStandoffDistance;
                 Vector2 combatVelocity = shouldKite
                     ? _foundTargetPosition.DirectionTo(position) * UnitSpeed(_kinds[index])
                     : Vector2.Zero;
@@ -156,9 +156,8 @@ public partial class BattleSimulation
             if (building.ConstructionRemaining > 0.0001f) continue;
             building.ConstructionRemaining = 0f;
             building.Complete = true;
-            building.SpawnTimer = building.Kind == BuildingDragonLair ? BattleConfig.DragonProductionInterval
-                : building.Kind == BuildingSpawner && building.UnitKind == UnitSiege ? BattleConfig.SiegeProductionInterval
-                : building.Kind == BuildingSpawner ? BattleConfig.SpawnerProductionInterval : 0f;
+            building.SpawnTimer = building.Kind == BuildingDragonLair || building.Kind == BuildingSpawner
+                ? ProductionInterval(building.UnitKind) : 0f;
             QueueStructural("building_completed", building.Team, building.Id, building.Cell, building.Kind, building.UnitKind);
             _boardVersion++;
         }
@@ -173,9 +172,7 @@ public partial class BattleSimulation
                 continue;
             building.SpawnTimer -= delta;
             if (building.SpawnTimer > 0f) continue;
-            float interval = building.Kind == BuildingDragonLair ? BattleConfig.DragonProductionInterval
-                : building.UnitKind == UnitSiege ? BattleConfig.SiegeProductionInterval
-                : BattleConfig.SpawnerProductionInterval;
+            float interval = ProductionInterval(building.UnitKind);
             building.SpawnTimer += interval;
             Vector2 position = FindSpawnPosition(building.Cell, building.Team, building.UnitKind == UnitDragon);
             if (position.X < 0f) { building.SpawnTimer = 0.5f; continue; }
@@ -229,7 +226,7 @@ public partial class BattleSimulation
                 else _allyDensity[cellIndex]++;
             }
             Vector2 fallback = _teams[index] == TeamEnemy ? Vector2.Down : Vector2.Up;
-            AddSiegeDensity(_teams[index], PredictedSiegePosition(index, fallback, BattleConfig.SiegeFlightSeconds), UnitRadius(_kinds[index]));
+            AddSiegeDensity(_teams[index], PredictedSiegePosition(index, fallback, _settings.SiegeFlightSeconds), UnitRadius(_kinds[index]));
         }
         for (int i = 0; i < _buildingCount; i++)
         {
@@ -241,7 +238,7 @@ public partial class BattleSimulation
 
     private void AddSiegeDensity(int team, Vector2 position, float targetRadius)
     {
-        float influence = BattleConfig.SiegeBlastRadius + targetRadius;
+        float influence = _settings.SiegeBlastRadius + targetRadius;
         int radius = Mathf.CeilToInt(influence);
         Vector2I center = CellAt(position);
         int[] density = team == TeamEnemy ? _enemySiegeDensity : _allySiegeDensity;

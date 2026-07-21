@@ -115,18 +115,24 @@ public partial class BattleSimulation
         ["sim_tick_rate"] = BattleConfig.SimTickRate,
         ["territory_update_interval"] = BattleConfig.TerritoryUpdateInterval,
         ["decision_group_count"] = BattleConfig.DecisionGroupCount,
-        ["siege_range"] = BattleConfig.SiegeRange,
-        ["siege_damage"] = BattleConfig.SiegeDamage,
+        ["siege_range"] = UnitAttackRange(UnitSiege, Vector2.Zero),
+        ["siege_damage"] = UnitAttackDamage(UnitSiege),
         ["match_duration"] = BattleConfig.MatchDuration,
         ["occupancy_win_ratio"] = BattleConfig.OccupancyWinRatio,
         ["passive_income_per_second"] = BattleConfig.PassiveIncomePerSecond,
         ["hq_max_hp"] = BattleConfig.HqMaxHp,
-        ["ranged_hp"] = BattleConfig.RangedHp,
-        ["spawner_production_interval"] = BattleConfig.SpawnerProductionInterval,
-        ["siege_production_interval"] = BattleConfig.SiegeProductionInterval,
-        ["dragon_production_interval"] = BattleConfig.DragonProductionInterval,
-        ["siege_min_range"] = BattleConfig.SiegeMinRange,
-        ["siege_blast_radius"] = BattleConfig.SiegeBlastRadius,
+        ["ranged_hp"] = UnitMaxHp(UnitRanged),
+        ["dragon_hp"] = UnitMaxHp(UnitDragon),
+        ["dragon_damage"] = UnitAttackDamage(UnitDragon),
+        ["spawner_production_interval"] = ProductionInterval(UnitMelee),
+        ["siege_production_interval"] = ProductionInterval(UnitSiege),
+        ["dragon_production_interval"] = ProductionInterval(UnitDragon),
+        ["melee_production_batch"] = ProductionBatch(UnitMelee),
+        ["ranged_production_batch"] = ProductionBatch(UnitRanged),
+        ["siege_production_batch"] = ProductionBatch(UnitSiege),
+        ["dragon_production_batch"] = ProductionBatch(UnitDragon),
+        ["siege_min_range"] = _settings.SiegeMinRange,
+        ["siege_blast_radius"] = _settings.SiegeBlastRadius,
         ["rally_point_cost"] = BattleConfig.RallyPointCost,
         ["rally_launch_size"] = BattleConfig.RallyLaunchSize,
         ["rally_defense_capacity"] = BattleConfig.RallyDefenseCapacity,
@@ -271,7 +277,7 @@ public partial class BattleSimulation
             case "recalculate_territory": RecalculateTerritory(DBool(command, "emit", false), true); return true;
             case "rebuild_flow": RebuildFlowFields(); return true;
             case "schedule_siege":
-                ScheduleSiegeImpact(DInt(command, "team", TeamAlly), DVector2(command, "origin", Vector2.Zero), DVector2(command, "target", Vector2.Zero), DFloat(command, "damage", BattleConfig.SiegeDamage), DFloat(command, "duration", BattleConfig.SiegeFlightSeconds));
+                ScheduleSiegeImpact(DInt(command, "team", TeamAlly), DVector2(command, "origin", Vector2.Zero), DVector2(command, "target", Vector2.Zero), DFloat(command, "damage", UnitAttackDamage(UnitSiege)), DFloat(command, "duration", _settings.SiegeFlightSeconds));
                 return true;
             default: return false;
         }

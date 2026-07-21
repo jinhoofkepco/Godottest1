@@ -229,7 +229,7 @@ public partial class BattleSimulation
             {
                 direction = _lungeDirections[index];
                 stateOffset = 8;
-                float progress = 1f - Mathf.Clamp(_cooldowns[index] / BattleConfig.DragonAttackInterval, 0f, 1f);
+                float progress = 1f - Mathf.Clamp(_cooldowns[index] / UnitAttackInterval(UnitDragon), 0f, 1f);
                 frame = Math.Min(3, Mathf.FloorToInt(progress * 4f));
             }
             else if (direction.LengthSquared() <= 0.01f)
@@ -238,8 +238,9 @@ public partial class BattleSimulation
                 frame = (Mathf.FloorToInt(_visualClock * BattleConfig.IdleFps) + _ids[index]) % 2;
             }
             int linear = DirectionIndex(direction, team) * BattleConfig.FramesPerDirection + stateOffset + frame;
-            float brightness = Mathf.Lerp(0.62f, 1f, Mathf.Clamp(_hp[index] / BattleConfig.DragonHp, 0f, 1f));
-            WriteRecord(buffer, draw, Vector2.One, UnitRenderPosition(index), new Color(brightness, brightness, brightness, 1f), new Color((linear % 16) / 15f, (linear / 16) / 7f, 0f, 1f));
+            float brightness = Mathf.Lerp(0.62f, 1f, Mathf.Clamp(_hp[index] / UnitMaxHp(UnitDragon), 0f, 1f));
+            Vector2 scale = UnitRenderSize(UnitDragon) / new Vector2(BattleConfig.DragonWidth, BattleConfig.DragonHeight);
+            WriteRecord(buffer, draw, scale, UnitRenderPosition(index), new Color(brightness, brightness, brightness, 1f), new Color((linear % 16) / 15f, (linear / 16) / 7f, 0f, 1f));
         }
         return count;
     }
@@ -371,14 +372,14 @@ public partial class BattleSimulation
         return PositionToWorld(_positions[index] + lunge) + new Vector2(0f, UnitFootAnchor(_kinds[index]));
     }
 
-    private static Vector2 UnitRenderSize(int kind)
+    private Vector2 UnitRenderSize(int kind)
     {
         float width = UnitRadius(kind) * BattleConfig.UnitRenderPixelsPerRadius;
         float aspect = kind == UnitDragon ? 1.12f : kind == UnitSiege ? 1f : 1.30f;
         return new Vector2(width, width * aspect);
     }
 
-    private static float UnitFootAnchor(int kind)
+    private float UnitFootAnchor(int kind)
     {
         Vector2 size = UnitRenderSize(kind);
         return -size.Y * (kind == UnitDragon ? 0.47f : 0.45f);

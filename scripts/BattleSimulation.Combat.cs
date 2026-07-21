@@ -118,7 +118,8 @@ public partial class BattleSimulation
         Vector2 origin = _positions[unitIndex];
         int[] density = _teams[unitIndex] == TeamEnemy ? _allySiegeDensity : _enemySiegeDensity;
         Vector2I originCell = CellAt(origin);
-        int radius = Mathf.CeilToInt(BattleConfig.SiegeRange);
+        float siegeRange = UnitAttackRange(UnitSiege, origin);
+        int radius = Mathf.CeilToInt(siegeRange);
         int bestScore = -1;
         float bestDistanceSq = float.PositiveInfinity;
         int bestPointIndex = int.MaxValue;
@@ -128,7 +129,7 @@ public partial class BattleSimulation
             {
                 Vector2 point = new(col + 0.5f, row + 0.5f);
                 float distanceSq = origin.DistanceSquaredTo(point);
-                if (distanceSq < BattleConfig.SiegeMinRange * BattleConfig.SiegeMinRange || distanceSq > BattleConfig.SiegeRange * BattleConfig.SiegeRange)
+                if (distanceSq < _settings.SiegeMinRange * _settings.SiegeMinRange || distanceSq > siegeRange * siegeRange)
                     continue;
                 int pointIndex = Index(new Vector2I(col, row));
                 int score = density[pointIndex];
@@ -224,7 +225,7 @@ public partial class BattleSimulation
     {
         List<int>[] buckets = team == TeamEnemy ? _allyBuckets : _enemyBuckets;
         Vector2I cell = CellAt(position);
-        int bucketRadius = Mathf.CeilToInt(radius + BattleConfig.DragonRadius);
+        int bucketRadius = Mathf.CeilToInt(radius + MaximumUnitRadius());
         float bestSurface = float.PositiveInfinity;
         int best = -1;
         for (int row = Math.Max(0, cell.Y - bucketRadius); row <= Math.Min(BattleConfig.GridRows - 1, cell.Y + bucketRadius); row++)
@@ -369,10 +370,10 @@ public partial class BattleSimulation
 
     private void LaunchSiege(int attacker, Vector2 target)
     {
-        _cooldowns[attacker] = BattleConfig.SiegeAttackInterval;
+        _cooldowns[attacker] = UnitAttackInterval(UnitSiege);
         _lungeTimers[attacker] = BattleConfig.UnitLungeDuration;
         float duration = SiegeFlightSeconds(_positions[attacker].DistanceTo(target));
-        ScheduleSiegeImpact(_teams[attacker], _positions[attacker], target, BattleConfig.SiegeDamage, duration);
+        ScheduleSiegeImpact(_teams[attacker], _positions[attacker], target, UnitAttackDamage(UnitSiege), duration);
     }
 
     private void ScheduleSiegeImpact(int team, Vector2 origin, Vector2 target, float damage, float duration)
@@ -404,7 +405,7 @@ public partial class BattleSimulation
         _siegeImpactsResolved++;
         List<int>[] buckets = impact.Team == TeamEnemy ? _allyBuckets : _enemyBuckets;
         Vector2I cell = CellAt(impact.Target);
-        int radius = Mathf.CeilToInt(BattleConfig.SiegeBlastRadius + BattleConfig.DragonRadius);
+        int radius = Mathf.CeilToInt(_settings.SiegeBlastRadius + MaximumUnitRadius());
         for (int row = Math.Max(0, cell.Y - radius); row <= Math.Min(BattleConfig.GridRows - 1, cell.Y + radius); row++)
             for (int col = Math.Max(0, cell.X - radius); col <= Math.Min(BattleConfig.GridColumns - 1, cell.X + radius); col++)
                 foreach (int candidate in buckets[Index(new Vector2I(col, row))])
@@ -427,7 +428,7 @@ public partial class BattleSimulation
             float damage = SiegeDamageAtDistance(impact.Target.DistanceTo(at), BattleConfig.BuildingTargetRadius, impact.Damage);
             if (damage > 0f) ApplyBuildingDamage(building.Id, damage * ElevationDamageMultiplier(impact.Origin, at), impact.Team);
         }
-        _events.Add(new GDictionary { ["type"] = "siege_impact", ["team"] = impact.Team, ["position"] = impact.Target, ["radius"] = BattleConfig.SiegeBlastRadius });
+        _events.Add(new GDictionary { ["type"] = "siege_impact", ["team"] = impact.Team, ["position"] = impact.Target, ["radius"] = _settings.SiegeBlastRadius });
     }
 
     private void ApplyBuildingDamage(int id, float damage, int attackerTeam)
@@ -530,7 +531,7 @@ public partial class BattleSimulation
 
     private bool BucketCanContainNearer(Vector2 position, int col, int row, float bestDistanceSq)
     {
-        float slop = BattleConfig.MeleeSpeed * (1f + BattleConfig.UnitSpeedVariation) / BattleConfig.SimTickRate;
+        float slop = MaximumUnitSpeed() * (1f + BattleConfig.UnitSpeedVariation) / BattleConfig.SimTickRate;
         Vector2 minimum = new Vector2(col, row) - Vector2.One * slop;
         Vector2 maximum = new Vector2(col + 1, row + 1) + Vector2.One * slop;
         Vector2 closest = position.Clamp(minimum, maximum);
@@ -547,19 +548,10 @@ public partial class BattleSimulation
 
     private float GroundSpeedMultiplier(Vector2 from, Vector2 toward) => ElevationAt(toward) > ElevationAt(from) ? BattleConfig.UphillSpeedMultiplier : 1f;
     private float ElevationDamageMultiplier(Vector2 attacker, Vector2 target) => ElevationAt(attacker) > ElevationAt(target) ? BattleConfig.HighGroundDamageMultiplier : ElevationAt(attacker) < ElevationAt(target) ? BattleConfig.LowGroundDamageMultiplier : 1f;
-    public float GetClassDamageMultiplier(int attackerKind, int targetKind) => (attackerKind, targetKind) switch
-    {
-        (UnitRanged, UnitMelee) => BattleConfig.RangedVsMelee,
-        (UnitMelee, UnitSiege) => BattleConfig.MeleeVsSiege,
-        (UnitMelee, UnitRanged) => BattleConfig.MeleeVsRanged,
-        (UnitRanged, UnitSiege) => BattleConfig.RangedVsSiege,
-        (UnitRanged, UnitDragon) => BattleConfig.RangedVsDragon,
-        (UnitDragon, UnitRanged) => BattleConfig.DragonVsRanged,
-        (UnitDragon, UnitSiege) => BattleConfig.DragonVsSiege,
-        (UnitMelee, UnitDragon) => BattleConfig.MeleeVsDragon,
-        (UnitSiege, UnitMelee) => BattleConfig.SiegeVsMelee,
-        _ => 1f,
-    };
+    public float GetClassDamageMultiplier(int attackerKind, int targetKind) =>
+        attackerKind >= UnitMelee && attackerKind <= UnitSiege && targetKind >= UnitMelee && targetKind <= UnitSiege
+            ? _settings.Units[attackerKind].DamageVs[targetKind]
+            : 1f;
     private int ElevationAt(Vector2 position) => _elevation[Index(CellAt(position))];
     private bool CanGroundStepInternal(Vector2I from, Vector2I to) => _terrain.CanStep(from, to);
     private bool CellBlocksGround(Vector2I cell) => IsBlocked(cell) || BuildingAt(cell) >= 0;
@@ -567,26 +559,40 @@ public partial class BattleSimulation
     private float SiegeDamageAtDistance(float centerDistance, float targetRadius, float baseDamage)
     {
         float surface = Mathf.Max(0f, centerDistance - targetRadius);
-        if (surface > BattleConfig.SiegeBlastRadius) return 0f;
-        float falloff = Mathf.Clamp(surface / BattleConfig.SiegeBlastRadius, 0f, 1f);
-        return baseDamage * Mathf.Lerp(1f, BattleConfig.SiegeEdgeDamageMultiplier, falloff);
+        if (surface > _settings.SiegeBlastRadius) return 0f;
+        float falloff = Mathf.Clamp(surface / _settings.SiegeBlastRadius, 0f, 1f);
+        return baseDamage * Mathf.Lerp(1f, _settings.SiegeEdgeDamageMultiplier, falloff);
     }
-    private float SiegeFlightSeconds(float distance) => BattleConfig.SiegeFlightSeconds * Mathf.Lerp(BattleConfig.SiegeFlightMinMultiplier, BattleConfig.SiegeFlightMaxMultiplier, Mathf.Clamp(distance / BattleConfig.SiegeRange, 0f, 1f));
-    private float UnitAttackRange(int kind, Vector2 position) => kind == UnitDragon ? BattleConfig.DragonRange : kind == UnitRanged ? BattleConfig.RangedRange + (ElevationAt(position) >= 1 ? BattleConfig.RangedHighGroundRangeBonus : 0f) : kind == UnitSiege ? BattleConfig.SiegeRange : BattleConfig.MeleeRange;
-    private static float UnitDetectRange(int kind) => kind == UnitDragon ? BattleConfig.DragonDetectRange : kind == UnitRanged ? BattleConfig.RangedDetectRange : kind == UnitSiege ? BattleConfig.SiegeRange : BattleConfig.UnitDetectRange;
-    private static float UnitRadius(int kind) => kind == UnitRanged ? BattleConfig.RangedRadius : kind == UnitDragon ? BattleConfig.DragonRadius : kind == UnitSiege ? BattleConfig.SiegeRadius : BattleConfig.MeleeRadius;
-    private static float UnitMaxHp(int kind) => kind == UnitRanged ? BattleConfig.RangedHp : kind == UnitDragon ? BattleConfig.DragonHp : kind == UnitSiege ? BattleConfig.SiegeHp : BattleConfig.MeleeHp;
-    private static float UnitSpeed(int kind) => kind == UnitRanged ? BattleConfig.RangedSpeed : kind == UnitDragon ? BattleConfig.DragonSpeed : kind == UnitSiege ? BattleConfig.SiegeSpeed : BattleConfig.MeleeSpeed;
-    private static float UnitAttackDamage(int kind) => kind == UnitRanged ? BattleConfig.RangedDamage : kind == UnitDragon ? BattleConfig.DragonDamage : kind == UnitSiege ? BattleConfig.SiegeDamage : BattleConfig.MeleeDamage;
-    private static float UnitAttackInterval(int kind) => kind == UnitRanged ? BattleConfig.RangedAttackInterval : kind == UnitDragon ? BattleConfig.DragonAttackInterval : kind == UnitSiege ? BattleConfig.SiegeAttackInterval : BattleConfig.MeleeAttackInterval;
-    private static int BuildCost(int kind) => kind switch
+    private float SiegeFlightSeconds(float distance) => _settings.SiegeFlightSeconds * Mathf.Lerp(BattleConfig.SiegeFlightMinMultiplier, BattleConfig.SiegeFlightMaxMultiplier, Mathf.Clamp(distance / UnitAttackRange(UnitSiege, Vector2.Zero), 0f, 1f));
+    private float UnitAttackRange(int kind, Vector2 position) => _settings.Units[kind].AttackRange + (kind == UnitRanged && ElevationAt(position) >= 1 ? _settings.RangedHighGroundBonus : 0f);
+    private float UnitDetectRange(int kind) => _settings.Units[kind].DetectRange;
+    private float UnitRadius(int kind) => _settings.Units[kind].Radius;
+    private float UnitMaxHp(int kind) => _settings.Units[kind].MaxHp;
+    private float UnitSpeed(int kind) => _settings.Units[kind].Speed;
+    private float UnitAttackDamage(int kind) => _settings.Units[kind].Damage;
+    private float UnitAttackInterval(int kind) => _settings.Units[kind].AttackInterval;
+    private float ProductionInterval(int kind) => _settings.Units[kind].ProductionInterval;
+    private int ProductionBatch(int kind) => _settings.Units[kind].ProductionBatch;
+    private float MaximumUnitRadius()
     {
-        BuildRangedSpawner => BattleConfig.RangedSpawnerCost,
+        float maximum = 0f;
+        for (int kind = UnitMelee; kind <= UnitSiege; kind++) maximum = Math.Max(maximum, UnitRadius(kind));
+        return maximum;
+    }
+    private float MaximumUnitSpeed()
+    {
+        float maximum = 0f;
+        for (int kind = UnitMelee; kind <= UnitSiege; kind++) maximum = Math.Max(maximum, UnitSpeed(kind));
+        return maximum;
+    }
+    private int BuildCost(int kind) => kind switch
+    {
+        BuildRangedSpawner => _settings.Units[UnitRanged].SpawnerCost,
         BuildDefenseTower => BattleConfig.DefenseTowerCost,
-        BuildDragonLair => BattleConfig.DragonLairCost,
-        BuildSiegeSpawner => BattleConfig.SiegeSpawnerCost,
+        BuildDragonLair => _settings.Units[UnitDragon].SpawnerCost,
+        BuildSiegeSpawner => _settings.Units[UnitSiege].SpawnerCost,
         BuildRallyPoint => BattleConfig.RallyPointCost,
-        _ => BattleConfig.MeleeSpawnerCost,
+        _ => _settings.Units[UnitMelee].SpawnerCost,
     };
     private int CountSpawners(int team) { int count = 0; for (int i = 0; i < _buildingCount; i++) if (!_buildings[i].Destroyed && _buildings[i].Team == team && (_buildings[i].Kind == BuildingSpawner || _buildings[i].Kind == BuildingDragonLair)) count++; return count; }
     private int BuildingAt(Vector2I cell) { for (int i = 0; i < _buildingCount; i++) if (!_buildings[i].Destroyed && _buildings[i].Cell == cell) return i; return -1; }
