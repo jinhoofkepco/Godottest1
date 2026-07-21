@@ -215,6 +215,8 @@ public partial class BattleSimulation
 
     private void RebuildBuckets()
     {
+        _enemyOccupiedBucketCount = 0;
+        _allyOccupiedBucketCount = 0;
         for (int i = 0; i < BattleConfig.CellCount; i++)
         {
             _enemyBuckets[i].Clear();
@@ -225,8 +227,16 @@ public partial class BattleSimulation
         for (int index = 0; index < _unitCount; index++)
         {
             if (_hp[index] <= 0f) continue;
-            int cellIndex = Index(CellAt(_positions[index]));
+            Vector2I cell = CellAt(_positions[index]);
+            int cellIndex = Index(cell);
             List<int>[] buckets = _teams[index] == TeamEnemy ? _enemyBuckets : _allyBuckets;
+            if (buckets[cellIndex].Count == 0)
+            {
+                if (_teams[index] == TeamEnemy)
+                    _enemyOccupiedBucketCells[_enemyOccupiedBucketCount++] = cellIndex;
+                else
+                    _allyOccupiedBucketCells[_allyOccupiedBucketCount++] = cellIndex;
+            }
             buckets[cellIndex].Add(index);
             if (_kinds[index] != UnitDragon)
             {
@@ -236,6 +246,8 @@ public partial class BattleSimulation
             Vector2 fallback = _teams[index] == TeamEnemy ? Vector2.Down : Vector2.Up;
             AddSiegeDensity(_teams[index], PredictedSiegePosition(index, fallback, _settings.SiegeFlightSeconds), UnitRadius(_kinds[index]));
         }
+        Array.Sort(_enemyOccupiedBucketCells, 0, _enemyOccupiedBucketCount);
+        Array.Sort(_allyOccupiedBucketCells, 0, _allyOccupiedBucketCount);
         for (int i = 0; i < _buildingCount; i++)
         {
             Building building = _buildings[i];

@@ -142,60 +142,84 @@ public partial class BattleSimulation
             return new Vector2(-1f, -1f);
         Vector2 origin = _positions[unitIndex];
         int[] density = _teams[unitIndex] == TeamEnemy ? _allySiegeDensity : _enemySiegeDensity;
+        List<int>[] hostileBuckets = _teams[unitIndex] == TeamEnemy ? _allyBuckets : _enemyBuckets;
+        int[] occupiedCells = _teams[unitIndex] == TeamEnemy ? _allyOccupiedBucketCells : _enemyOccupiedBucketCells;
+        int occupiedCount = _teams[unitIndex] == TeamEnemy ? _allyOccupiedBucketCount : _enemyOccupiedBucketCount;
         Vector2I originCell = CellAt(origin);
         float siegeRange = UnitAttackRange(UnitSiege, origin);
-        int radius = Mathf.CeilToInt(siegeRange);
+        float minimumSq = _settings.SiegeMinRange * _settings.SiegeMinRange;
+        float rangeSq = siegeRange * siegeRange;
+        float predictionHorizon = MaximumUnitSpeed() * (1f + BattleConfig.UnitSpeedVariation) * _settings.SiegeFlightSeconds;
+        float queryRange = siegeRange + predictionHorizon;
+        float queryRangeSq = queryRange * queryRange;
+        int radius = Mathf.CeilToInt(queryRange);
+        int minimumRow = Math.Max(0, originCell.Y - radius);
+        int maximumRow = Math.Min(BattleConfig.GridRows - 1, originCell.Y + radius);
+        int occupiedIndex = LowerBound(occupiedCells, occupiedCount, minimumRow * BattleConfig.GridColumns);
+        int occupiedEnd = (maximumRow + 1) * BattleConfig.GridColumns;
         int bestScore = -1;
         float bestDistanceSq = float.PositiveInfinity;
         int bestPointIndex = int.MaxValue;
         Vector2 bestPoint = new(-1f, -1f);
-        for (int row = Math.Max(0, originCell.Y - radius); row <= Math.Min(BattleConfig.GridRows - 1, originCell.Y + radius); row++)
-            for (int col = Math.Max(0, originCell.X - radius); col <= Math.Min(BattleConfig.GridColumns - 1, originCell.X + radius); col++)
-            {
-                Vector2 point = new(col + 0.5f, row + 0.5f);
-                float distanceSq = origin.DistanceSquaredTo(point);
-                if (distanceSq < _settings.SiegeMinRange * _settings.SiegeMinRange || distanceSq > siegeRange * siegeRange)
-                    continue;
-                int pointIndex = Index(new Vector2I(col, row));
-                int score = density[pointIndex];
-                if (score <= 0) continue;
-                bool improves = score > bestScore || score == bestScore
-                    && (distanceSq < bestDistanceSq - 0.000001f || Mathf.IsEqualApprox(distanceSq, bestDistanceSq) && pointIndex < bestPointIndex);
-                if (!improves || !SiegePointHasValidTarget(unitIndex, point)) continue;
-                bestScore = score;
-                bestDistanceSq = distanceSq;
-                bestPointIndex = pointIndex;
-                bestPoint = point;
-            }
-        return bestScore > 0 ? bestPoint : new Vector2(-1f, -1f);
-    }
-
-    private bool SiegePointHasValidTarget(int unitIndex, Vector2 point)
-    {
-        Vector2 origin = _positions[unitIndex];
-        float minimumSq = _settings.SiegeMinRange * _settings.SiegeMinRange;
-        int team = _teams[unitIndex];
-        List<int>[] hostileBuckets = team == TeamEnemy ? _allyBuckets : _enemyBuckets;
-        Vector2I center = CellAt(point);
-        int radius = Mathf.CeilToInt(_settings.SiegeBlastRadius + MaximumUnitRadius());
-        for (int row = Math.Max(0, center.Y - radius); row <= Math.Min(BattleConfig.GridRows - 1, center.Y + radius); row++)
-            for (int col = Math.Max(0, center.X - radius); col <= Math.Min(BattleConfig.GridColumns - 1, center.X + radius); col++)
-                foreach (int candidate in hostileBuckets[Index(new Vector2I(col, row))])
+        for (; occupiedIndex < occupiedCount && occupiedCells[occupiedIndex] < occupiedEnd; occupiedIndex++)
+        {
+            int bucketIndex = occupiedCells[occupiedIndex];
+            int col = bucketIndex % BattleConfig.GridColumns;
+            if (Math.Abs(col - originCell.X) > radius) continue;
+            foreach (int candidate in hostileBuckets[bucketIndex])
                 {
-                    if (_hp[candidate] <= 0f || origin.DistanceSquaredTo(_positions[candidate]) < minimumSq) continue;
+                    if (_hp[candidate] <= 0f) continue;
+                    float currentDistanceSq = origin.DistanceSquaredTo(_positions[candidate]);
+                    if (currentDistanceSq < minimumSq || currentDistanceSq > queryRangeSq) continue;
                     Vector2 fallback = _teams[candidate] == TeamEnemy ? Vector2.Down : Vector2.Up;
-                    Vector2 predicted = PredictedSiegePosition(candidate, fallback, _settings.SiegeFlightSeconds);
-                    if (point.DistanceTo(predicted) <= _settings.SiegeBlastRadius + UnitRadius(_kinds[candidate])) return true;
+                    Vector2 point = PredictedSiegePosition(candidate, fallback, _settings.SiegeFlightSeconds);
+                    float distanceSq = origin.DistanceSquaredTo(point);
+                    if (distanceSq < minimumSq || distanceSq > rangeSq) continue;
+                    int pointIndex = Index(CellAt(point));
+                    int score = density[pointIndex];
+                    if (score <= 0) continue;
+                    bool improves = score > bestScore || score == bestScore
+                        && (distanceSq < bestDistanceSq - 0.000001f || Mathf.IsEqualApprox(distanceSq, bestDistanceSq) && pointIndex < bestPointIndex);
+                    if (!improves) continue;
+                    bestScore = score;
+                    bestDistanceSq = distanceSq;
+                    bestPointIndex = pointIndex;
+                    bestPoint = point;
                 }
+        }
+        int team = _teams[unitIndex];
         for (int index = 0; index < _buildingCount; index++)
         {
             Building building = _buildings[index];
             if (building.Destroyed || building.Team == team) continue;
             Vector2 at = new(building.Cell.X + 0.5f, building.Cell.Y + 0.5f);
-            if (origin.DistanceSquaredTo(at) >= minimumSq
-                && point.DistanceTo(at) <= _settings.SiegeBlastRadius + BattleConfig.BuildingTargetRadius) return true;
+            float distanceSq = origin.DistanceSquaredTo(at);
+            if (distanceSq < minimumSq || distanceSq > rangeSq) continue;
+            int pointIndex = Index(building.Cell);
+            int score = density[pointIndex];
+            if (score <= 0) continue;
+            bool improves = score > bestScore || score == bestScore
+                && (distanceSq < bestDistanceSq - 0.000001f || Mathf.IsEqualApprox(distanceSq, bestDistanceSq) && pointIndex < bestPointIndex);
+            if (!improves) continue;
+            bestScore = score;
+            bestDistanceSq = distanceSq;
+            bestPointIndex = pointIndex;
+            bestPoint = at;
         }
-        return false;
+        return bestScore > 0 ? bestPoint : new Vector2(-1f, -1f);
+    }
+
+    private static int LowerBound(int[] values, int count, int target)
+    {
+        int low = 0;
+        int high = count;
+        while (low < high)
+        {
+            int middle = low + (high - low) / 2;
+            if (values[middle] < target) low = middle + 1;
+            else high = middle;
+        }
+        return low;
     }
 
     private void CacheFoundTarget(int index)

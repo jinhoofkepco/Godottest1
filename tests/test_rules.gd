@@ -553,6 +553,18 @@ func _test_tuned_radius_bucket_horizon() -> void:
 
 
 func _test_siege_rules_and_aoe() -> void:
+	var minimum_sim = _new_simulation()
+	minimum_sim.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	var flat := PackedByteArray()
+	flat.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	flat.fill(0)
+	minimum_sim.call("ApplyDebugCommand", {"op": "set_elevation", "values": flat})
+	minimum_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_SIEGE, "position": Vector2(10.5, 20.5), "exact": true})
+	minimum_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_MELEE, "position": Vector2(10.5, 21.0), "exact": true})
+	minimum_sim.call("Step", 1.0 / 30.0)
+	_expect(not _has_event(minimum_sim.call("DrainEvents").events, "siege_projectile"), "SIEGE emits no shot when every real hostile is inside minimum range")
+	minimum_sim.free()
+
 	var simulation = _new_simulation()
 	_expect(is_zero_approx(float(simulation.call("GetSiegeDamageAtDistance", 1.94, 0.13, 55.8))), "SIEGE AoE rejects targets outside blast plus target radius")
 	var center_damage := float(simulation.call("GetSiegeDamageAtDistance", 0.0, 0.13, 55.8))

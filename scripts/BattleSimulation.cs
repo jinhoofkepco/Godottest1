@@ -143,6 +143,10 @@ public partial class BattleSimulation : Node
     private readonly FlowField _allyFlow = new(BattleConfig.GridColumns, BattleConfig.GridRows);
     private readonly List<int>[] _enemyBuckets = NewBuckets();
     private readonly List<int>[] _allyBuckets = NewBuckets();
+    private readonly int[] _enemyOccupiedBucketCells = new int[BattleConfig.CellCount];
+    private readonly int[] _allyOccupiedBucketCells = new int[BattleConfig.CellCount];
+    private int _enemyOccupiedBucketCount;
+    private int _allyOccupiedBucketCount;
     private readonly int[] _enemyDensity = new int[BattleConfig.CellCount];
     private readonly int[] _allyDensity = new int[BattleConfig.CellCount];
     private readonly int[] _enemySiegeDensity = new int[BattleConfig.CellCount];
