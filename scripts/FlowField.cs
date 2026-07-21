@@ -14,6 +14,9 @@ internal sealed class FlowField
     private readonly int _height;
     public readonly float[] Costs;
     public readonly Vector2[] Flow;
+    public readonly int[] NextCells;
+    public readonly byte[] NearObstacles;
+    private ulong _obstacleSignature = ulong.MaxValue;
 
     public FlowField(int width, int height)
     {
@@ -21,12 +24,15 @@ internal sealed class FlowField
         _height = Math.Max(1, height);
         Costs = new float[_width * _height];
         Flow = new Vector2[_width * _height];
+        NextCells = new int[_width * _height];
+        NearObstacles = new byte[_width * _height];
     }
 
     public void Rebuild(Vector2I goal, byte[] blocked, int[] density, float congestionWeight, byte[] elevation, float uphillCost)
     {
         Array.Fill(Costs, float.PositiveInfinity);
         Array.Clear(Flow);
+        Array.Fill(NextCells, -1);
         if (!Valid(goal))
             return;
         int goalIndex = Index(goal);
@@ -42,16 +48,10 @@ internal sealed class FlowField
             foreach (Vector2I offset in Directions)
             {
                 Vector2I neighbor = current + offset;
-                if (!Valid(neighbor))
-                    continue;
+                if (!Valid(neighbor)) continue;
                 int neighborIndex = Index(neighbor);
-                if (neighborIndex != goalIndex && blocked[neighborIndex] != 0)
-                    continue;
-                if (offset.X != 0 && offset.Y != 0 && DiagonalPinched(current, offset, blocked, goalIndex))
-                    continue;
+                if (!GroundNavigation.CanTransitionValid(neighbor, current, blocked, elevation, _width)) continue;
                 int neighborElevation = elevation[neighborIndex];
-                if (Math.Abs(neighborElevation - currentElevation) > 1)
-                    continue;
                 float step = offset.X != 0 && offset.Y != 0 ? DiagonalCost : 1f;
                 if (currentElevation > neighborElevation)
                     step += Math.Max(0f, uphillCost);
@@ -64,10 +64,60 @@ internal sealed class FlowField
             }
         }
         BuildDirections(blocked, goalIndex, elevation, uphillCost);
+        UpdateObstacleProximity(blocked, elevation);
     }
 
     public float CostAt(Vector2I cell) => Valid(cell) ? Costs[Index(cell)] : float.PositiveInfinity;
     public Vector2 DirectionAt(Vector2I cell) => Valid(cell) ? Flow[Index(cell)] : Vector2.Zero;
+    public bool NearObstacleAt(Vector2I cell) => !Valid(cell) || NearObstacles[Index(cell)] != 0;
+    public Vector2I NextCellAt(Vector2I cell)
+    {
+        if (!Valid(cell)) return new Vector2I(-1, -1);
+        int next = NextCells[Index(cell)];
+        return next >= 0 ? new Vector2I(next % _width, next / _width) : new Vector2I(-1, -1);
+    }
+
+    public Vector2 PortalDirectionAt(Vector2 position)
+    {
+        var cell = new Vector2I(Math.Clamp(Mathf.FloorToInt(position.X), 0, _width - 1), Math.Clamp(Mathf.FloorToInt(position.Y), 0, _height - 1));
+        Vector2I next = NextCellAt(cell);
+        if (!Valid(next)) return Vector2.Zero;
+        Vector2 safeCenter = new(next.X + 0.5f, next.Y + 0.5f);
+        return position.DirectionTo(safeCenter);
+    }
+
+    private void UpdateObstacleProximity(byte[] blocked, byte[] elevation)
+    {
+        ulong signature = 1469598103934665603UL;
+        for (int index = 0; index < blocked.Length; index++)
+        {
+            signature = (signature ^ blocked[index]) * 1099511628211UL;
+            signature = (signature ^ elevation[index]) * 1099511628211UL;
+        }
+        if (signature == _obstacleSignature) return;
+        _obstacleSignature = signature;
+        Array.Clear(NearObstacles);
+        for (int row = 0; row < _height; row++)
+            for (int col = 0; col < _width; col++)
+            {
+                var cell = new Vector2I(col, row);
+                int cellIndex = Index(cell);
+                int currentElevation = elevation[cellIndex];
+                for (int y = -1; y <= 1 && NearObstacles[cellIndex] == 0; y++)
+                    for (int x = -1; x <= 1; x++)
+                    {
+                        if (x == 0 && y == 0) continue;
+                        var neighbor = cell + new Vector2I(x, y);
+                        if (!Valid(neighbor)) { NearObstacles[cellIndex] = 1; break; }
+                        int neighborIndex = Index(neighbor);
+                        if (blocked[neighborIndex] != 0 || Math.Abs(elevation[neighborIndex] - currentElevation) > 1)
+                        {
+                            NearObstacles[cellIndex] = 1;
+                            break;
+                        }
+                    }
+            }
+    }
 
     private void BuildDirections(byte[] blocked, int goalIndex, byte[] elevation, float uphillCost)
     {
@@ -80,20 +130,14 @@ internal sealed class FlowField
                     continue;
                 float best = float.PositiveInfinity;
                 Vector2I bestOffset = Vector2I.Zero;
-                int currentElevation = elevation[cellIndex];
                 foreach (Vector2I offset in Directions)
                 {
                     Vector2I neighbor = cell + offset;
-                    if (!Valid(neighbor))
-                        continue;
+                    if (!Valid(neighbor)) continue;
                     int neighborIndex = Index(neighbor);
-                    if (neighborIndex != goalIndex && blocked[neighborIndex] != 0)
-                        continue;
-                    if (offset.X != 0 && offset.Y != 0 && DiagonalPinched(cell, offset, blocked, goalIndex))
-                        continue;
+                    if (!GroundNavigation.CanTransitionValid(cell, neighbor, blocked, elevation, _width)) continue;
+                    int currentElevation = elevation[cellIndex];
                     int neighborElevation = elevation[neighborIndex];
-                    if (Math.Abs(neighborElevation - currentElevation) > 1)
-                        continue;
                     float transition = offset.X != 0 && offset.Y != 0 ? DiagonalCost : 1f;
                     if (neighborElevation > currentElevation)
                         transition += Math.Max(0f, uphillCost);
@@ -102,24 +146,11 @@ internal sealed class FlowField
                     {
                         best = candidate;
                         bestOffset = offset;
+                        NextCells[cellIndex] = neighborIndex;
                     }
                 }
                 Flow[cellIndex] = new Vector2(bestOffset.X, bestOffset.Y).Normalized();
             }
-    }
-
-    private bool DiagonalPinched(Vector2I cell, Vector2I offset, byte[] blocked, int goalIndex)
-    {
-        return BlockedAt(new Vector2I(cell.X + offset.X, cell.Y), blocked, goalIndex)
-            && BlockedAt(new Vector2I(cell.X, cell.Y + offset.Y), blocked, goalIndex);
-    }
-
-    private bool BlockedAt(Vector2I cell, byte[] blocked, int goalIndex)
-    {
-        if (!Valid(cell))
-            return true;
-        int index = Index(cell);
-        return index != goalIndex && blocked[index] != 0;
     }
 
     private bool Valid(Vector2I cell) => cell.X >= 0 && cell.X < _width && cell.Y >= 0 && cell.Y < _height;

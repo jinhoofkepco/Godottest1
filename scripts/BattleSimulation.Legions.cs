@@ -179,9 +179,41 @@ public partial class BattleSimulation
     {
         int legion = LegionIndexFromId(_legionIds[unitIndex]);
         if (legion < 0 || _legionStates[legion] == LegionBroken) return Vector2.Zero;
-        Vector2 delta = LegionSlotWorldPosition(legion, _slotOffsets[unitIndex]) - _positions[unitIndex];
+        Vector2 target = LegionSlotWorldPosition(legion, _slotOffsets[unitIndex]);
+        if (_kinds[unitIndex] != UnitDragon) target = ProjectFormationSlot(unitIndex, target);
+        Vector2 delta = target - _positions[unitIndex];
         float weight = _legionStates[legion] == LegionEngaged ? BattleConfig.LegionEngagedSlotWeight : BattleConfig.LegionSlotFollowWeight;
         return delta.LengthSquared() > 0.0001f ? delta.Normalized() * weight : Vector2.Zero;
+    }
+
+    private Vector2 ProjectFormationSlot(int unitIndex, Vector2 target)
+    {
+        float radius = UnitRadius(_kinds[unitIndex]);
+        FlowField flow = SelectFlow(unitIndex);
+        if (!float.IsPositiveInfinity(flow.CostAt(CellAt(target)))
+            && GroundNavigation.CanOccupyPosition(target, radius, _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows))
+            return target;
+        Vector2I center = CellAt(target);
+        Vector2 best = _positions[unitIndex];
+        float bestDistanceSq = float.PositiveInfinity;
+        int bestIndex = int.MaxValue;
+        for (int row = Math.Max(0, center.Y - BattleConfig.FormationProjectionRadius); row <= Math.Min(BattleConfig.GridRows - 1, center.Y + BattleConfig.FormationProjectionRadius); row++)
+            for (int col = Math.Max(0, center.X - BattleConfig.FormationProjectionRadius); col <= Math.Min(BattleConfig.GridColumns - 1, center.X + BattleConfig.FormationProjectionRadius); col++)
+            {
+                var cell = new Vector2I(col, row);
+                if (float.IsPositiveInfinity(flow.CostAt(cell))) continue;
+                Vector2 candidate = new(col + 0.5f, row + 0.5f);
+                if (!GroundNavigation.CanOccupyPosition(candidate, radius, _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows)) continue;
+                float distanceSq = candidate.DistanceSquaredTo(target);
+                int cellIndex = Index(cell);
+                if (distanceSq < bestDistanceSq - 0.0001f || Mathf.IsEqualApprox(distanceSq, bestDistanceSq) && cellIndex < bestIndex)
+                {
+                    best = candidate;
+                    bestDistanceSq = distanceSq;
+                    bestIndex = cellIndex;
+                }
+            }
+        return best;
     }
 
     private Vector2 RallySteering(int unitIndex)
@@ -397,13 +429,28 @@ public partial class BattleSimulation
                     direction = _legionAnchors[i].DirectionTo(new Vector2(hq.X + 0.5f, hq.Y + 0.5f));
                 }
                 else
-                    direction = _legionTeams[i] == TeamEnemy ? _enemyFlow.DirectionAt(CellAt(_legionAnchors[i])) : _allyFlow.DirectionAt(CellAt(_legionAnchors[i]));
+                {
+                    FlowField flow = SelectFlow(_legionTeams[i], LegionFlowKind(i));
+                    direction = flow.PortalDirectionAt(_legionAnchors[i]);
+                    if (direction == Vector2.Zero) direction = flow.DirectionAt(CellAt(_legionAnchors[i]));
+                }
             }
             if (direction.LengthSquared() <= 0.0001f) direction = _legionTeams[i] == TeamEnemy ? Vector2.Down : Vector2.Up;
             _legionHeadings[i] = _legionHeadings[i].Slerp(direction.Normalized(), Mathf.Clamp(delta * BattleConfig.LegionHeadingTurnRate, 0f, 1f)).Normalized();
             Vector2 motion = _legionHeadings[i] * LegionMinimumSpeed(i) * delta;
-            _legionAnchors[i] = LegionIsAirOnly(i) ? MoveFlying(_legionAnchors[i], motion) : MoveGround(_legionAnchors[i], motion);
+            _legionAnchors[i] = LegionIsAirOnly(i) ? MoveFlying(_legionAnchors[i], motion) : MoveGround(_legionAnchors[i], motion, LegionGroundRadius(i));
         }
+    }
+
+    private int LegionFlowKind(int legionIndex) => _legionSiegeCounts[legionIndex] > 0 ? UnitSiege : UnitMelee;
+
+    private float LegionGroundRadius(int legionIndex)
+    {
+        float radius = 0f;
+        if (_legionMeleeCounts[legionIndex] > 0) radius = Math.Max(radius, UnitRadius(UnitMelee));
+        if (_legionRangedCounts[legionIndex] > 0) radius = Math.Max(radius, UnitRadius(UnitRanged));
+        if (_legionSiegeCounts[legionIndex] > 0) radius = Math.Max(radius, UnitRadius(UnitSiege));
+        return radius > 0f ? radius : InfantryClearanceRadius();
     }
 
     private bool LegionIsAirOnly(int legionIndex) => _legionLiveCounts[legionIndex] > 0

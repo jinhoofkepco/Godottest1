@@ -76,7 +76,7 @@ public partial class BattleSimulation
                     else AttackTarget(index, _foundUnitIndex, _foundBuildingIndex);
                 }
                 if (shouldKite)
-                    _positions[index] = MoveGround(position, _velocities[index] * delta);
+                    _positions[index] = MoveGround(position, _velocities[index] * delta, UnitRadius(_kinds[index]));
                 continue;
             }
 
@@ -104,6 +104,15 @@ public partial class BattleSimulation
             }
             bool isWaiting = _cachedWaiting[index] != 0;
             Vector2 desired = _cachedSteering[index];
+            if (_kinds[index] != UnitDragon && _recoveryActive[index] != 0)
+            {
+                Vector2 recovery = RecoveryDirection(index);
+                if (recovery.LengthSquared() > 0.000001f)
+                {
+                    desired = recovery;
+                    isWaiting = false;
+                }
+            }
             _states[index] = isWaiting ? StateWait : StateAdvance;
             float maximumSpeed = LegionSpeedForUnit(index) * _speedScales[index];
             if (_kinds[index] == UnitMelee && _shieldModes[index] != 0)
@@ -114,9 +123,11 @@ public partial class BattleSimulation
             _velocities[index] = _velocities[index].MoveToward(targetVelocity, maximumSpeed * BattleConfig.UnitTurnRate * delta);
             if (_velocities[index].LengthSquared() > maximumSpeed * maximumSpeed)
                 _velocities[index] = _velocities[index].Normalized() * maximumSpeed;
-            _positions[index] = _kinds[index] == UnitDragon
+            Vector2 movedPosition = _kinds[index] == UnitDragon
                 ? MoveFlying(position, _velocities[index] * delta)
-                : MoveGround(position, _velocities[index] * delta);
+                : MoveGround(position, _velocities[index] * delta, UnitRadius(_kinds[index]));
+            _positions[index] = movedPosition;
+            if (refresh) UpdateNavigationProgress(index, movedPosition, targetVelocity.LengthSquared(), delta * BattleConfig.DecisionGroupCount);
             if (_profilingEnabled) _profileSeparationUsec += Usec(separationStart);
         }
         _decisionCursor = (_decisionCursor + 1) % BattleConfig.DecisionGroupCount;
@@ -181,7 +192,7 @@ public partial class BattleSimulation
             building.SpawnTimer += interval;
             for (int produced = 0; produced < ProductionBatch(building.UnitKind); produced++)
             {
-                Vector2 position = FindSpawnPosition(building.Cell, building.Team, building.UnitKind == UnitDragon);
+                Vector2 position = FindSpawnPosition(building.Cell, building.Team, building.UnitKind);
                 if (position.X < 0f) { building.SpawnTimer = 0.5f; break; }
                 int unitId = SpawnUnit(building.Team, position, building.UnitKind);
                 if (unitId == 0) break;
@@ -282,19 +293,42 @@ public partial class BattleSimulation
 
     private void RebuildFlowForTeam(int team)
     {
-        Array.Copy(_blocked, _flowBlocked, _blocked.Length);
-        for (int i = 0; i < _flowBlocked.Length; i++)
-            if (_water[i] != 0) _flowBlocked[i] = 1;
+        Array.Copy(_blocked, _groundBlocked, _blocked.Length);
+        for (int i = 0; i < _groundBlocked.Length; i++)
+            if (_water[i] != 0) _groundBlocked[i] = 1;
         for (int i = 0; i < _buildingCount; i++)
         {
             Building building = _buildings[i];
-            if (!building.Destroyed && building.Kind != BuildingHq)
-                _flowBlocked[Index(building.Cell)] = 1;
+            if (!building.Destroyed) _groundBlocked[Index(building.Cell)] = 1;
+        }
+        Array.Copy(_groundBlocked, _flowBlocked, _groundBlocked.Length);
+        Vector2I goal = BuildingCell(team == TeamEnemy ? _allyHqId : _enemyHqId);
+        _flowBlocked[Index(goal)] = 0;
+        byte[] infantryBlocked = team == TeamEnemy ? _enemyInfantryBlocked : _allyInfantryBlocked;
+        byte[] heavyBlocked = team == TeamEnemy ? _enemyHeavyBlocked : _allyHeavyBlocked;
+        float infantryRadius = InfantryClearanceRadius();
+        float heavyRadius = HeavyClearanceRadius();
+        GroundNavigation.BuildClearanceMask(_flowBlocked, BattleConfig.GridColumns, BattleConfig.GridRows, infantryRadius, infantryBlocked);
+        infantryBlocked[Index(goal)] = 0;
+        bool sharesInfantry = infantryRadius <= 0.5f && heavyRadius <= 0.5f;
+        if (!sharesInfantry)
+        {
+            GroundNavigation.BuildClearanceMask(_flowBlocked, BattleConfig.GridColumns, BattleConfig.GridRows, heavyRadius, heavyBlocked);
+            heavyBlocked[Index(goal)] = 0;
+            sharesInfantry = GroundNavigation.MasksEqual(infantryBlocked, heavyBlocked);
         }
         if (team == TeamEnemy)
-            _enemyFlow.Rebuild(BuildingCell(_allyHqId), _flowBlocked, _enemyDensity, BattleConfig.CongestionCostWeight, _elevation, BattleConfig.UphillCost);
+        {
+            _enemyHeavySharesInfantry = sharesInfantry;
+            _enemyFlow.Rebuild(goal, infantryBlocked, _enemyDensity, BattleConfig.CongestionCostWeight, _elevation, BattleConfig.UphillCost);
+            if (!sharesInfantry) _enemyHeavyFlow.Rebuild(goal, heavyBlocked, _enemyDensity, BattleConfig.CongestionCostWeight, _elevation, BattleConfig.UphillCost);
+        }
         else
-            _allyFlow.Rebuild(BuildingCell(_enemyHqId), _flowBlocked, _allyDensity, BattleConfig.CongestionCostWeight, _elevation, BattleConfig.UphillCost);
+        {
+            _allyHeavySharesInfantry = sharesInfantry;
+            _allyFlow.Rebuild(goal, infantryBlocked, _allyDensity, BattleConfig.CongestionCostWeight, _elevation, BattleConfig.UphillCost);
+            if (!sharesInfantry) _allyHeavyFlow.Rebuild(goal, heavyBlocked, _allyDensity, BattleConfig.CongestionCostWeight, _elevation, BattleConfig.UphillCost);
+        }
     }
 
     private void RecalculateTerritory(bool emitChanges, bool refreshBuckets)

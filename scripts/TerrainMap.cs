@@ -63,9 +63,8 @@ internal sealed class TerrainMap
     }
 
     public int GetElevation(Vector2I cell) => Valid(cell) ? Elevation[Index(cell)] : 0;
-    public bool CanStep(Vector2I from, Vector2I to) => Valid(from) && Valid(to)
-        && Water[Index(from)] == 0 && Water[Index(to)] == 0
-        && Math.Abs(GetElevation(from) - GetElevation(to)) <= 1;
+    public bool CanStep(Vector2I from, Vector2I to) =>
+        GroundNavigation.CanTransition(from, to, Water, Elevation, Width, Height);
 
     public bool AllRequiredPathsReachable(int deploymentDepth)
     {

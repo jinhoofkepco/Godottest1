@@ -418,6 +418,7 @@ public partial class BattleSimulation
     {
         int team = _teams[index];
         Vector2 direction;
+        bool suppressFlowNoise = false;
         if (_kinds[index] == UnitDragon)
         {
             int hqId = team == TeamAlly ? _enemyHqId : _allyHqId;
@@ -426,25 +427,176 @@ public partial class BattleSimulation
         }
         else
         {
-            direction = team == TeamAlly ? _allyFlow.DirectionAt(CellAt(_positions[index])) : _enemyFlow.DirectionAt(CellAt(_positions[index]));
+            FlowField flow = SelectFlow(index);
+            Vector2I cell = CellAt(_positions[index]);
+            bool nearObstacle = flow.NearObstacleAt(cell);
+            direction = nearObstacle ? flow.PortalDirectionAt(_positions[index]) : flow.DirectionAt(cell);
+            if (direction == Vector2.Zero) direction = flow.DirectionAt(cell);
             if (direction == Vector2.Zero) direction = team == TeamAlly ? Vector2.Up : Vector2.Down;
+            suppressFlowNoise = _recoveryActive[index] != 0 || nearObstacle;
         }
-        return direction.Rotated(_flowBiasRadians[index]);
+        return suppressFlowNoise ? direction : direction.Rotated(_flowBiasRadians[index]);
     }
 
-    private Vector2 MoveGround(Vector2 position, Vector2 motion)
+    private Vector2 MoveGround(Vector2 position, Vector2 motion, float radius)
     {
         Vector2I from = CellAt(position);
         Span<Vector2> candidates = stackalloc Vector2[3] { motion, new Vector2(motion.X, 0f), new Vector2(0f, motion.Y) };
         foreach (Vector2 candidateMotion in candidates)
         {
             Vector2 candidate = position + candidateMotion;
-            candidate.X = Mathf.Clamp(candidate.X, 0.2f, BattleConfig.GridColumns - 0.2f);
-            candidate.Y = Mathf.Clamp(candidate.Y, 0.5f, BattleConfig.GridRows - 0.5f);
+            float safeRadius = Mathf.Clamp(radius, 0.001f, Math.Min(BattleConfig.GridColumns, BattleConfig.GridRows) * 0.5f);
+            candidate.X = Mathf.Clamp(candidate.X, safeRadius, BattleConfig.GridColumns - safeRadius);
+            candidate.Y = Mathf.Clamp(candidate.Y, safeRadius, BattleConfig.GridRows - safeRadius);
             Vector2I cell = CellAt(candidate);
-            if (!CellBlocksGround(cell) && CanGroundStepInternal(from, cell)) return candidate;
+            if (cell == from && radius <= 0.5f && _groundBlocked[Index(cell)] == 0)
+            {
+                float localX = candidate.X - cell.X;
+                float localY = candidate.Y - cell.Y;
+                if (localX >= radius && localX <= 1f - radius && localY >= radius && localY <= 1f - radius)
+                    return candidate;
+            }
+            bool transitionClear = cell == from || GroundNavigation.CanTransition(from, cell, _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows);
+            if (transitionClear && GroundNavigation.CanOccupyPosition(candidate, radius, _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows))
+                return candidate;
         }
         return position;
+    }
+
+    private FlowField SelectFlow(int index) => SelectFlow(_teams[index], _kinds[index]);
+
+    private FlowField SelectFlow(int team, int kind)
+    {
+        bool heavy = kind == UnitSiege;
+        if (team == TeamAlly) return heavy && !_allyHeavySharesInfantry ? _allyHeavyFlow : _allyFlow;
+        return heavy && !_enemyHeavySharesInfantry ? _enemyHeavyFlow : _enemyFlow;
+    }
+
+    private byte[] SelectFlowBlocked(int index) => SelectFlowBlocked(_teams[index], _kinds[index]);
+
+    private byte[] SelectFlowBlocked(int team, int kind)
+    {
+        bool heavy = kind == UnitSiege;
+        if (team == TeamAlly) return heavy && !_allyHeavySharesInfantry ? _allyHeavyBlocked : _allyInfantryBlocked;
+        return heavy && !_enemyHeavySharesInfantry ? _enemyHeavyBlocked : _enemyInfantryBlocked;
+    }
+
+    private float InfantryClearanceRadius() => Math.Max(UnitRadius(UnitMelee), UnitRadius(UnitRanged));
+
+    private float HeavyClearanceRadius() => Math.Max(InfantryClearanceRadius(), UnitRadius(UnitSiege));
+
+    private Vector2 RecoveryDirection(int index)
+    {
+        Vector2 position = _positions[index];
+        Vector2 target = _recoveryTargets[index];
+        if (_recoveryActive[index] != 0 && position.DistanceSquaredTo(target) > BattleConfig.RecoveryArrivalRadius * BattleConfig.RecoveryArrivalRadius)
+            return position.DirectionTo(target);
+        if (_recoveryActive[index] != 0)
+        {
+            _recoveryActive[index] = 0;
+            return Vector2.Zero;
+        }
+
+        FlowField flow = SelectFlow(index);
+        byte[] blocked = SelectFlowBlocked(index);
+        Vector2I start = CellAt(position);
+        float startCost = flow.CostAt(start);
+        Vector2I best = new(-1, -1);
+        float bestCost = startCost;
+        int parity = _ids[index] & 1;
+        for (int y = -1; y <= 1; y++)
+            for (int x = -1; x <= 1; x++)
+            {
+                if (x == 0 && y == 0) continue;
+                Vector2I candidate = start + new Vector2I(x, y);
+                if (!GroundNavigation.CanTransition(start, candidate, blocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows)) continue;
+                float cost = flow.CostAt(candidate);
+                if (cost >= startCost - 0.0001f) continue;
+                int candidateTie = candidate.Y * BattleConfig.GridColumns + candidate.X;
+                int bestTie = best.Y * BattleConfig.GridColumns + best.X;
+                if (cost < bestCost - 0.0001f || Mathf.IsEqualApprox(cost, bestCost) && ((candidateTie + parity) & 1) < ((bestTie + parity) & 1))
+                {
+                    best = candidate;
+                    bestCost = cost;
+                }
+            }
+        if (best.X < 0) best = BoundedRecoveryCell(start, flow, blocked, parity);
+        if (best.X < 0) return Vector2.Zero;
+        _recoveryTargets[index] = new Vector2(best.X + 0.5f, best.Y + 0.5f);
+        _recoveryActive[index] = 1;
+        _navigationRecoveryCount++;
+        return position.DirectionTo(_recoveryTargets[index]);
+    }
+
+    private Vector2I BoundedRecoveryCell(Vector2I start, FlowField flow, byte[] blocked, int parity)
+    {
+        const int diameter = BattleConfig.RecoveryWindowRadius * 2 + 1;
+        Span<int> queue = stackalloc int[diameter * diameter];
+        Span<byte> visited = stackalloc byte[diameter * diameter];
+        int minCol = Math.Max(0, start.X - BattleConfig.RecoveryWindowRadius);
+        int minRow = Math.Max(0, start.Y - BattleConfig.RecoveryWindowRadius);
+        int maxCol = Math.Min(BattleConfig.GridColumns - 1, start.X + BattleConfig.RecoveryWindowRadius);
+        int maxRow = Math.Min(BattleConfig.GridRows - 1, start.Y + BattleConfig.RecoveryWindowRadius);
+        int localWidth = maxCol - minCol + 1;
+        int head = 0;
+        int tail = 0;
+        int startLocal = (start.Y - minRow) * localWidth + start.X - minCol;
+        queue[tail++] = Index(start);
+        visited[startLocal] = 1;
+        Vector2I best = new(-1, -1);
+        float startCost = flow.CostAt(start);
+        float bestCost = startCost;
+        while (head < tail)
+        {
+            int cellIndex = queue[head++];
+            Vector2I cell = new(cellIndex % BattleConfig.GridColumns, cellIndex / BattleConfig.GridColumns);
+            float cost = flow.CostAt(cell);
+            int candidateTie = cellIndex;
+            int bestTie = best.Y * BattleConfig.GridColumns + best.X;
+            if (cost < bestCost - 0.0001f || cost < startCost - 0.0001f && Mathf.IsEqualApprox(cost, bestCost) && ((candidateTie + parity) & 1) < ((bestTie + parity) & 1))
+            {
+                best = cell;
+                bestCost = cost;
+            }
+            for (int y = -1; y <= 1; y++)
+                for (int x = -1; x <= 1; x++)
+                {
+                    if (x == 0 && y == 0) continue;
+                    Vector2I next = cell + new Vector2I(x, y);
+                    if (next.X < minCol || next.X > maxCol || next.Y < minRow || next.Y > maxRow) continue;
+                    int local = (next.Y - minRow) * localWidth + next.X - minCol;
+                    if (visited[local] != 0 || !GroundNavigation.CanTransition(cell, next, blocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows)) continue;
+                    visited[local] = 1;
+                    queue[tail++] = Index(next);
+                }
+        }
+        return best;
+    }
+
+    private void UpdateNavigationProgress(int index, Vector2 movedPosition, float desiredSpeedSq, float elapsed)
+    {
+        if (_kinds[index] == UnitDragon || desiredSpeedSq <= 0.0001f)
+        {
+            _stuckTimers[index] = 0f;
+            _progressOrigins[index] = movedPosition;
+            return;
+        }
+        Vector2 origin = _progressOrigins[index];
+        float dx = movedPosition.X - origin.X;
+        float dy = movedPosition.Y - origin.Y;
+        if (dx * dx + dy * dy >= BattleConfig.NavigationProgressEpsilon * BattleConfig.NavigationProgressEpsilon)
+        {
+            _stuckTimers[index] = 0f;
+            _progressOrigins[index] = movedPosition;
+            if (_recoveryActive[index] != 0 && movedPosition.DistanceSquaredTo(_recoveryTargets[index]) <= BattleConfig.RecoveryArrivalRadius * BattleConfig.RecoveryArrivalRadius)
+                _recoveryActive[index] = 0;
+            return;
+        }
+        _stuckTimers[index] += elapsed;
+        if (_stuckTimers[index] < BattleConfig.StuckTriggerSeconds) return;
+        _stuckTimers[index] = 0f;
+        _cachedWaiting[index] = 0;
+        RecoveryDirection(index);
     }
 
     private static Vector2 MoveFlying(Vector2 position, Vector2 motion)
@@ -597,7 +749,8 @@ public partial class BattleSimulation
         _cachedTargetPositions[index] = _cachedTargetPositions[last]; _cachedSteering[index] = _cachedSteering[last]; _siegeTargetPositions[index] = _siegeTargetPositions[last];
         _hp[index] = _hp[last]; _cooldowns[index] = _cooldowns[last]; _speedScales[index] = _speedScales[last]; _lungeTimers[index] = _lungeTimers[last];
         _flowBiasRadians[index] = _flowBiasRadians[last]; _cachedTargetRadii[index] = _cachedTargetRadii[last]; _hpBarTimers[index] = _hpBarTimers[last]; _cachedWaiting[index] = _cachedWaiting[last];
-        _shieldModes[index] = _shieldModes[last];
+        _shieldModes[index] = _shieldModes[last]; _stuckTimers[index] = _stuckTimers[last]; _recoveryActive[index] = _recoveryActive[last];
+        _progressOrigins[index] = _progressOrigins[last]; _recoveryTargets[index] = _recoveryTargets[last];
         _legionIds[index] = _legionIds[last]; _rallyPointIds[index] = _rallyPointIds[last]; _slotOffsets[index] = _slotOffsets[last];
         _indexById[_ids[index]] = index;
     }
@@ -630,8 +783,9 @@ public partial class BattleSimulation
         _foundTargetPosition = new Vector2(cell.X + 0.5f, cell.Y + 0.5f);
     }
 
-    private Vector2 FindSpawnPosition(Vector2I cell, int team, bool flying)
+    private Vector2 FindSpawnPosition(Vector2I cell, int team, int unitKind)
     {
+        bool flying = unitKind == UnitDragon;
         int forward = team == TeamAlly ? -1 : 1;
         Span<Vector2I> candidates = stackalloc Vector2I[6]
         {
@@ -639,8 +793,13 @@ public partial class BattleSimulation
             cell + Vector2I.Left, cell + Vector2I.Right, cell + new Vector2I(0, -forward),
         };
         foreach (Vector2I candidate in candidates)
-            if (Valid(candidate) && (flying || (!CellBlocksGround(candidate) && CanGroundStepInternal(cell, candidate))))
-                return new Vector2(candidate.X + 0.5f, candidate.Y + 0.5f);
+        {
+            if (!Valid(candidate)) continue;
+            Vector2 position = new(candidate.X + 0.5f, candidate.Y + 0.5f);
+            if (flying || _terrain.CanStep(cell, candidate)
+                && GroundNavigation.CanOccupyPosition(position, UnitRadius(unitKind), _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows))
+                return position;
+        }
         return new Vector2(-1f, -1f);
     }
 
@@ -677,7 +836,8 @@ public partial class BattleSimulation
         return multiplier;
     }
     private int ElevationAt(Vector2 position) => _elevation[Index(CellAt(position))];
-    private bool CanGroundStepInternal(Vector2I from, Vector2I to) => _terrain.CanStep(from, to);
+    private bool CanGroundStepInternal(Vector2I from, Vector2I to) =>
+        GroundNavigation.CanTransition(from, to, _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows);
     private bool CellBlocksGround(Vector2I cell) => IsBlocked(cell) || BuildingAt(cell) >= 0;
     private float SeparationDistance(int first, int second) => (UnitRadius(first) + UnitRadius(second)) * BattleConfig.UnitSeparationSpacingMultiplier;
     private float SiegeDamageAtDistance(float centerDistance, float targetRadius, float baseDamage)

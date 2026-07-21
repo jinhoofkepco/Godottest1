@@ -108,8 +108,12 @@ public partial class BattleSimulation : Node
     private readonly float[] _flowBiasRadians = new float[MaxUnits];
     private readonly float[] _cachedTargetRadii = new float[MaxUnits];
     private readonly float[] _hpBarTimers = new float[MaxUnits];
+    private readonly float[] _stuckTimers = new float[MaxUnits];
     private readonly byte[] _cachedWaiting = new byte[MaxUnits];
     private readonly byte[] _shieldModes = new byte[MaxUnits];
+    private readonly byte[] _recoveryActive = new byte[MaxUnits];
+    private readonly Vector2[] _progressOrigins = new Vector2[MaxUnits];
+    private readonly Vector2[] _recoveryTargets = new Vector2[MaxUnits];
     private readonly int[] _legionIds = new int[MaxUnits];
     private readonly int[] _rallyPointIds = new int[MaxUnits];
     private readonly Vector2[] _slotOffsets = new Vector2[MaxUnits];
@@ -141,6 +145,8 @@ public partial class BattleSimulation : Node
     private readonly TerrainMap _terrain = new(BattleConfig.GridColumns, BattleConfig.GridRows);
     private readonly FlowField _enemyFlow = new(BattleConfig.GridColumns, BattleConfig.GridRows);
     private readonly FlowField _allyFlow = new(BattleConfig.GridColumns, BattleConfig.GridRows);
+    private readonly FlowField _enemyHeavyFlow = new(BattleConfig.GridColumns, BattleConfig.GridRows);
+    private readonly FlowField _allyHeavyFlow = new(BattleConfig.GridColumns, BattleConfig.GridRows);
     private readonly List<int>[] _enemyBuckets = NewBuckets();
     private readonly List<int>[] _allyBuckets = NewBuckets();
     private readonly int[] _enemyOccupiedBucketCells = new int[BattleConfig.CellCount];
@@ -154,6 +160,13 @@ public partial class BattleSimulation : Node
     private readonly int[] _siegeCandidateStamps = new int[BattleConfig.CellCount];
     private int _siegeCandidateGeneration;
     private readonly byte[] _flowBlocked = new byte[BattleConfig.CellCount];
+    private readonly byte[] _groundBlocked = new byte[BattleConfig.CellCount];
+    private readonly byte[] _enemyInfantryBlocked = new byte[BattleConfig.CellCount];
+    private readonly byte[] _allyInfantryBlocked = new byte[BattleConfig.CellCount];
+    private readonly byte[] _enemyHeavyBlocked = new byte[BattleConfig.CellCount];
+    private readonly byte[] _allyHeavyBlocked = new byte[BattleConfig.CellCount];
+    private bool _enemyHeavySharesInfantry;
+    private bool _allyHeavySharesInfantry;
 
     private readonly RandomNumberGenerator _rng = new();
     private double _tickAccumulator;
@@ -224,6 +237,7 @@ public partial class BattleSimulation : Node
     private int _siegeImpactsResolved;
     private int _decisionRefreshCount;
     private int _territoryUpdateCount;
+    private int _navigationRecoveryCount;
 
     public BattleSimulation() => Reset();
 
@@ -240,6 +254,10 @@ public partial class BattleSimulation : Node
         _unitCount = 0;
         Array.Clear(_teamUnitCounts);
         Array.Clear(_shieldModes);
+        Array.Clear(_stuckTimers);
+        Array.Clear(_recoveryActive);
+        Array.Clear(_progressOrigins);
+        Array.Clear(_recoveryTargets);
         ResetLegions();
         _buildingCount = 0;
         _impactCount = 0;
@@ -395,6 +413,10 @@ public partial class BattleSimulation : Node
         _cachedSteering[index] = team == TeamEnemy ? Vector2.Down : Vector2.Up;
         _cachedWaiting[index] = 0;
         _shieldModes[index] = 0;
+        _stuckTimers[index] = 0f;
+        _recoveryActive[index] = 0;
+        _progressOrigins[index] = position;
+        _recoveryTargets[index] = position;
         _hpBarTimers[index] = 0f;
         _legionIds[index] = legionId;
         _rallyPointIds[index] = -1;
@@ -463,7 +485,7 @@ public partial class BattleSimulation : Node
     {
         _profileTickUsec = _profileTargetUsec = _profileSeparationUsec = _profileTerritoryUsec = _profileEventUsec = _profileSnapshotUsec = _profileWorstTickUsec = 0;
         _profileTickCount = 0;
-        _targetCandidateChecks = _aoeCandidateChecks = _siegeImpactsResolved = _decisionRefreshCount = _territoryUpdateCount = 0;
+        _targetCandidateChecks = _aoeCandidateChecks = _siegeImpactsResolved = _decisionRefreshCount = _territoryUpdateCount = _navigationRecoveryCount = 0;
     }
 
     private static long Usec(long start) => (long)((Stopwatch.GetTimestamp() - start) * 1_000_000.0 / Stopwatch.Frequency);

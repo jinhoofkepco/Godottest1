@@ -90,6 +90,11 @@ public static class BattleConfig
     public const float UnitLungeDistance = 0.18f;
     public const float GroundBlockRepulsionRadius = 1.15f;
     public const float GroundBlockRepulsionWeight = 0.85f;
+    public const float NavigationProgressEpsilon = 0.05f;
+    public const float StuckTriggerSeconds = 0.40f;
+    public const int RecoveryWindowRadius = 4;
+    public const float RecoveryArrivalRadius = 0.18f;
+    public const int FormationProjectionRadius = 4;
     public const float HqFallbackBand = 1.25f;
     public const float UphillSpeedMultiplier = 0.70f;
     public const float UphillCost = 1.35f;

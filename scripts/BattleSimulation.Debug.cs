@@ -44,6 +44,9 @@ public partial class BattleSimulation
             ["unit_lunge_directions"] = Copy(_lungeDirections, _unitCount),
             ["unit_cached_waiting"] = Copy(_cachedWaiting, _unitCount),
             ["unit_shield_modes"] = Copy(_shieldModes, _unitCount),
+            ["unit_stuck_timers"] = Copy(_stuckTimers, _unitCount),
+            ["unit_recovery_active"] = Copy(_recoveryActive, _unitCount),
+            ["unit_recovery_targets"] = Copy(_recoveryTargets, _unitCount),
             ["unit_legion_ids"] = Copy(_legionIds, _unitCount),
             ["unit_rally_ids"] = Copy(_rallyPointIds, _unitCount),
             ["unit_slot_offsets"] = Copy(_slotOffsets, _unitCount),
@@ -73,6 +76,7 @@ public partial class BattleSimulation
             ["decision_group_cursor"] = _decisionCursor,
             ["decision_refresh_count"] = _decisionRefreshCount,
             ["territory_update_count"] = _territoryUpdateCount,
+            ["navigation_recovery_count"] = _navigationRecoveryCount,
             ["target_candidate_checks"] = _targetCandidateChecks,
             ["aoe_candidate_checks"] = _aoeCandidateChecks,
             ["siege_impacts_resolved"] = _siegeImpactsResolved,
@@ -175,6 +179,10 @@ public partial class BattleSimulation
                 _unitCount = 0;
                 Array.Clear(_teamUnitCounts);
                 Array.Clear(_shieldModes);
+                Array.Clear(_stuckTimers);
+                Array.Clear(_recoveryActive);
+                Array.Clear(_progressOrigins);
+                Array.Clear(_recoveryTargets);
                 ResetLegions();
                 Array.Fill(_indexById, -1);
                 _nextUnitId = 1;
@@ -190,7 +198,13 @@ public partial class BattleSimulation
                 {
                     int index = ResolveUnit(command);
                     if (index < 0) return false;
-                    if (command.ContainsKey("position")) _positions[index] = DVector2(command, "position", _positions[index]);
+                    if (command.ContainsKey("position"))
+                    {
+                        _positions[index] = DVector2(command, "position", _positions[index]);
+                        _progressOrigins[index] = _positions[index];
+                        _stuckTimers[index] = 0f;
+                        _recoveryActive[index] = 0;
+                    }
                     if (command.ContainsKey("velocity")) _velocities[index] = DVector2(command, "velocity", _velocities[index]);
                     if (command.ContainsKey("hp")) _hp[index] = DFloat(command, "hp", _hp[index]);
                     if (command.ContainsKey("cooldown")) _cooldowns[index] = DFloat(command, "cooldown", _cooldowns[index]);
@@ -294,6 +308,11 @@ public partial class BattleSimulation
     public float GetGroundSpeedMultiplier(Vector2 from, Vector2 toward) => GroundSpeedMultiplier(from, toward);
     public float GetElevationDamageMultiplier(Vector2 attacker, Vector2 target) => ElevationDamageMultiplier(attacker, target);
     public bool CanGroundStep(Vector2I from, Vector2I to) => CanGroundStepInternal(from, to);
+    public bool CanGroundStepForKind(int team, int kind, Vector2I from, Vector2I to) =>
+        GroundNavigation.CanTransition(from, to, SelectFlowBlocked(team, kind), _elevation, BattleConfig.GridColumns, BattleConfig.GridRows);
+    public bool IsGroundPositionClear(Vector2 position, float radius) =>
+        GroundNavigation.CanOccupyPosition(position, radius, _groundBlocked, _elevation, BattleConfig.GridColumns, BattleConfig.GridRows);
+    public Vector2I GetFlowNextCell(int team, int kind, Vector2I cell) => SelectFlow(team, kind).NextCellAt(cell);
     public bool CanFlyingStep(Vector2I from, Vector2I to) => Valid(from) && Valid(to);
     public bool IsWaterCell(Vector2I cell) => Valid(cell) && _water[Index(cell)] != 0;
     public int WaterComponentCount()
