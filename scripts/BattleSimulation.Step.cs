@@ -41,6 +41,7 @@ public partial class BattleSimulation
             if (refresh)
             {
                 _decisionRefreshCount++;
+                UpdateShieldMode(index);
                 if (_kinds[index] == UnitSiege)
                 {
                     if (_cooldowns[index] <= 0f) FindSiegeTarget(index);
@@ -105,6 +106,8 @@ public partial class BattleSimulation
             Vector2 desired = _cachedSteering[index];
             _states[index] = isWaiting ? StateWait : StateAdvance;
             float maximumSpeed = LegionSpeedForUnit(index) * _speedScales[index];
+            if (_kinds[index] == UnitMelee && _shieldModes[index] != 0)
+                maximumSpeed *= _settings.ShieldSpeedMultiplier;
             if (_kinds[index] != UnitDragon && desired.LengthSquared() > 0.000001f)
                 maximumSpeed *= GroundSpeedMultiplier(position, position + desired.Normalized());
             Vector2 targetVelocity = desired.LengthSquared() > 0.000001f ? desired.Normalized() * maximumSpeed : Vector2.Zero;
@@ -174,11 +177,14 @@ public partial class BattleSimulation
             if (building.SpawnTimer > 0f) continue;
             float interval = ProductionInterval(building.UnitKind);
             building.SpawnTimer += interval;
-            Vector2 position = FindSpawnPosition(building.Cell, building.Team, building.UnitKind == UnitDragon);
-            if (position.X < 0f) { building.SpawnTimer = 0.5f; continue; }
-            int unitId = SpawnUnit(building.Team, position, building.UnitKind);
-            if (unitId != 0)
+            for (int produced = 0; produced < ProductionBatch(building.UnitKind); produced++)
+            {
+                Vector2 position = FindSpawnPosition(building.Cell, building.Team, building.UnitKind == UnitDragon);
+                if (position.X < 0f) { building.SpawnTimer = 0.5f; break; }
+                int unitId = SpawnUnit(building.Team, position, building.UnitKind);
+                if (unitId == 0) break;
                 QueueStructural("unit_produced", building.Team, unitId, building.Cell, building.Kind, building.UnitKind);
+            }
         }
     }
 

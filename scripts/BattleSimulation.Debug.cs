@@ -43,6 +43,7 @@ public partial class BattleSimulation
             ["unit_lunge_timers"] = Copy(_lungeTimers, _unitCount),
             ["unit_lunge_directions"] = Copy(_lungeDirections, _unitCount),
             ["unit_cached_waiting"] = Copy(_cachedWaiting, _unitCount),
+            ["unit_shield_modes"] = Copy(_shieldModes, _unitCount),
             ["unit_legion_ids"] = Copy(_legionIds, _unitCount),
             ["unit_rally_ids"] = Copy(_rallyPointIds, _unitCount),
             ["unit_slot_offsets"] = Copy(_slotOffsets, _unitCount),
@@ -173,6 +174,7 @@ public partial class BattleSimulation
             case "clear_units":
                 _unitCount = 0;
                 Array.Clear(_teamUnitCounts);
+                Array.Clear(_shieldModes);
                 ResetLegions();
                 Array.Fill(_indexById, -1);
                 _nextUnitId = 1;
@@ -196,6 +198,7 @@ public partial class BattleSimulation
                     if (command.ContainsKey("target_id")) _targetIds[index] = DInt(command, "target_id", _targetIds[index]);
                     if (command.ContainsKey("lunge_timer")) _lungeTimers[index] = DFloat(command, "lunge_timer", _lungeTimers[index]);
                     if (command.ContainsKey("lunge_direction")) _lungeDirections[index] = DVector2(command, "lunge_direction", _lungeDirections[index]);
+                    if (command.ContainsKey("shield_mode")) _shieldModes[index] = DBool(command, "shield_mode", _shieldModes[index] != 0) ? (byte)1 : (byte)0;
                     return true;
                 }
             case "set_elevation":

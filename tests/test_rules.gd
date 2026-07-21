@@ -28,6 +28,7 @@ func run() -> Array[String]:
 	_test_match_settings_profile()
 	_test_tuned_runtime_behavior()
 	_test_config_and_initial_state()
+	_test_shield_stance_and_heavy_defaults()
 	_test_build_and_economy()
 	_test_construction_population_and_ai_income()
 	_test_elevation_rules()
@@ -125,7 +126,7 @@ func _test_config_and_initial_state() -> void:
 	var config: Dictionary = simulation.call("GetConfigSnapshot")
 	var debug: Dictionary = simulation.call("GetDebugSnapshot")
 	_expect(int(config.grid_columns) == 44 and int(config.grid_rows) == 88, "map expands to the 44x88 battlefield")
-	_expect(is_equal_approx(float(config.siege_range), 7.0), "SIEGE range is 7.0 cells")
+	_expect(is_equal_approx(float(config.siege_range), 14.0), "SIEGE range is 14.0 cells")
 	_expect(is_equal_approx(float(config.siege_damage), 55.8), "SIEGE damage is 55.8")
 	_expect(is_equal_approx(float(config.match_duration), 420.0) and is_equal_approx(float(config.occupancy_win_ratio), 0.92), "match tempo exposes seven minutes and ninety-two percent occupancy")
 	_expect(is_equal_approx(float(config.passive_income_per_second), 2.25) and is_equal_approx(float(config.hq_max_hp), 12000.0), "population-scaled economy and five-times HQ durability are exposed by C#")
@@ -147,6 +148,88 @@ func _test_config_and_initial_state() -> void:
 			_expect(water[row * GameConfig.GRID_COLUMNS + col] == water[mirror], "central lake is point-mirrored for fairness")
 	_expect(not simulation.call("CanGroundStep", Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2 - 10), Vector2i(GameConfig.GRID_COLUMNS / 2, GameConfig.GRID_ROWS / 2 - 9)), "ground units cannot step into the lake")
 	simulation.free()
+
+
+func _test_shield_stance_and_heavy_defaults() -> void:
+	var simulation = _new_simulation()
+	var config: Dictionary = simulation.call("GetConfigSnapshot")
+	_expect(absf(float(config.siege_production_interval) - 12.342857) <= 0.0001, "SIEGE production throughput is forty percent faster")
+	_expect(is_equal_approx(float(config.siege_range), 14.0) and is_equal_approx(float(config.siege_blast_radius), 1.8), "SIEGE range and blast radius are doubled")
+	_expect(is_equal_approx(float(config.siege_damage), 55.8), "SIEGE keeps its current damage while gaining range and throughput")
+	_expect(is_equal_approx(float(config.dragon_hp), 520.0) and is_equal_approx(float(config.dragon_damage), 36.0) and int(config.dragon_production_batch) == 2, "DRAGON batch HP and damage are doubled")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	var flat := PackedByteArray()
+	flat.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	flat.fill(0)
+	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": flat})
+	# Spawn the shooter first so its decision group attacks on the first fixed tick.
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_RANGED, "position": Vector2(10.5, 20.5), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(10.5, 22.0), "exact": true})
+	simulation.call("Step", 1.0 / 30.0)
+	var first_hit: Dictionary = simulation.call("GetDebugSnapshot")
+	_expect(first_hit.has("unit_shield_modes"), "debug snapshot exposes packed shield stance flags")
+	if first_hit.has("unit_shield_modes"):
+		_expect(int(first_hit.unit_shield_modes[1]) == 1, "the first hostile RANGED hit raises the MELEE shield before damage")
+	_expect(is_equal_approx(_unit_hp_by_team_kind(first_hit, TEAM_ALLY, UNIT_MELEE), 48.0 - 8.0 * 1.7 * 0.1), "shield mode reduces only incoming RANGED damage by ninety percent")
+	# Hysteresis keeps the shield active until every hostile RANGED is beyond 3.0 cells.
+	simulation.call("ApplyDebugCommand", {"op": "set_unit", "index": 0, "position": Vector2(10.5, 26.0), "cooldown": 10.0})
+	for tick in range(4): simulation.call("Step", 1.0 / 30.0)
+	var released: Dictionary = simulation.call("GetDebugSnapshot")
+	if released.has("unit_shield_modes"):
+		_expect(int(released.unit_shield_modes[1]) == 0, "MELEE leaves shield mode after hostile RANGED clears the release radius")
+	simulation.free()
+
+	var speed_sim = _new_simulation()
+	speed_sim.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	speed_sim.call("ApplyDebugCommand", {"op": "set_elevation", "values": flat})
+	speed_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(10.5, 24.0), "exact": true})
+	speed_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_RANGED, "position": Vector2(10.5, 21.6), "exact": true})
+	for tick in range(12): speed_sim.call("Step", 1.0 / 30.0)
+	var guarded: Dictionary = speed_sim.call("GetDebugSnapshot")
+	if guarded.has("unit_shield_modes"):
+		_expect(int(guarded.unit_shield_modes[0]) == 1, "hostile RANGED inside 2.5 cells activates shield stance without waiting for a hit")
+	_expect(Vector2(guarded.unit_velocities[0]).length() <= 1.015 * 1.1 * 0.20 + 0.001, "shield stance limits MELEE movement to twenty percent speed")
+	var shield_render: Dictionary = speed_sim.call("GetRenderSnapshot")
+	var shield_buffer: PackedFloat32Array = shield_render.infantry_buffer
+	var has_shield_rim_flag := false
+	for record in range(int(shield_render.infantry_count)):
+		has_shield_rim_flag = has_shield_rim_flag or float(shield_buffer[record * 16 + 10]) > 0.5
+	_expect(has_shield_rim_flag, "bulk infantry buffer carries shield stance in the instance blue channel")
+	speed_sim.free()
+
+	var melee_sim = _new_simulation()
+	melee_sim.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	melee_sim.call("ApplyDebugCommand", {"op": "set_elevation", "values": flat})
+	melee_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ENEMY, "kind": UNIT_MELEE, "position": Vector2(10.5, 20.5), "exact": true})
+	melee_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(10.5, 21.0), "exact": true})
+	melee_sim.call("Step", 1.0 / 30.0)
+	_expect(is_equal_approx(_unit_hp_by_team_kind(melee_sim.call("GetDebugSnapshot"), TEAM_ALLY, UNIT_MELEE), 38.0), "shield protection never reduces incoming MELEE damage")
+	melee_sim.free()
+
+	var production_sim = _new_simulation()
+	production_sim.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	_expect(production_sim.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 3, "cell": Vector2i(5, 70), "unit_kind": UNIT_DRAGON}), "completed DRAGON lair fixture builds")
+	_expect(production_sim.call("ApplyDebugCommand", {"op": "add_building", "team": TEAM_ALLY, "kind": 1, "cell": Vector2i(10, 70), "unit_kind": UNIT_SIEGE}), "completed SIEGE spawner fixture builds")
+	var dragon_lair_id := _building_id_at(production_sim.call("GetDebugSnapshot").buildings, Vector2i(5, 70))
+	var siege_spawner_id := _building_id_at(production_sim.call("GetDebugSnapshot").buildings, Vector2i(10, 70))
+	production_sim.call("ApplyDebugCommand", {"op": "set_building_spawn_timer", "id": dragon_lair_id, "value": 0.0})
+	production_sim.call("ApplyDebugCommand", {"op": "set_building_spawn_timer", "id": siege_spawner_id, "value": 0.0})
+	production_sim.call("Step", 1.0 / 30.0)
+	var produced: Dictionary = production_sim.call("GetDebugSnapshot")
+	var production_events: Dictionary = production_sim.call("DrainEvents")
+	_expect(PackedInt32Array(produced.unit_kinds).count(UNIT_SIEGE) == 1, "one completed SIEGE production cycle emits one unit")
+	_expect(PackedInt32Array(produced.unit_kinds).count(UNIT_DRAGON) == 2, "one DRAGON production cycle emits a two-unit batch")
+	_expect(_count_event(production_events.events, "unit_produced") == 3, "batched production emits one event per successful unit")
+	production_sim.call("ApplyDebugCommand", {"op": "clear_units"})
+	for index in range(GameConfig.TEAM_UNIT_CAP - 1):
+		production_sim.call("ApplyDebugCommand", {"op": "spawn_unit", "team": TEAM_ALLY, "kind": UNIT_MELEE, "position": Vector2(2.5, 70.5), "exact": true})
+	production_sim.call("ApplyDebugCommand", {"op": "set_building_spawn_timer", "id": dragon_lair_id, "value": 0.0})
+	production_sim.call("Step", 1.0 / 30.0)
+	var partial: Dictionary = production_sim.call("GetDebugSnapshot")
+	var partial_events: Dictionary = production_sim.call("DrainEvents")
+	_expect(int(partial.ally_unit_count) == GameConfig.TEAM_UNIT_CAP, "DRAGON batch fills but never exceeds the exact team population cap")
+	_expect(_count_event(partial_events.events, "unit_produced") == 1, "a 299-unit team produces one DRAGON and one production event")
+	production_sim.free()
 
 
 func _test_build_and_economy() -> void:
@@ -228,13 +311,13 @@ func _test_legion_loose_aoe_geometry() -> void:
 	var template := {"melee": 6, "ranged": 4, "siege": 2, "dragon": 0}
 	var line: PackedVector2Array = simulation.call("GetFormationSlots", template, FORMATION_LINE, Vector2.UP)
 	var loose: PackedVector2Array = simulation.call("GetFormationSlots", template, FORMATION_LOOSE, Vector2.UP)
-	var line_hits := 0
-	var loose_hits := 0
+	var line_exposure := 0.0
+	var loose_exposure := 0.0
 	for slot in line:
-		if Vector2(slot).length() <= GameConfig.SIEGE_BLAST_RADIUS + GameConfig.MELEE_UNIT_RADIUS: line_hits += 1
+		line_exposure += float(simulation.call("GetSiegeDamageAtDistance", Vector2(slot).length(), GameConfig.MELEE_UNIT_RADIUS, 1.0))
 	for slot in loose:
-		if Vector2(slot).length() <= GameConfig.SIEGE_BLAST_RADIUS + GameConfig.MELEE_UNIT_RADIUS: loose_hits += 1
-	_expect(loose_hits < line_hits, "LOOSE geometry lowers average SIEGE blast exposure without a stat modifier")
+		loose_exposure += float(simulation.call("GetSiegeDamageAtDistance", Vector2(slot).length(), GameConfig.MELEE_UNIT_RADIUS, 1.0))
+	_expect(loose_exposure < line_exposure, "LOOSE geometry lowers aggregate SIEGE blast exposure without a stat modifier")
 	simulation.free()
 
 
@@ -449,9 +532,9 @@ func _test_tuned_radius_bucket_horizon() -> void:
 
 func _test_siege_rules_and_aoe() -> void:
 	var simulation = _new_simulation()
-	_expect(is_zero_approx(float(simulation.call("GetSiegeDamageAtDistance", 1.04, 0.13, 55.8))), "SIEGE AoE rejects targets outside blast plus target radius")
+	_expect(is_zero_approx(float(simulation.call("GetSiegeDamageAtDistance", 1.94, 0.13, 55.8))), "SIEGE AoE rejects targets outside blast plus target radius")
 	var center_damage := float(simulation.call("GetSiegeDamageAtDistance", 0.0, 0.13, 55.8))
-	var edge_damage := float(simulation.call("GetSiegeDamageAtDistance", 0.9, 0.13, 55.8))
+	var edge_damage := float(simulation.call("GetSiegeDamageAtDistance", 1.8, 0.13, 55.8))
 	_expect(is_equal_approx(center_damage, 55.8), "SIEGE center hit deals full damage")
 	_expect(edge_damage >= 55.8 * 0.4 - 0.01 and edge_damage < center_damage, "SIEGE edge damage linearly falls toward 40 percent")
 	for offset in [Vector2.ZERO, Vector2(0.25, 0.0), Vector2(-0.25, 0.0), Vector2(0.0, 0.25), Vector2(0.0, -0.25)]:
@@ -545,6 +628,13 @@ func _has_event(events: Array, event_type: String) -> bool:
 	for event in events:
 		if String(event.get("type", "")) == event_type: return true
 	return false
+
+
+func _count_event(events: Array, event_type: String) -> int:
+	var count := 0
+	for event in events:
+		if String(event.get("type", "")) == event_type: count += 1
+	return count
 
 
 func _building_id_at(buildings: Array, cell: Vector2i) -> int:

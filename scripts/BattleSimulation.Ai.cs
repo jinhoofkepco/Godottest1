@@ -122,7 +122,10 @@ public partial class BattleSimulation
             int rotationKind = Math.Max(0, _aiDecisions[team] - 1) % kinds.Length;
             float score = kind == rotationKind ? 0.08f : 0f;
             for (int target = 0; target < hostileCounts.Length; target++)
-                score += hostileCounts[target] * Mathf.Max(0f, GetClassDamageMultiplier(kind, target) - 1f);
+            {
+                bool expectedShield = kind == UnitRanged && target == UnitMelee;
+                score += hostileCounts[target] * Mathf.Max(0f, EffectiveClassDamageMultiplier(kind, target, expectedShield) - 1f);
+            }
             if (score > bestScore) { bestScore = score; bestKind = kind; }
         }
         return bestKind switch

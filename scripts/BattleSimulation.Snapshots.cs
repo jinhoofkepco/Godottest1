@@ -157,7 +157,7 @@ public partial class BattleSimulation
             RenderEntry entry = _renderEntries[draw];
             int team, kind, stateIndex, animationFrame;
             Vector2 position, direction;
-            float brightness = 1f, alpha = 1f;
+            float brightness = 1f, alpha = 1f, shield = 0f;
             if (entry.Index >= 0)
             {
                 int index = entry.Index;
@@ -185,6 +185,7 @@ public partial class BattleSimulation
                 }
                 brightness = Mathf.Lerp(0.58f, 1f, Mathf.Clamp(_hp[index] / UnitMaxHp(kind), 0f, 1f));
                 if (state == StateWait) brightness *= 0.76f;
+                shield = kind == UnitMelee && _shieldModes[index] != 0 ? 1f : 0f;
             }
             else
             {
@@ -206,7 +207,7 @@ public partial class BattleSimulation
             Vector2 size = UnitRenderSize(kind);
             Vector2 scale = size / new Vector2(BattleConfig.InfantryBaseWidth, BattleConfig.InfantryBaseHeight);
             int layer = kind == UnitSiege ? (team == TeamEnemy ? 3 : 2) : (team == TeamEnemy ? 1 : 0);
-            WriteRecord(_infantryBuffer, draw, scale, position, new Color(1f, brightness, 0f, alpha), new Color(cellX / 15f, cellY / 15f, layer / 3f, kind == UnitSiege ? 1f : 0f));
+            WriteRecord(_infantryBuffer, draw, scale, position, new Color(1f, brightness, shield, alpha), new Color(cellX / 15f, cellY / 15f, layer / 3f, kind == UnitSiege ? 1f : 0f));
         }
         return count;
     }

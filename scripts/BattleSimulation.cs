@@ -109,6 +109,7 @@ public partial class BattleSimulation : Node
     private readonly float[] _cachedTargetRadii = new float[MaxUnits];
     private readonly float[] _hpBarTimers = new float[MaxUnits];
     private readonly byte[] _cachedWaiting = new byte[MaxUnits];
+    private readonly byte[] _shieldModes = new byte[MaxUnits];
     private readonly int[] _legionIds = new int[MaxUnits];
     private readonly int[] _rallyPointIds = new int[MaxUnits];
     private readonly Vector2[] _slotOffsets = new Vector2[MaxUnits];
@@ -232,6 +233,7 @@ public partial class BattleSimulation : Node
     {
         _unitCount = 0;
         Array.Clear(_teamUnitCounts);
+        Array.Clear(_shieldModes);
         ResetLegions();
         _buildingCount = 0;
         _impactCount = 0;
@@ -386,6 +388,7 @@ public partial class BattleSimulation : Node
         _cachedTargetRadii[index] = 0f;
         _cachedSteering[index] = team == TeamEnemy ? Vector2.Down : Vector2.Up;
         _cachedWaiting[index] = 0;
+        _shieldModes[index] = 0;
         _hpBarTimers[index] = 0f;
         _legionIds[index] = legionId;
         _rallyPointIds[index] = -1;

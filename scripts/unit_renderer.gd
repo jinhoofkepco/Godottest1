@@ -153,7 +153,12 @@ void fragment() {
 	vec2 frame_uv = vec2(UV.x, atlas_data.a > 0.5 ? 1.0 - UV.y : UV.y);
 	vec2 inset_uv = (frame_uv * (cell_pixels - vec2(2.0)) + vec2(1.0)) / cell_pixels;
 	vec4 sample_color = texture(atlas, vec3((cell + inset_uv) / atlas_grid, atlas_data.b * 3.0));
-	COLOR = vec4(sample_color.rgb * instance_data.g, sample_color.a * instance_data.a);
+	vec4 base_color = vec4(sample_color.rgb * instance_data.g, sample_color.a * instance_data.a);
+	float shield = step(0.5, instance_data.b);
+	vec2 p = UV - vec2(0.5, 0.58);
+	float rim = smoothstep(0.035, 0.0, abs(length(p / vec2(0.34, 0.27)) - 1.0));
+	vec4 shield_color = vec4(0.32, 0.86, 1.0, rim * 0.42 * shield);
+	COLOR = mix(base_color, vec4(mix(base_color.rgb, shield_color.rgb, shield_color.a), max(base_color.a, shield_color.a)), shield);
 }
 """
 	var material := ShaderMaterial.new()

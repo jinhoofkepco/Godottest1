@@ -5,6 +5,31 @@ using System.Collections.Generic;
 
 public partial class BattleSimulation
 {
+    private void UpdateShieldMode(int unitIndex)
+    {
+        if (_kinds[unitIndex] != UnitMelee)
+        {
+            _shieldModes[unitIndex] = 0;
+            return;
+        }
+        Vector2 position = _positions[unitIndex];
+        float radius = _shieldModes[unitIndex] != 0 ? _settings.ShieldReleaseRange : _settings.ShieldEnterRange;
+        float radiusSq = radius * radius;
+        List<int>[] hostileBuckets = _teams[unitIndex] == TeamEnemy ? _allyBuckets : _enemyBuckets;
+        Vector2I center = CellAt(position);
+        int bucketRadius = Mathf.CeilToInt(radius);
+        for (int row = Math.Max(0, center.Y - bucketRadius); row <= Math.Min(BattleConfig.GridRows - 1, center.Y + bucketRadius); row++)
+            for (int col = Math.Max(0, center.X - bucketRadius); col <= Math.Min(BattleConfig.GridColumns - 1, center.X + bucketRadius); col++)
+                foreach (int candidate in hostileBuckets[Index(new Vector2I(col, row))])
+                {
+                    if (_hp[candidate] <= 0f || _kinds[candidate] != UnitRanged
+                        || position.DistanceSquaredTo(_positions[candidate]) > radiusSq) continue;
+                    _shieldModes[unitIndex] = 1;
+                    return;
+                }
+        _shieldModes[unitIndex] = 0;
+    }
+
     private void FindTarget(int unitIndex)
     {
         Vector2 position = _positions[unitIndex];
@@ -356,7 +381,9 @@ public partial class BattleSimulation
         if (targetUnit >= 0 && targetUnit < _unitCount)
         {
             if (kind == UnitRanged) QueueShot(ShotRanged, team, origin, _positions[targetUnit]);
-            float classMultiplier = GetClassDamageMultiplier(kind, _kinds[targetUnit]);
+            if (kind == UnitRanged && _kinds[targetUnit] == UnitMelee)
+                _shieldModes[targetUnit] = 1;
+            float classMultiplier = EffectiveClassDamageMultiplier(kind, _kinds[targetUnit], _shieldModes[targetUnit] != 0);
             float multiplier = ElevationDamageMultiplier(origin, _positions[targetUnit]) * classMultiplier;
             _hp[targetUnit] -= UnitAttackDamage(kind) * multiplier;
             _lastAttackerTeams[targetUnit] = team;
@@ -486,6 +513,7 @@ public partial class BattleSimulation
         _cachedTargetPositions[index] = _cachedTargetPositions[last]; _cachedSteering[index] = _cachedSteering[last]; _siegeTargetPositions[index] = _siegeTargetPositions[last];
         _hp[index] = _hp[last]; _cooldowns[index] = _cooldowns[last]; _speedScales[index] = _speedScales[last]; _lungeTimers[index] = _lungeTimers[last];
         _flowBiasRadians[index] = _flowBiasRadians[last]; _cachedTargetRadii[index] = _cachedTargetRadii[last]; _hpBarTimers[index] = _hpBarTimers[last]; _cachedWaiting[index] = _cachedWaiting[last];
+        _shieldModes[index] = _shieldModes[last];
         _legionIds[index] = _legionIds[last]; _rallyPointIds[index] = _rallyPointIds[last]; _slotOffsets[index] = _slotOffsets[last];
         _indexById[_ids[index]] = index;
     }
@@ -555,6 +583,15 @@ public partial class BattleSimulation
         attackerKind >= UnitMelee && attackerKind <= UnitSiege && targetKind >= UnitMelee && targetKind <= UnitSiege
             ? _settings.Units[attackerKind].DamageVs[targetKind]
             : 1f;
+    public float GetEffectiveClassDamageMultiplier(int attackerKind, int targetKind, bool shielded) =>
+        EffectiveClassDamageMultiplier(attackerKind, targetKind, shielded);
+    private float EffectiveClassDamageMultiplier(int attackerKind, int targetKind, bool shielded)
+    {
+        float multiplier = GetClassDamageMultiplier(attackerKind, targetKind);
+        if (shielded && attackerKind == UnitRanged && targetKind == UnitMelee)
+            multiplier *= _settings.ShieldRangedDamageTakenMultiplier;
+        return multiplier;
+    }
     private int ElevationAt(Vector2 position) => _elevation[Index(CellAt(position))];
     private bool CanGroundStepInternal(Vector2I from, Vector2I to) => _terrain.CanStep(from, to);
     private bool CellBlocksGround(Vector2I cell) => IsBlocked(cell) || BuildingAt(cell) >= 0;

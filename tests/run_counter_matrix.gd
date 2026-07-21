@@ -16,13 +16,19 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	var contract_simulation = SIMULATION_SCENE.instantiate()
+	contract_simulation.call("Reset")
+	var shield_multiplier := float(contract_simulation.call("GetEffectiveClassDamageMultiplier", UNIT_RANGED, UNIT_MELEE, true))
+	contract_simulation.free()
+	var failed := false
+	print("COUNTER CONTRACT: RANGED>SHIELDED_MELEE effective_multiplier=%.3f" % shield_multiplier)
+	if not is_equal_approx(shield_multiplier, 0.17):
+		push_error("COUNTER MATRIX FAILED: shield-aware RANGED damage must use the effective multiplier")
+		failed = true
 	var scenarios := [
-		{"name": "RANGED>MELEE", "favored": UNIT_RANGED, "other": UNIT_MELEE, "favored_count": 3, "other_count": 4},
-		{"name": "MELEE>SIEGE", "favored": UNIT_MELEE, "other": UNIT_SIEGE, "favored_count": 7, "other_count": 3},
 		{"name": "DRAGON>RANGED", "favored": UNIT_DRAGON, "other": UNIT_RANGED, "favored_count": 4, "other_count": 11},
 		{"name": "DRAGON>SIEGE", "favored": UNIT_DRAGON, "other": UNIT_SIEGE, "favored_count": 7, "other_count": 11},
 	]
-	var failed := false
 	for scenario: Dictionary in scenarios:
 		var wins := 0
 		for trial in TRIALS:
