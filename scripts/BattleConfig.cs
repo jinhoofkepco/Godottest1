@@ -114,6 +114,24 @@ public static class BattleConfig
     public const float ShieldSpeedMultiplier = 0.20f;
     public const float ShieldRangedDamageTakenMultiplier = 0.10f;
     public const float PreferredFiringRangeRatio = 0.82f;
+    public const int FiringCandidateCount = 16;
+    public const float FiringApproachSidePenalty = 12f;
+    public const float FiringTravelScoreWeight = 1.0f;
+    public const float FiringDensityScoreWeight = 2.8f;
+    public const float FiringFlowScoreWeight = 0.035f;
+    public const float FiringReservationScoreWeight = 18f;
+    public const float FiringAdjacentReservationScoreWeight = 5f;
+    public const float FiringLateralThreshold = 0.28f;
+    public const float FiringSlotArrivalRadius = 0.12f;
+    public const float FiringQueueLookahead = 1.35f;
+    public const float FiringQueueHalfWidthPadding = 0.04f;
+    public const float FiringLateralCorrectionWeight = 1.35f;
+    public const float FiringCombatSeparationWeight = 0.42f;
+    public const float FiringRepositionSpeedMultiplier = 0.72f;
+    public const float FiringYieldMoverWeight = 0.20f;
+    public const float FiringYieldBlockerWeight = 0.80f;
+    public const float FiringYieldSpeed = 0.72f;
+    public const float FiringYieldMaximum = 1f;
 
     public const float BuildingConstructionSecondsPerGold = 0.10f;
     public const float BuildingConstructionStartHpRatio = 0.20f;

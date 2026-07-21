@@ -624,7 +624,7 @@ public partial class BattleSimulation
         Vector2 origin = _positions[attacker];
         if (targetUnit >= 0 && targetUnit < _unitCount)
         {
-            if (kind == UnitRanged) QueueShot(ShotRanged, team, origin, _positions[targetUnit]);
+            if (kind == UnitRanged) QueueShot(ShotRanged, team, origin, _positions[targetUnit], _ids[attacker]);
             if (kind == UnitRanged && _kinds[targetUnit] == UnitMelee)
                 _shieldModes[targetUnit] = 1;
             float classMultiplier = EffectiveClassDamageMultiplier(kind, _kinds[targetUnit], _shieldModes[targetUnit] != 0);
@@ -637,7 +637,7 @@ public partial class BattleSimulation
         {
             Vector2I cell = _buildings[buildingIndex].Cell;
             Vector2 at = new(cell.X + 0.5f, cell.Y + 0.5f);
-            if (kind == UnitRanged) QueueShot(ShotRanged, team, origin, at);
+            if (kind == UnitRanged) QueueShot(ShotRanged, team, origin, at, _ids[attacker]);
             ApplyBuildingDamage(_buildings[buildingIndex].Id, UnitAttackDamage(kind) * ElevationDamageMultiplier(origin, at), team);
         }
     }
@@ -759,6 +759,9 @@ public partial class BattleSimulation
         _flowBiasRadians[index] = _flowBiasRadians[last]; _cachedTargetRadii[index] = _cachedTargetRadii[last]; _hpBarTimers[index] = _hpBarTimers[last]; _cachedWaiting[index] = _cachedWaiting[last];
         _shieldModes[index] = _shieldModes[last]; _stuckTimers[index] = _stuckTimers[last]; _recoveryActive[index] = _recoveryActive[last];
         _progressOrigins[index] = _progressOrigins[last]; _recoveryTargets[index] = _recoveryTargets[last];
+        _firingTargetIds[index] = _firingTargetIds[last]; _firingPositions[index] = _firingPositions[last];
+        _firingSlotIndices[index] = _firingSlotIndices[last]; _firingLateral[index] = _firingLateral[last];
+        _yieldCorrections[index] = _yieldCorrections[last]; _yieldTouched[index] = _yieldTouched[last];
         _legionIds[index] = _legionIds[last]; _rallyPointIds[index] = _rallyPointIds[last]; _slotOffsets[index] = _slotOffsets[last];
         _indexById[_ids[index]] = index;
     }

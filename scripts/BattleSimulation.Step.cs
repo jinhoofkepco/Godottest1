@@ -31,6 +31,7 @@ public partial class BattleSimulation
         }
         UpdateStaticDefenses(delta);
         _targetCandidateChecks = 0;
+        BeginFiringYieldPass();
         for (int index = 0; index < _unitCount; index++)
         {
             if (_hp[index] <= 0f) continue;
@@ -49,8 +50,13 @@ public partial class BattleSimulation
                 }
                 else FindTarget(index);
                 CacheFoundTarget(index);
+                if (_kinds[index] == UnitRanged) RefreshFiringReservation(index);
             }
-            else RestoreCachedTarget(index);
+            else
+            {
+                RestoreCachedTarget(index);
+                if (_kinds[index] == UnitRanged) ValidateFiringReservation(index);
+            }
             if (_profilingEnabled) _profileTargetUsec += Usec(targetStart);
 
             Vector2 position = _positions[index];
@@ -62,24 +68,47 @@ public partial class BattleSimulation
                 inRange = _foundTargetId != 0 && targetDistanceSq >= _settings.SiegeMinRange * _settings.SiegeMinRange && targetDistanceSq <= range * range;
             if (inRange)
             {
+                if (_kinds[index] == UnitRanged)
+                {
+                    if (refresh)
+                    {
+                        Vector2 firingForward = position.DirectionTo(_foundTargetPosition);
+                        _cachedWaiting[index] = !HasUsableLateralFiringSlot(index)
+                            && (ShouldWaitForFiringQueue(index, firingForward) || ShouldWait(index, firingForward)) ? (byte)1 : (byte)0;
+                    }
+                    if (_cachedWaiting[index] != 0 && !HasUsableLateralFiringSlot(index))
+                    {
+                        _states[index] = StateWait;
+                        _velocities[index] = _velocities[index].MoveToward(Vector2.Zero,
+                            UnitSpeed(UnitRanged) * BattleConfig.UnitTurnRate * delta);
+                        ClearNavigationProgress(index, position);
+                        continue;
+                    }
+                }
                 _states[index] = StateAttack;
                 _lungeDirections[index] = position.DirectionTo(_foundTargetPosition);
                 bool shouldKite = _kinds[index] == UnitRanged && _foundUnitIndex >= 0
                     && targetDistanceSq < _settings.RangedStandoffDistance * _settings.RangedStandoffDistance;
-                Vector2 combatDirection = shouldKite ? _foundTargetPosition.DirectionTo(position) : Vector2.Zero;
-                if (shouldKite && _recoveryActive[index] != 0)
+                bool rangedRepositioning = _kinds[index] == UnitRanged;
+                Vector2 combatDirection = rangedRepositioning
+                    ? FiringCombatDirection(index, shouldKite, _foundTargetPosition)
+                    : shouldKite ? _foundTargetPosition.DirectionTo(position) : Vector2.Zero;
+                if ((shouldKite || rangedRepositioning) && _recoveryActive[index] != 0)
                 {
                     Vector2 recovery = RecoveryDirection(index);
                     if (recovery.LengthSquared() > 0.000001f) combatDirection = recovery;
                 }
-                Vector2 combatVelocity = combatDirection * UnitSpeed(_kinds[index]);
-                _velocities[index] = _velocities[index].MoveToward(combatVelocity, UnitSpeed(_kinds[index]) * BattleConfig.UnitTurnRate * delta);
+                float combatSpeed = UnitSpeed(_kinds[index]) * (rangedRepositioning ? BattleConfig.FiringRepositionSpeedMultiplier : 1f);
+                Vector2 combatVelocity = combatDirection * combatSpeed;
+                _velocities[index] = _velocities[index].MoveToward(combatVelocity, combatSpeed * BattleConfig.UnitTurnRate * delta);
                 if (_cooldowns[index] <= 0f)
                 {
                     if (_kinds[index] == UnitSiege) LaunchSiege(index, _foundTargetPosition);
                     else AttackTarget(index, _foundUnitIndex, _foundBuildingIndex);
                 }
-                if (shouldKite)
+                if (rangedRepositioning && HasUsableLateralFiringSlot(index))
+                    AccumulateFiringYield(index, position.DirectionTo(_firingPositions[index]));
+                if (shouldKite || rangedRepositioning && combatDirection.LengthSquared() > 0.000001f)
                 {
                     Vector2 kitePosition = MoveGround(position, _velocities[index] * delta, UnitRadius(_kinds[index]));
                     _positions[index] = kitePosition;
@@ -100,9 +129,14 @@ public partial class BattleSimulation
                 bool engagedLegion = grouped && _legionStates[legionIndex] == LegionEngaged;
                 bool rallying = !grouped && _rallyPointIds[index] > 0;
                 Vector2 advance = grouped && !engagedLegion ? LegionSteering(index) : rallying ? RallySteering(index) : AdvanceDirection(index);
-                Vector2 seek = _foundTargetId != 0 ? position.DirectionTo(_foundTargetPosition) : Vector2.Zero;
+                Vector2 seek = _foundTargetId != 0
+                    ? (_kinds[index] == UnitRanged ? FiringSeekDirection(index, _foundTargetPosition) : position.DirectionTo(_foundTargetPosition))
+                    : Vector2.Zero;
                 Vector2 separation = CalculateSeparation(index);
-                bool waiting = !rallying && _kinds[index] != UnitDragon && ShouldWait(index, advance);
+                bool firingQueueWait = !rallying && _kinds[index] == UnitRanged && _foundTargetId != 0
+                    && ShouldWaitForFiringQueue(index, position.DirectionTo(_foundTargetPosition));
+                bool waiting = !rallying && _kinds[index] != UnitDragon
+                    && (firingQueueWait || ShouldWait(index, advance)) && !HasUsableLateralFiringSlot(index);
                 Vector2 steering = separation * (waiting ? BattleConfig.WaitSeparationWeight : BattleConfig.UnitSeparationWeight);
                 if (!waiting)
                 {
@@ -130,6 +164,8 @@ public partial class BattleSimulation
                 }
             }
             _states[index] = isWaiting ? StateWait : StateAdvance;
+            if (!isWaiting && _kinds[index] == UnitRanged && HasUsableLateralFiringSlot(index))
+                AccumulateFiringYield(index, position.DirectionTo(_firingPositions[index]));
             float maximumSpeed = LegionSpeedForUnit(index) * _speedScales[index];
             if (_kinds[index] == UnitMelee && _shieldModes[index] != 0)
                 maximumSpeed *= _settings.ShieldSpeedMultiplier;
@@ -146,6 +182,7 @@ public partial class BattleSimulation
             if (refresh && !isWaiting) UpdateNavigationProgress(index, movedPosition, targetVelocity.LengthSquared(), delta * BattleConfig.DecisionGroupCount);
             if (_profilingEnabled) _profileSeparationUsec += Usec(separationStart);
         }
+        ApplyFiringYieldCorrections(delta);
         _decisionCursor = (_decisionCursor + 1) % BattleConfig.DecisionGroupCount;
         eventStart = _profilingEnabled ? Stopwatch.GetTimestamp() : 0;
         RemoveDeadUnits();

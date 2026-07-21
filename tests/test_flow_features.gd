@@ -16,6 +16,8 @@ func run() -> Array[String]:
 	_test_wait_enter_and_release()
 	_test_wait_and_attack_navigation_lifecycle()
 	_test_blocked_kite_enters_recovery()
+	_test_ranged_firing_line_throughput()
+	_test_single_width_corridor_wait()
 	_test_bulk_boundary_source()
 	return failures
 
@@ -242,6 +244,137 @@ func _test_blocked_kite_enters_recovery() -> void:
 	_expect(int(recovered.navigation_recovery_count) > 0, "blocked ranged kiting contributes actual-progress recovery")
 	_expect(absf(Vector2(recovered.unit_positions[0]).x - 10.5) > 0.20, "blocked ranged kiting follows a lateral recovery route")
 	simulation.free()
+
+
+func _test_ranged_firing_line_throughput() -> void:
+	var simulation = _new_simulation()
+	var tuned: Dictionary = simulation.call("GetMatchSettings")
+	tuned.melee.max_hp = 5000.0
+	tuned.melee.damage = 0.10
+	tuned.melee.speed = 0.05
+	tuned.ranged.damage = 0.10
+	_expect(bool(simulation.call("ConfigureAndReset", tuned).ok), "firing-line fixture accepts durable combat tuning")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	simulation.call("ApplyDebugCommand", {"op": "clear_units"})
+	_set_flat_elevation(simulation)
+
+	# Spawn the central target first so retained-target tie-breaking is deterministic.
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 1, "kind": 0, "position": Vector2(22.5, 30.4), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 1, "kind": 0, "position": Vector2(21.8, 30.4), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 1, "kind": 0, "position": Vector2(23.2, 30.4), "exact": true})
+	for index in range(8):
+		simulation.call("ApplyDebugCommand", {
+			"op": "spawn_unit", "team": 2, "kind": 1,
+			"position": Vector2(22.5, 33.0 + float(index) * 0.34), "exact": true,
+		})
+
+	var unique_shooters: Dictionary = {}
+	var found_open_line := false
+	var has_source_channel := true
+	for tick in range(150):
+		simulation.call("Step", 1.0 / 30.0)
+		var events: Dictionary = simulation.call("DrainEvents")
+		if not events.has("shot_source_ids"):
+			has_source_channel = false
+		else:
+			var shot_kinds := PackedByteArray(events.shot_kinds)
+			var shot_sources := PackedInt32Array(events.shot_source_ids)
+			for shot_index in range(mini(shot_kinds.size(), shot_sources.size())):
+				if int(shot_kinds[shot_index]) == 0 and int(shot_sources[shot_index]) > 0:
+					unique_shooters[int(shot_sources[shot_index])] = true
+		var snapshot: Dictionary = simulation.call("GetDebugSnapshot")
+		var teams := PackedInt32Array(snapshot.unit_teams)
+		var kinds := PackedInt32Array(snapshot.unit_kinds)
+		var states := PackedInt32Array(snapshot.unit_states)
+		var positions := PackedVector2Array(snapshot.unit_positions)
+		var attacker_count := 0
+		var minimum := Vector2(INF, INF)
+		var maximum := Vector2(-INF, -INF)
+		for unit_index in range(positions.size()):
+			if int(teams[unit_index]) != 2 or int(kinds[unit_index]) != 1 or int(states[unit_index]) != 1:
+				continue
+			attacker_count += 1
+			minimum = minimum.min(positions[unit_index])
+			maximum = maximum.max(positions[unit_index])
+		if attacker_count >= 4 and maximum.x - minimum.x >= 0.9 and maximum.y - minimum.y < 1.6:
+			found_open_line = true
+	_expect(has_source_channel, "shot events expose stable source unit IDs")
+	_expect(unique_shooters.size() >= 4, "at least four distinct RANGED units fire through an open firing line")
+	_expect(found_open_line, "four RANGED attackers form a wide shallow firing line in the same frame")
+	simulation.free()
+
+
+func _test_single_width_corridor_wait() -> void:
+	var simulation = _new_simulation()
+	var tuned: Dictionary = simulation.call("GetMatchSettings")
+	tuned.melee.max_hp = 5000.0
+	tuned.melee.damage = 0.10
+	tuned.melee.speed = 0.05
+	tuned.ranged.damage = 0.10
+	_expect(bool(simulation.call("ConfigureAndReset", tuned).ok), "single-width corridor fixture accepts durable combat tuning")
+	simulation.call("ApplyDebugCommand", {"op": "set_enemy_ai", "enabled": false})
+	simulation.call("ApplyDebugCommand", {"op": "clear_units"})
+	var elevation := PackedByteArray()
+	elevation.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	elevation.fill(0)
+	for row in range(18, 38):
+		elevation[row * GameConfig.GRID_COLUMNS + 21] = 2
+		elevation[row * GameConfig.GRID_COLUMNS + 23] = 2
+	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": elevation})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 1, "kind": 0, "position": Vector2(22.5, 25.0), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 2, "kind": 1, "position": Vector2(22.5, 27.3), "exact": true})
+	simulation.call("ApplyDebugCommand", {"op": "spawn_unit", "team": 2, "kind": 1, "position": Vector2(22.5, 27.64), "exact": true})
+	var initial: Dictionary = simulation.call("GetDebugSnapshot")
+	var rear_id := int(PackedInt32Array(initial.unit_ids)[2])
+	var front_id := int(PackedInt32Array(initial.unit_ids)[1])
+	var wait_samples := 0
+	var samples := 0
+	var maximum_x_drift := 0.0
+	var minimum_pair_distance := INF
+	var sign_changes := 0
+	var previous_sign := 0
+	var rear_has_lateral_slot := false
+	for tick in range(120):
+		simulation.call("Step", 1.0 / 30.0)
+		simulation.call("DrainEvents")
+		if tick < 30:
+			continue
+		var snapshot: Dictionary = simulation.call("GetDebugSnapshot")
+		var ids := PackedInt32Array(snapshot.unit_ids)
+		var rear_index := ids.find(rear_id)
+		var front_index := ids.find(front_id)
+		if rear_index < 0 or front_index < 0:
+			continue
+		samples += 1
+		var states := PackedInt32Array(snapshot.unit_states)
+		var positions := PackedVector2Array(snapshot.unit_positions)
+		var velocities := PackedVector2Array(snapshot.unit_velocities)
+		if int(states[rear_index]) == 2:
+			wait_samples += 1
+		maximum_x_drift = maxf(maximum_x_drift, absf(positions[rear_index].x - 22.5))
+		minimum_pair_distance = minf(minimum_pair_distance, positions[rear_index].distance_to(positions[front_index]))
+		var sign := 0
+		if velocities[rear_index].x > 0.01: sign = 1
+		elif velocities[rear_index].x < -0.01: sign = -1
+		if sign != 0 and previous_sign != 0 and sign != previous_sign:
+			sign_changes += 1
+		if sign != 0:
+			previous_sign = sign
+		if snapshot.has("unit_firing_lateral"):
+			rear_has_lateral_slot = rear_has_lateral_slot or int(PackedByteArray(snapshot.unit_firing_lateral)[rear_index]) != 0
+	_expect(samples > 0 and wait_samples >= int(float(samples) * 0.70), "rear RANGED remains in stable WAIT through a true single-width corridor")
+	_expect(maximum_x_drift <= 0.12, "corridor WAIT stays near the centerline")
+	_expect(sign_changes <= 2, "corridor WAIT avoids lateral velocity oscillation")
+	_expect(minimum_pair_distance >= 0.28, "corridor WAIT preserves safe RANGED separation")
+	_expect(initial.has("unit_firing_lateral") and not rear_has_lateral_slot, "debug state reports no usable lateral firing slot in a one-cell corridor")
+	simulation.free()
+
+
+func _set_flat_elevation(simulation) -> void:
+	var elevation := PackedByteArray()
+	elevation.resize(GameConfig.GRID_COLUMNS * GameConfig.GRID_ROWS)
+	elevation.fill(0)
+	simulation.call("ApplyDebugCommand", {"op": "set_elevation", "values": elevation})
 
 
 func _test_bulk_boundary_source() -> void:

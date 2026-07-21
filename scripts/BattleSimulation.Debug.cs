@@ -47,6 +47,10 @@ public partial class BattleSimulation
             ["unit_stuck_timers"] = Copy(_stuckTimers, _unitCount),
             ["unit_recovery_active"] = Copy(_recoveryActive, _unitCount),
             ["unit_recovery_targets"] = Copy(_recoveryTargets, _unitCount),
+            ["unit_firing_target_ids"] = Copy(_firingTargetIds, _unitCount),
+            ["unit_firing_positions"] = Copy(_firingPositions, _unitCount),
+            ["unit_firing_slot_indices"] = Copy(_firingSlotIndices, _unitCount),
+            ["unit_firing_lateral"] = Copy(_firingLateral, _unitCount),
             ["unit_legion_ids"] = Copy(_legionIds, _unitCount),
             ["unit_rally_ids"] = Copy(_rallyPointIds, _unitCount),
             ["unit_slot_offsets"] = Copy(_slotOffsets, _unitCount),
@@ -162,7 +166,14 @@ public partial class BattleSimulation
                     Vector2 position = DVector2(command, "position", new Vector2(BattleConfig.GridColumns * 0.5f, BattleConfig.GridRows * 0.5f));
                     int id = SpawnUnit(team, position, kind, -1, default, DBool(command, "bypass_cap", false));
                     if (id == 0) return false;
-                    if (DBool(command, "exact", false)) _positions[_indexById[id]] = position;
+                    if (DBool(command, "exact", false))
+                    {
+                        int index = _indexById[id];
+                        _positions[index] = position;
+                        ClearNavigationProgress(index, position);
+                        ClearFiringReservation(index);
+                        _firingPositions[index] = position;
+                    }
                     return true;
                 }
             case "spawn_legion":
@@ -183,6 +194,13 @@ public partial class BattleSimulation
                 Array.Clear(_recoveryActive);
                 Array.Clear(_progressOrigins);
                 Array.Clear(_recoveryTargets);
+                Array.Clear(_firingTargetIds);
+                Array.Clear(_firingPositions);
+                Array.Fill(_firingSlotIndices, -1);
+                Array.Clear(_firingLateral);
+                Array.Clear(_yieldCorrections);
+                Array.Clear(_yieldTouched);
+                _yieldTouchedCount = 0;
                 ResetLegions();
                 Array.Fill(_indexById, -1);
                 _nextUnitId = 1;
@@ -204,12 +222,18 @@ public partial class BattleSimulation
                         _progressOrigins[index] = _positions[index];
                         _stuckTimers[index] = 0f;
                         _recoveryActive[index] = 0;
+                        ClearFiringReservation(index);
+                        _firingPositions[index] = _positions[index];
                     }
                     if (command.ContainsKey("velocity")) _velocities[index] = DVector2(command, "velocity", _velocities[index]);
                     if (command.ContainsKey("hp")) _hp[index] = DFloat(command, "hp", _hp[index]);
                     if (command.ContainsKey("cooldown")) _cooldowns[index] = DFloat(command, "cooldown", _cooldowns[index]);
                     if (command.ContainsKey("state")) _states[index] = DInt(command, "state", _states[index]);
-                    if (command.ContainsKey("target_id")) _targetIds[index] = DInt(command, "target_id", _targetIds[index]);
+                    if (command.ContainsKey("target_id"))
+                    {
+                        _targetIds[index] = DInt(command, "target_id", _targetIds[index]);
+                        ClearFiringReservation(index);
+                    }
                     if (command.ContainsKey("lunge_timer")) _lungeTimers[index] = DFloat(command, "lunge_timer", _lungeTimers[index]);
                     if (command.ContainsKey("lunge_direction")) _lungeDirections[index] = DVector2(command, "lunge_direction", _lungeDirections[index]);
                     if (command.ContainsKey("shield_mode")) _shieldModes[index] = DBool(command, "shield_mode", _shieldModes[index] != 0) ? (byte)1 : (byte)0;

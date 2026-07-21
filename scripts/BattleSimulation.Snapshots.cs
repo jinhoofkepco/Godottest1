@@ -408,6 +408,7 @@ public partial class BattleSimulation
             ["shot_teams"] = Copy(_shotTeams, _shotCount),
             ["shot_origins"] = Copy(_shotOrigins, _shotCount),
             ["shot_targets"] = Copy(_shotTargets, _shotCount),
+            ["shot_source_ids"] = Copy(_shotSourceIds, _shotCount),
             ["death_unit_ids"] = Copy(_deathIds, _deathCount),
             ["death_teams"] = Copy(_deathTeams, _deathCount),
             ["death_kinds"] = Copy(_deathKinds, _deathCount),
@@ -429,7 +430,7 @@ public partial class BattleSimulation
         _hpBarTimers[unitIndex] = BattleConfig.HpBarVisibleSeconds;
     }
 
-    private void QueueShot(int kind, int team, Vector2 origin, Vector2 target)
+    private void QueueShot(int kind, int team, Vector2 origin, Vector2 target, int sourceUnitId = 0)
     {
         if (_shotCount >= MaxEvents) return;
         int eventIndex = _shotCount++;
@@ -437,6 +438,7 @@ public partial class BattleSimulation
         _shotTeams[eventIndex] = team;
         _shotOrigins[eventIndex] = origin;
         _shotTargets[eventIndex] = target;
+        _shotSourceIds[eventIndex] = sourceUnitId;
     }
 
     private void QueueDeath(int unitIndex, Vector2 direction)
