@@ -17,6 +17,7 @@ func run() -> Array[String]:
 			_expect(simulation.has_method(method), "simulation exposes %s" % method)
 		if failures.is_empty():
 			_test_deterministic_arena(simulation)
+			_test_agent_movement(simulation)
 		simulation.free()
 	return failures
 
@@ -67,6 +68,46 @@ func _test_deterministic_arena(simulation: Node) -> void:
 	_expect(is_zero_approx(float(repeated.get("time", -1.0))), "repeated reset clears elapsed time")
 
 
+func _test_agent_movement(simulation: Node) -> void:
+	const RUN_TICKS := 45 * 30
+	simulation.call("ResetExperiment", 1, TEST_SEED)
+	simulation.call("RunTicks", RUN_TICKS)
+	var first: Dictionary = simulation.call("GetSnapshot")
+	var metrics: Dictionary = simulation.call("GetMetrics")
+	var first_positions := PackedVector2Array(first.get("positions", PackedVector2Array()))
+	var first_actions := PackedInt32Array(first.get("actions", PackedInt32Array()))
+	var action_counts := PackedInt32Array(metrics.get("action_counts", PackedInt32Array()))
+
+	_expect(action_counts.size() == 8, "metrics expose one population count for every utility action")
+	_expect(_sum_ints(action_counts) == TEAM_SIZE * 2, "action population counts include all 60 agents")
+	_expect(int(metrics.get("flank_decisions", 0)) > 0, "agents independently choose a flank")
+	_expect(int(metrics.get("yield_decisions", 0)) > 0, "blocked agents negotiate passage")
+	_expect(int(metrics.get("side_crossings", 0)) > 0, "agents use a viable side route")
+	_expect(float(metrics.get("maximum_stuck_seconds", 999.0)) < 12.0, "no agent remains permanently stuck")
+	_expect(int(metrics.get("overlap_violations", -1)) == 0, "position correction preserves minimum separation")
+	_expect(metrics.has("idle_agent_seconds"), "metrics expose accumulated pathological idle time")
+	print(
+		"AGENT MOVEMENT 45S flank=%d yield=%d side=%d idle=%.2f max_stuck=%.2f overlap=%d avg=%.3fms"
+		% [
+			int(metrics.get("flank_decisions", 0)),
+			int(metrics.get("yield_decisions", 0)),
+			int(metrics.get("side_crossings", 0)),
+			float(metrics.get("idle_agent_seconds", 0.0)),
+			float(metrics.get("maximum_stuck_seconds", 0.0)),
+			int(metrics.get("overlap_violations", -1)),
+			float(metrics.get("average_tick_ms", -1.0)),
+		]
+	)
+
+	simulation.call("ResetExperiment", 1, TEST_SEED)
+	simulation.call("RunTicks", RUN_TICKS)
+	var repeated: Dictionary = simulation.call("GetSnapshot")
+	var repeated_positions := PackedVector2Array(repeated.get("positions", PackedVector2Array()))
+	var repeated_actions := PackedInt32Array(repeated.get("actions", PackedInt32Array()))
+	_expect(_same_vectors(first_positions, repeated_positions), "same seed and ticks reproduce every agent position")
+	_expect(first_actions == repeated_actions, "same seed and ticks reproduce every agent action")
+
+
 func _same_vectors(left: PackedVector2Array, right: PackedVector2Array) -> bool:
 	if left.size() != right.size():
 		return false
@@ -74,6 +115,13 @@ func _same_vectors(left: PackedVector2Array, right: PackedVector2Array) -> bool:
 		if not left[index].is_equal_approx(right[index]):
 			return false
 	return true
+
+
+func _sum_ints(values: PackedInt32Array) -> int:
+	var total := 0
+	for value in values:
+		total += value
+	return total
 
 
 func _expect(condition: bool, message: String) -> void:

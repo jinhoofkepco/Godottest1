@@ -12,6 +12,22 @@ public partial class AgentBattleSimulation : Node
     private readonly float[] _hp = new float[AgentBattleConfig.UnitCount];
     private readonly int[] _actions = new int[AgentBattleConfig.UnitCount];
     private readonly int[] _blockedCells = new int[AgentBattleConfig.BlockedCellCount];
+    private readonly bool[] _blockedMask = new bool[AgentBattleConfig.ArenaWidth * AgentBattleConfig.ArenaHeight];
+    private readonly int[] _routeIntents = new int[AgentBattleConfig.UnitCount];
+    private readonly int[] _actionCommitTicks = new int[AgentBattleConfig.UnitCount];
+    private readonly float[] _selectedActionScores = new float[AgentBattleConfig.UnitCount];
+    private readonly float[] _yieldSides = new float[AgentBattleConfig.UnitCount];
+    private readonly float[] _stuckSeconds = new float[AgentBattleConfig.UnitCount];
+    private readonly Vector2[] _tickStartPositions = new Vector2[AgentBattleConfig.UnitCount];
+    private readonly Vector2[] _desiredDirections = new Vector2[AgentBattleConfig.UnitCount];
+    private readonly float[] _moveSpeeds = new float[AgentBattleConfig.UnitCount];
+    private readonly bool[] _hasFlanked = new bool[AgentBattleConfig.UnitCount];
+    private readonly bool[] _hasYielded = new bool[AgentBattleConfig.UnitCount];
+    private readonly bool[] _hasCrossedSideRoute = new bool[AgentBattleConfig.UnitCount];
+    private readonly int[] _bucketHeads = new int[AgentBattleConfig.ArenaWidth * AgentBattleConfig.ArenaHeight];
+    private readonly int[] _bucketNext = new int[AgentBattleConfig.UnitCount];
+    private readonly int[] _bucketCounts = new int[AgentBattleConfig.ArenaWidth * AgentBattleConfig.ArenaHeight];
+    private readonly int[] _actionCounts = new int[AgentBattleConfig.ActionCount];
 
     private int _mode;
     private int _seed;
@@ -23,6 +39,12 @@ public partial class AgentBattleSimulation : Node
     private long _tickCount;
     private long _totalTickTicks;
     private long _worstTickTicks;
+    private int _flankDecisions;
+    private int _yieldDecisions;
+    private int _sideCrossings;
+    private int _overlapViolations;
+    private float _idleAgentSeconds;
+    private float _maximumStuckSeconds;
 
     public AgentBattleSimulation() => ResetExperiment();
 
@@ -38,12 +60,37 @@ public partial class AgentBattleSimulation : Node
         _tickCount = 0;
         _totalTickTicks = 0;
         _worstTickTicks = 0;
+        _flankDecisions = 0;
+        _yieldDecisions = 0;
+        _sideCrossings = 0;
+        _overlapViolations = 0;
+        _idleAgentSeconds = 0f;
+        _maximumStuckSeconds = 0f;
 
         Array.Clear(_velocities);
         Array.Fill(_hp, AgentBattleConfig.UnitMaxHp);
         Array.Fill(_actions, AgentBattleConfig.ActionAdvance);
+        Array.Clear(_routeIntents);
+        Array.Clear(_actionCommitTicks);
+        Array.Clear(_selectedActionScores);
+        Array.Clear(_stuckSeconds);
+        Array.Clear(_desiredDirections);
+        Array.Clear(_hasFlanked);
+        Array.Clear(_hasYielded);
+        Array.Clear(_hasCrossedSideRoute);
+        Array.Clear(_blockedMask);
+        Array.Clear(_actionCounts);
+        _actionCounts[AgentBattleConfig.ActionAdvance] = AgentBattleConfig.UnitCount;
         BuildFortification();
         SpawnMirroredTeams();
+        for (int index = 0; index < AgentBattleConfig.UnitCount; index++)
+        {
+            _yieldSides[index] = DeterministicSigned(_seed ^ 0x51F15E, index) < 0f ? -1f : 1f;
+            _moveSpeeds[index] = AgentBattleConfig.MoveSpeed
+                * (1f + DeterministicSigned(_seed ^ 0x7F4A7C15, index) * 0.045f);
+            _tickStartPositions[index] = _positions[index];
+        }
+        RebuildSpatialBuckets();
     }
 
     public void Step(float delta)
@@ -77,6 +124,7 @@ public partial class AgentBattleSimulation : Node
         ["teams"] = (int[])_teams.Clone(),
         ["hp"] = (float[])_hp.Clone(),
         ["actions"] = (int[])_actions.Clone(),
+        ["route_intents"] = (int[])_routeIntents.Clone(),
         ["alive_blue"] = _aliveBlue,
         ["alive_red"] = _aliveRed,
         ["time"] = _elapsed,
@@ -92,13 +140,17 @@ public partial class AgentBattleSimulation : Node
         ["tick_count"] = _tickCount,
         ["average_tick_ms"] = TicksToMilliseconds(_tickCount == 0 ? 0 : _totalTickTicks / (double)_tickCount),
         ["worst_tick_ms"] = TicksToMilliseconds(_worstTickTicks),
-        ["flank_decisions"] = 0,
-        ["yield_decisions"] = 0,
-        ["side_route_crossings"] = 0,
+        ["action_counts"] = (int[])_actionCounts.Clone(),
+        ["flank_decisions"] = _flankDecisions,
+        ["yield_decisions"] = _yieldDecisions,
+        ["side_crossings"] = _sideCrossings,
+        ["side_route_crossings"] = _sideCrossings,
         ["frontline_replacements"] = 0,
-        ["pathological_idle_seconds"] = 0f,
-        ["max_continuous_stuck"] = 0f,
-        ["overlap_violations"] = 0,
+        ["idle_agent_seconds"] = _idleAgentSeconds,
+        ["pathological_idle_seconds"] = _idleAgentSeconds,
+        ["maximum_stuck_seconds"] = _maximumStuckSeconds,
+        ["max_continuous_stuck"] = _maximumStuckSeconds,
+        ["overlap_violations"] = _overlapViolations,
         ["units_ever_attacked"] = 0,
         ["participation_ratio"] = 0f,
     };
@@ -107,6 +159,11 @@ public partial class AgentBattleSimulation : Node
     {
         long start = Stopwatch.GetTimestamp();
         _elapsed += AgentBattleConfig.FixedDelta;
+        RebuildSpatialBuckets();
+        UpdateStaggeredDecisions();
+        IntegrateMovement();
+        UpdateMovementMetrics();
+        RecountActions();
         long elapsedTicks = Stopwatch.GetTimestamp() - start;
         _totalTickTicks += elapsedTicks;
         _worstTickTicks = Math.Max(_worstTickTicks, elapsedTicks);
@@ -142,8 +199,21 @@ public partial class AgentBattleSimulation : Node
             {
                 if (x >= AgentBattleConfig.GateMinX && x <= AgentBattleConfig.GateMaxX)
                     continue;
-                _blockedCells[write++] = y * AgentBattleConfig.ArenaWidth + x;
+                int cell = y * AgentBattleConfig.ArenaWidth + x;
+                _blockedCells[write++] = cell;
+                _blockedMask[cell] = true;
             }
+        }
+    }
+
+    private void RecountActions()
+    {
+        Array.Clear(_actionCounts);
+        for (int index = 0; index < AgentBattleConfig.UnitCount; index++)
+        {
+            int action = _actions[index];
+            if ((uint)action < AgentBattleConfig.ActionCount)
+                _actionCounts[action]++;
         }
     }
 
