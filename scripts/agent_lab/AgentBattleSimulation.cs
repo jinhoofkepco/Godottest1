@@ -18,12 +18,14 @@ public partial class AgentBattleSimulation : Node
     private readonly float[] _selectedActionScores = new float[AgentBattleConfig.UnitCount];
     private readonly float[] _yieldSides = new float[AgentBattleConfig.UnitCount];
     private readonly float[] _stuckSeconds = new float[AgentBattleConfig.UnitCount];
-    private readonly Vector2[] _tickStartPositions = new Vector2[AgentBattleConfig.UnitCount];
+    private readonly float[] _progressSampleY = new float[AgentBattleConfig.UnitCount];
+    private readonly int[] _progressSampleTicks = new int[AgentBattleConfig.UnitCount];
     private readonly Vector2[] _desiredDirections = new Vector2[AgentBattleConfig.UnitCount];
     private readonly float[] _moveSpeeds = new float[AgentBattleConfig.UnitCount];
     private readonly bool[] _hasFlanked = new bool[AgentBattleConfig.UnitCount];
     private readonly bool[] _hasYielded = new bool[AgentBattleConfig.UnitCount];
     private readonly bool[] _hasCrossedSideRoute = new bool[AgentBattleConfig.UnitCount];
+    private readonly bool[] _hasReachedBypassLane = new bool[AgentBattleConfig.UnitCount];
     private readonly int[] _bucketHeads = new int[AgentBattleConfig.ArenaWidth * AgentBattleConfig.ArenaHeight];
     private readonly int[] _bucketNext = new int[AgentBattleConfig.UnitCount];
     private readonly int[] _bucketCounts = new int[AgentBattleConfig.ArenaWidth * AgentBattleConfig.ArenaHeight];
@@ -74,10 +76,12 @@ public partial class AgentBattleSimulation : Node
         Array.Clear(_actionCommitTicks);
         Array.Clear(_selectedActionScores);
         Array.Clear(_stuckSeconds);
+        Array.Clear(_progressSampleTicks);
         Array.Clear(_desiredDirections);
         Array.Clear(_hasFlanked);
         Array.Clear(_hasYielded);
         Array.Clear(_hasCrossedSideRoute);
+        Array.Clear(_hasReachedBypassLane);
         Array.Clear(_blockedMask);
         Array.Clear(_actionCounts);
         _actionCounts[AgentBattleConfig.ActionAdvance] = AgentBattleConfig.UnitCount;
@@ -88,7 +92,7 @@ public partial class AgentBattleSimulation : Node
             _yieldSides[index] = DeterministicSigned(_seed ^ 0x51F15E, index) < 0f ? -1f : 1f;
             _moveSpeeds[index] = AgentBattleConfig.MoveSpeed
                 * (1f + DeterministicSigned(_seed ^ 0x7F4A7C15, index) * 0.045f);
-            _tickStartPositions[index] = _positions[index];
+            _progressSampleY[index] = _positions[index].Y;
         }
         RebuildSpatialBuckets();
     }
@@ -125,6 +129,7 @@ public partial class AgentBattleSimulation : Node
         ["hp"] = (float[])_hp.Clone(),
         ["actions"] = (int[])_actions.Clone(),
         ["route_intents"] = (int[])_routeIntents.Clone(),
+        ["stuck_seconds"] = (float[])_stuckSeconds.Clone(),
         ["alive_blue"] = _aliveBlue,
         ["alive_red"] = _aliveRed,
         ["time"] = _elapsed,

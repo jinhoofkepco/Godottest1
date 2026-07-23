@@ -93,9 +93,17 @@ public partial class AgentBattleSimulation
             return;
 
         if (bestAction == AgentBattleConfig.ActionFlankLeft)
+        {
+            if (_routeIntents[index] != AgentBattleConfig.RouteLeft)
+                _hasReachedBypassLane[index] = false;
             _routeIntents[index] = AgentBattleConfig.RouteLeft;
+        }
         else if (bestAction == AgentBattleConfig.ActionFlankRight)
+        {
+            if (_routeIntents[index] != AgentBattleConfig.RouteRight)
+                _hasReachedBypassLane[index] = false;
             _routeIntents[index] = AgentBattleConfig.RouteRight;
+        }
 
         int commitTicks = bestAction switch
         {
@@ -142,7 +150,8 @@ public partial class AgentBattleSimulation
                                     if (distanceSquared <= AgentBattleConfig.ForwardBlockRange * AgentBattleConfig.ForwardBlockRange
                                         && HasForwardPriority(neighbor, index))
                                     {
-                                        result.LowerForwardPriority = true;
+                                        if (RequiresYield(index, neighbor, distanceSquared))
+                                            result.LowerForwardPriority = true;
                                     }
                                 }
 
@@ -164,6 +173,35 @@ public partial class AgentBattleSimulation
         }
 
         return result;
+    }
+
+    private bool RequiresYield(int index, int ahead, float currentDistanceSquared)
+    {
+        if (_tickCount < AgentBattleConfig.DecisionIntervalTicks)
+            return false;
+
+        float slowSpeed = AgentBattleConfig.MoveSpeed * AgentBattleConfig.YieldSlowSpeedRatio;
+        bool aheadIsBlocked = _velocities[ahead].LengthSquared() < slowSpeed * slowSpeed
+            || _stuckSeconds[ahead] >= AgentBattleConfig.DecisionInterval;
+        if (aheadIsBlocked)
+            return true;
+
+        Vector2 ownVelocity = _velocities[index];
+        if (ownVelocity.LengthSquared() < 0.01f)
+        {
+            Vector2 intended = _desiredDirections[index];
+            if (intended.LengthSquared() < 0.01f)
+                intended = new Vector2(0f, TeamForward(index));
+            ownVelocity = intended.Normalized() * _moveSpeeds[index];
+        }
+
+        float prediction = AgentBattleConfig.YieldPredictionSeconds;
+        Vector2 ownFuture = _positions[index] + ownVelocity * prediction;
+        Vector2 aheadFuture = _positions[ahead] + _velocities[ahead] * prediction;
+        float futureDistanceSquared = ownFuture.DistanceSquaredTo(aheadFuture);
+        float collisionDistance = AgentBattleConfig.SeparationDistance * 1.05f;
+        return futureDistanceSquared < collisionDistance * collisionDistance
+            && futureDistanceSquared < currentDistanceSquared;
     }
 
     private bool HasForwardPriority(int first, int second)
@@ -210,8 +248,12 @@ public partial class AgentBattleSimulation
             }
             else if (action == AgentBattleConfig.ActionYield)
             {
-                _yieldDecisions++;
-                _hasYielded[index] = true;
+                // Report unique agents whose verified blocking episode caused a negotiation.
+                if (!_hasYielded[index])
+                {
+                    _yieldDecisions++;
+                    _hasYielded[index] = true;
+                }
             }
         }
 

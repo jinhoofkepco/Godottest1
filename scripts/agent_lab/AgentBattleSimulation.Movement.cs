@@ -39,7 +39,6 @@ public partial class AgentBattleSimulation
     {
         for (int index = 0; index < AgentBattleConfig.UnitCount; index++)
         {
-            _tickStartPositions[index] = _positions[index];
             if (_hp[index] <= 0f)
                 continue;
 
@@ -98,19 +97,25 @@ public partial class AgentBattleSimulation
 
         if (route == AgentBattleConfig.RouteLeft)
         {
+            float laneX = BypassLaneX(index, false);
+            float stagingY = BypassStagingY(index, blue);
+            if (!_hasReachedBypassLane[index])
+            {
+                if (MathF.Abs(position.X - laneX) <= 0.22f)
+                    _hasReachedBypassLane[index] = true;
+                else
+                    return new Vector2(laneX, stagingY);
+            }
+
             if (blue)
             {
-                if (position.Y > 19.35f && position.X > 2.45f)
-                    return new Vector2(2.25f, 19.45f);
                 if (position.Y > 16.65f)
-                    return new Vector2(2.25f, 16.45f);
+                    return new Vector2(laneX, 16.45f - BypassDepth(index));
             }
             else
             {
-                if (position.Y < 16.65f && position.X > 2.45f)
-                    return new Vector2(2.25f, 16.55f);
                 if (position.Y < 19.35f)
-                    return new Vector2(2.25f, 19.55f);
+                    return new Vector2(laneX, 19.55f + BypassDepth(index));
             }
 
             return new Vector2(13.5f, destinationY);
@@ -118,19 +123,25 @@ public partial class AgentBattleSimulation
 
         if (route == AgentBattleConfig.RouteRight)
         {
+            float laneX = BypassLaneX(index, true);
+            float stagingY = BypassStagingY(index, blue);
+            if (!_hasReachedBypassLane[index])
+            {
+                if (MathF.Abs(position.X - laneX) <= 0.22f)
+                    _hasReachedBypassLane[index] = true;
+                else
+                    return new Vector2(laneX, stagingY);
+            }
+
             if (blue)
             {
-                if (position.Y > 19.35f && position.X < 25.55f)
-                    return new Vector2(25.75f, 19.45f);
                 if (position.Y > 16.65f)
-                    return new Vector2(25.75f, 16.45f);
+                    return new Vector2(laneX, 16.45f - BypassDepth(index));
             }
             else
             {
-                if (position.Y < 16.65f && position.X < 25.55f)
-                    return new Vector2(25.75f, 16.55f);
                 if (position.Y < 19.35f)
-                    return new Vector2(25.75f, 19.55f);
+                    return new Vector2(laneX, 19.55f + BypassDepth(index));
             }
 
             return new Vector2(13.5f, destinationY);
@@ -152,6 +163,28 @@ public partial class AgentBattleSimulation
         }
 
         return new Vector2(13.5f, destinationY);
+    }
+
+    private float BypassLaneX(int index, bool right)
+    {
+        int localIndex = index % AgentBattleConfig.TeamSize;
+        float laneOffset = (localIndex % 2) * 0.62f;
+        bool blue = _teams[index] == AgentBattleConfig.TeamBlue;
+        if (right)
+            return blue ? 25.45f + laneOffset : 26.72f + laneOffset;
+        return blue ? 2.55f - laneOffset : 0.66f + laneOffset;
+    }
+
+    private static float BypassDepth(int index)
+    {
+        int localIndex = index % AgentBattleConfig.TeamSize;
+        return ((localIndex / 3) % 3) * 0.18f;
+    }
+
+    private static float BypassStagingY(int index, bool blue)
+    {
+        float depth = BypassDepth(index);
+        return blue ? 19.45f + depth : 16.55f - depth;
     }
 
     private Vector2 ChooseCandidateVelocity(int index, Vector2 desired)
@@ -328,20 +361,33 @@ public partial class AgentBattleSimulation
                 }
             }
 
-            float displacement = _positions[index].DistanceTo(_tickStartPositions[index]);
             if (IsAtObjective(index))
             {
                 _stuckSeconds[index] = 0f;
-            }
-            else if (displacement < AgentBattleConfig.StuckMoveThreshold)
-            {
-                _stuckSeconds[index] += AgentBattleConfig.FixedDelta;
-                if (_stuckSeconds[index] > AgentBattleConfig.IdleThresholdSeconds)
-                    _idleAgentSeconds += AgentBattleConfig.FixedDelta;
+                _progressSampleTicks[index] = 0;
+                _progressSampleY[index] = _positions[index].Y;
             }
             else
             {
-                _stuckSeconds[index] = 0f;
+                _progressSampleTicks[index]++;
+                if (_progressSampleTicks[index] >= AgentBattleConfig.ProgressSampleTicks)
+                {
+                    float forwardProgress = (_positions[index].Y - _progressSampleY[index]) * TeamForward(index);
+                    float sampleSeconds = _progressSampleTicks[index] * AgentBattleConfig.FixedDelta;
+                    if (forwardProgress >= AgentBattleConfig.MinimumForwardProgressPerSample)
+                    {
+                        _stuckSeconds[index] = 0f;
+                    }
+                    else
+                    {
+                        _stuckSeconds[index] += sampleSeconds;
+                        if (_stuckSeconds[index] >= AgentBattleConfig.IdleThresholdSeconds)
+                            _idleAgentSeconds += sampleSeconds;
+                    }
+
+                    _progressSampleY[index] = _positions[index].Y;
+                    _progressSampleTicks[index] = 0;
+                }
             }
 
             _maximumStuckSeconds = MathF.Max(_maximumStuckSeconds, _stuckSeconds[index]);

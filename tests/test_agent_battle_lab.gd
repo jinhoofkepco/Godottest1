@@ -17,6 +17,7 @@ func run() -> Array[String]:
 			_expect(simulation.has_method(method), "simulation exposes %s" % method)
 		if failures.is_empty():
 			_test_deterministic_arena(simulation)
+			_test_forward_progress_tracking(simulation)
 			_test_agent_movement(simulation)
 		simulation.free()
 	return failures
@@ -68,6 +69,42 @@ func _test_deterministic_arena(simulation: Node) -> void:
 	_expect(is_zero_approx(float(repeated.get("time", -1.0))), "repeated reset clears elapsed time")
 
 
+func _test_forward_progress_tracking(simulation: Node) -> void:
+	const SAMPLE_TICKS := 15
+	const SAMPLE_COUNT := 24
+	simulation.call("ResetExperiment", 1, TEST_SEED)
+	var previous: Dictionary = simulation.call("GetSnapshot")
+	var previous_positions := PackedVector2Array(previous.get("positions", PackedVector2Array()))
+	var previous_stuck := PackedFloat32Array(previous.get("stuck_seconds", PackedFloat32Array()))
+	_expect(previous_stuck.size() == TEAM_SIZE * 2, "snapshot exposes per-agent forward-progress stalls")
+	if previous_stuck.size() != TEAM_SIZE * 2:
+		return
+
+	var found_lateral_sample := false
+	var lateral_sample_accumulated_stuck := false
+	for _sample in SAMPLE_COUNT:
+		simulation.call("RunTicks", SAMPLE_TICKS)
+		var current: Dictionary = simulation.call("GetSnapshot")
+		var current_positions := PackedVector2Array(current.get("positions", PackedVector2Array()))
+		var current_stuck := PackedFloat32Array(current.get("stuck_seconds", PackedFloat32Array()))
+		var actions := PackedInt32Array(current.get("actions", PackedInt32Array()))
+		var routes := PackedInt32Array(current.get("route_intents", PackedInt32Array()))
+		for index in TEAM_SIZE * 2:
+			var forward_sign := -1.0 if index < TEAM_SIZE else 1.0
+			var delta := current_positions[index] - previous_positions[index]
+			var forward_progress := delta.y * forward_sign
+			var congestion_action := actions[index] == 5 or actions[index] == 6 or routes[index] != 0
+			if congestion_action and absf(delta.x) > 0.18 and forward_progress < 0.08:
+				found_lateral_sample = true
+				if current_stuck[index] >= previous_stuck[index] + 0.4:
+					lateral_sample_accumulated_stuck = true
+		previous_positions = current_positions
+		previous_stuck = current_stuck
+
+	_expect(found_lateral_sample, "fixture includes a lateral congestion-avoidance sample")
+	_expect(lateral_sample_accumulated_stuck, "lateral or PBD movement does not erase a forward-progress stall")
+
+
 func _test_agent_movement(simulation: Node) -> void:
 	const RUN_TICKS := 45 * 30
 	simulation.call("ResetExperiment", 1, TEST_SEED)
@@ -82,6 +119,7 @@ func _test_agent_movement(simulation: Node) -> void:
 	_expect(_sum_ints(action_counts) == TEAM_SIZE * 2, "action population counts include all 60 agents")
 	_expect(int(metrics.get("flank_decisions", 0)) > 0, "agents independently choose a flank")
 	_expect(int(metrics.get("yield_decisions", 0)) > 0, "blocked agents negotiate passage")
+	_expect(int(metrics.get("yield_decisions", 0)) <= TEAM_SIZE * 2, "yield metric counts unique agents with verified blocking")
 	_expect(int(metrics.get("side_crossings", 0)) > 0, "agents use a viable side route")
 	_expect(float(metrics.get("maximum_stuck_seconds", 999.0)) < 12.0, "no agent remains permanently stuck")
 	_expect(int(metrics.get("overlap_violations", -1)) == 0, "position correction preserves minimum separation")

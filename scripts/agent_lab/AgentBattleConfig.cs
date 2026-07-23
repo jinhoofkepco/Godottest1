@@ -40,9 +40,12 @@ internal static class AgentBattleConfig
     public const float ActionHysteresis = 0.18f;
     public const int DefaultCommitTicks = 9;
     public const int FlankCommitTicks = 24;
-    public const int YieldCommitTicks = 6;
-    public const float StuckMoveThreshold = 0.012f;
+    public const int YieldCommitTicks = 15;
+    public const int ProgressSampleTicks = 15;
+    public const float MinimumForwardProgressPerSample = 0.12f;
     public const float IdleThresholdSeconds = 2f;
+    public const float YieldPredictionSeconds = 0.28f;
+    public const float YieldSlowSpeedRatio = 0.3f;
     public const float ObjectiveMargin = 1.1f;
     public const float CandidateCollisionRange = 0.72f;
     public const int PositionCorrectionPasses = 2;
