@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Work only on `experiment/mini-battle-agent-ai`; do not merge into `main`.
+- Work only on `codex/mini-battle-agent-ai`; do not merge into `main`.
 - Exactly 30 blue and 30 red shield units spawn in a mirror-symmetric 28 by 36 arena.
 - The map has a shortest central gate and viable left/right bypasses.
 - No unit may be a Node, physics body, or independently processed Godot object.
@@ -306,7 +306,7 @@ Review the full diff from `main` for production leakage, Node-per-unit violation
 ```bash
 git add README.md docs/agent-battle-lab-results.md
 git commit -m "docs: report individual agent battle results"
-git push -u origin experiment/mini-battle-agent-ai
+git push -u origin codex/mini-battle-agent-ai
 ```
 
 Do not merge or open a merge PR unless the user asks.

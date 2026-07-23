@@ -6,7 +6,7 @@ Create a branch-only Godot 4.5 .NET experiment that stages 30 blue shield infant
 
 ## Isolation
 
-- Work only on `experiment/mini-battle-agent-ai`.
+- Work only on `codex/mini-battle-agent-ai`.
 - Do not merge the experiment into `main`.
 - Keep the existing production simulation and its scenes unchanged.
 - Add an independent simulation and scene inside the existing Godot project so the branch reuses the verified Godot 4.5 .NET and Android setup.
