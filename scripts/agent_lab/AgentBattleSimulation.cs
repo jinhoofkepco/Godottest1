@@ -59,6 +59,9 @@ public partial class AgentBattleSimulation : Node
     private int _overlapViolations;
     private float _idleAgentSeconds;
     private float _maximumStuckSeconds;
+    private int _maximumStuckUnit;
+    private Vector2 _maximumStuckPosition;
+    private int _maximumStuckAction;
     private int _unitsEverAttacked;
     private int _frontlineReplacements;
     private int _crossedCenter;
@@ -84,6 +87,9 @@ public partial class AgentBattleSimulation : Node
         _overlapViolations = 0;
         _idleAgentSeconds = 0f;
         _maximumStuckSeconds = 0f;
+        _maximumStuckUnit = -1;
+        _maximumStuckPosition = Vector2.Zero;
+        _maximumStuckAction = AgentBattleConfig.ActionAdvance;
         _unitsEverAttacked = 0;
         _frontlineReplacements = 0;
         _crossedCenter = 0;
@@ -187,6 +193,9 @@ public partial class AgentBattleSimulation : Node
         ["pathological_idle_seconds"] = _idleAgentSeconds,
         ["maximum_stuck_seconds"] = _maximumStuckSeconds,
         ["max_continuous_stuck"] = _maximumStuckSeconds,
+        ["maximum_stuck_unit"] = _maximumStuckUnit,
+        ["maximum_stuck_position"] = _maximumStuckPosition,
+        ["maximum_stuck_action"] = _maximumStuckAction,
         ["overlap_violations"] = _overlapViolations,
         ["units_ever_attacked"] = _unitsEverAttacked,
         ["crossed_center"] = _crossedCenter,

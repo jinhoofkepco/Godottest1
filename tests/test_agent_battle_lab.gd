@@ -18,6 +18,7 @@ func run() -> Array[String]:
 		if failures.is_empty():
 			_test_deterministic_arena(simulation)
 			_test_forward_progress_tracking(simulation)
+			_test_retreat_preempts_orders(simulation)
 			_test_agent_movement(simulation)
 			_test_combat_comparison(simulation)
 		simulation.free()
@@ -125,6 +126,13 @@ func _test_agent_movement(simulation: Node) -> void:
 	_expect(float(metrics.get("maximum_stuck_seconds", 999.0)) < 12.0, "no agent remains permanently stuck")
 	_expect(int(metrics.get("overlap_violations", -1)) == 0, "position correction preserves minimum separation")
 	_expect(metrics.has("idle_agent_seconds"), "metrics expose accumulated pathological idle time")
+	var wounded_alive := 0
+	var hp := PackedFloat32Array(first.get("hp", PackedFloat32Array()))
+	for index in hp.size():
+		if hp[index] > 0.0 and hp[index] < 20.0:
+			wounded_alive += 1
+			_expect(first_actions[index] == 7, "critically wounded unit %d prioritizes retreat" % index)
+	_expect(wounded_alive > 0, "combat fixture includes a critically wounded survivor")
 	print(
 		"AGENT MOVEMENT 45S flank=%d yield=%d side=%d idle=%.2f max_stuck=%.2f overlap=%d avg=%.3fms"
 		% [
@@ -137,6 +145,15 @@ func _test_agent_movement(simulation: Node) -> void:
 			float(metrics.get("average_tick_ms", -1.0)),
 		]
 	)
+	if float(metrics.get("maximum_stuck_seconds", 0.0)) >= 12.0:
+		print(
+			"  PEAK unit=%d pos=%s action=%d"
+			% [
+				int(metrics.get("maximum_stuck_unit", -1)),
+				Vector2(metrics.get("maximum_stuck_position", Vector2.ZERO)),
+				int(metrics.get("maximum_stuck_action", -1)),
+			]
+		)
 	simulation.call("ResetExperiment", 1, TEST_SEED)
 	simulation.call("RunTicks", RUN_TICKS)
 	var repeated: Dictionary = simulation.call("GetSnapshot")
@@ -144,6 +161,33 @@ func _test_agent_movement(simulation: Node) -> void:
 	var repeated_actions := PackedInt32Array(repeated.get("actions", PackedInt32Array()))
 	_expect(_same_vectors(first_positions, repeated_positions), "same seed and ticks reproduce every agent position")
 	_expect(first_actions == repeated_actions, "same seed and ticks reproduce every agent action")
+
+
+func _test_retreat_preempts_orders(simulation: Node) -> void:
+	const RUN_TICKS := 45 * 30
+	const RETREAT_HP := 20.0
+	var wounded_since: Array[int] = []
+	wounded_since.resize(TEAM_SIZE * 2)
+	wounded_since.fill(-1)
+	var found_wounded := false
+	simulation.call("ResetExperiment", 1, TEST_SEED)
+	for tick in RUN_TICKS:
+		simulation.call("RunTicks", 1)
+		if tick % 6 != 5:
+			continue
+		var snapshot: Dictionary = simulation.call("GetSnapshot")
+		var hp := PackedFloat32Array(snapshot.get("hp", PackedFloat32Array()))
+		var actions := PackedInt32Array(snapshot.get("actions", PackedInt32Array()))
+		for index in hp.size():
+			if hp[index] <= 0.0 or hp[index] >= RETREAT_HP:
+				wounded_since[index] = -1
+				continue
+			found_wounded = true
+			if wounded_since[index] < 0:
+				wounded_since[index] = tick
+			elif tick - wounded_since[index] >= 6:
+				_expect(actions[index] == 7, "critically wounded unit %d preempts its prior order" % index)
+	_expect(found_wounded, "retreat priority fixture produces a critically wounded survivor")
 
 
 func _test_combat_comparison(simulation: Node) -> void:

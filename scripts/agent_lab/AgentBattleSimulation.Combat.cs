@@ -71,6 +71,14 @@ public partial class AgentBattleSimulation
         return bestTarget;
     }
 
+    private void ReleaseCombatTarget(int index)
+    {
+        int target = _targets[index];
+        if ((uint)target < AgentBattleConfig.UnitCount && _targetReservations[target] > 0)
+            _targetReservations[target]--;
+        _targets[index] = -1;
+    }
+
     private bool IsCombatTargetValid(int attacker, int target)
     {
         return (uint)target < AgentBattleConfig.UnitCount

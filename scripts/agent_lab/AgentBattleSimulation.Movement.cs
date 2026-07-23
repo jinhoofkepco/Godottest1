@@ -68,13 +68,8 @@ public partial class AgentBattleSimulation
 
     private Vector2 DesiredDirection(int index)
     {
-        if (IsAtObjective(index))
-            return Vector2.Zero;
-
         int action = _actions[index];
         float forward = TeamForward(index);
-        if (action == AgentBattleConfig.ActionHold)
-            return Vector2.Zero;
         if (action == AgentBattleConfig.ActionRetreat)
         {
             if (IsAtRetreatObjective(index))
@@ -82,6 +77,10 @@ public partial class AgentBattleSimulation
             Vector2 retreatOffset = RetreatTarget(index) - _positions[index];
             return retreatOffset.LengthSquared() > 0.0001f ? retreatOffset.Normalized() : new Vector2(0f, -forward);
         }
+        if (IsAtObjective(index))
+            return Vector2.Zero;
+        if (action == AgentBattleConfig.ActionHold)
+            return Vector2.Zero;
         if (action == AgentBattleConfig.ActionYield)
             return new Vector2(_yieldSides[index], forward * 0.22f).Normalized();
         if (action == AgentBattleConfig.ActionEngage && IsCombatTargetValid(index, _targets[index]))
@@ -427,7 +426,13 @@ public partial class AgentBattleSimulation
                 }
             }
 
-            _maximumStuckSeconds = MathF.Max(_maximumStuckSeconds, _stuckSeconds[index]);
+            if (_stuckSeconds[index] > _maximumStuckSeconds)
+            {
+                _maximumStuckSeconds = _stuckSeconds[index];
+                _maximumStuckUnit = index;
+                _maximumStuckPosition = _positions[index];
+                _maximumStuckAction = _actions[index];
+            }
         }
 
         _overlapViolations = CountSevereOverlaps();

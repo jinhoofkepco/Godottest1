@@ -57,7 +57,8 @@ internal static class AgentBattleConfig
     public const float AttackInterval = 0.68f;
     public const int MaxAttackersPerTarget = 3;
     public const float RetreatHpRatio = 0.24f;
-    public const float RetreatReserveDepth = 4f + SeparationDistance;
+    // Wounded units disperse into a rear reserve band instead of queuing at an exact edge point.
+    public const float RetreatReserveDepth = 5f;
     public const int RecentDeathTicks = 75;
     public const float GapFillDetectionRange = 5.5f;
     public const float ReplacementRadius = 1.35f;

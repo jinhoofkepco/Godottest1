@@ -33,6 +33,15 @@ public partial class AgentBattleSimulation
         if (_hp[index] <= 0f)
             return;
 
+        bool mustRetreat = _mode == AgentBattleConfig.ModeAgent
+            && _hp[index] < AgentBattleConfig.UnitMaxHp * AgentBattleConfig.RetreatHpRatio;
+        if (mustRetreat)
+        {
+            ReleaseCombatTarget(index);
+            SetAction(index, AgentBattleConfig.ActionRetreat, 2.6f, AgentBattleConfig.DefaultCommitTicks);
+            return;
+        }
+
         int combatTarget = SelectCombatTarget(index);
         if (_mode == AgentBattleConfig.ModeBaseline)
         {
@@ -85,7 +94,6 @@ public partial class AgentBattleSimulation
         float holdScore = reserveOpportunity
             ? 1.52f
             : 0.18f;
-        float retreatScore = _hp[index] < AgentBattleConfig.UnitMaxHp * AgentBattleConfig.RetreatHpRatio ? 2.6f : 0f;
 
         int bestAction = AgentBattleConfig.ActionAdvance;
         float bestScore = advanceScore;
@@ -95,7 +103,6 @@ public partial class AgentBattleSimulation
         ConsiderAction(AgentBattleConfig.ActionFlankRight, rightScore, ref bestAction, ref bestScore);
         ConsiderAction(AgentBattleConfig.ActionYield, yieldScore, ref bestAction, ref bestScore);
         ConsiderAction(AgentBattleConfig.ActionHold, holdScore, ref bestAction, ref bestScore);
-        ConsiderAction(AgentBattleConfig.ActionRetreat, retreatScore, ref bestAction, ref bestScore);
 
         int currentAction = _actions[index];
         bool commitmentExpired = _actionCommitTicks[index] <= 0;
