@@ -30,6 +30,18 @@ public partial class AgentBattleSimulation : Node
     private readonly int[] _bucketNext = new int[AgentBattleConfig.UnitCount];
     private readonly int[] _bucketCounts = new int[AgentBattleConfig.ArenaWidth * AgentBattleConfig.ArenaHeight];
     private readonly int[] _actionCounts = new int[AgentBattleConfig.ActionCount];
+    private readonly int[] _targets = new int[AgentBattleConfig.UnitCount];
+    private readonly int[] _targetReservations = new int[AgentBattleConfig.UnitCount];
+    private readonly float[] _attackCooldowns = new float[AgentBattleConfig.UnitCount];
+    private readonly float[] _pendingDamage = new float[AgentBattleConfig.UnitCount];
+    private readonly bool[] _diedThisTick = new bool[AgentBattleConfig.UnitCount];
+    private readonly bool[] _everAttacked = new bool[AgentBattleConfig.UnitCount];
+    private readonly bool[] _hasCrossedCenter = new bool[AgentBattleConfig.UnitCount];
+    private readonly bool[] _hasPurposefullyHeld = new bool[AgentBattleConfig.UnitCount];
+    private readonly long[] _deathTicks = new long[AgentBattleConfig.UnitCount];
+    private readonly Vector2[] _deathPositions = new Vector2[AgentBattleConfig.UnitCount];
+    private readonly int[] _replacementCandidates = new int[AgentBattleConfig.UnitCount];
+    private readonly bool[] _replacementCounted = new bool[AgentBattleConfig.UnitCount];
 
     private int _mode;
     private int _seed;
@@ -47,6 +59,10 @@ public partial class AgentBattleSimulation : Node
     private int _overlapViolations;
     private float _idleAgentSeconds;
     private float _maximumStuckSeconds;
+    private int _unitsEverAttacked;
+    private int _frontlineReplacements;
+    private int _crossedCenter;
+    private float _intentionalHoldSeconds;
 
     public AgentBattleSimulation() => ResetExperiment();
 
@@ -68,6 +84,10 @@ public partial class AgentBattleSimulation : Node
         _overlapViolations = 0;
         _idleAgentSeconds = 0f;
         _maximumStuckSeconds = 0f;
+        _unitsEverAttacked = 0;
+        _frontlineReplacements = 0;
+        _crossedCenter = 0;
+        _intentionalHoldSeconds = 0f;
 
         Array.Clear(_velocities);
         Array.Fill(_hp, AgentBattleConfig.UnitMaxHp);
@@ -84,6 +104,17 @@ public partial class AgentBattleSimulation : Node
         Array.Clear(_hasReachedBypassLane);
         Array.Clear(_blockedMask);
         Array.Clear(_actionCounts);
+        Array.Fill(_targets, -1);
+        Array.Clear(_targetReservations);
+        Array.Clear(_attackCooldowns);
+        Array.Clear(_pendingDamage);
+        Array.Clear(_diedThisTick);
+        Array.Clear(_everAttacked);
+        Array.Clear(_hasCrossedCenter);
+        Array.Clear(_hasPurposefullyHeld);
+        Array.Fill(_deathTicks, -1);
+        Array.Fill(_replacementCandidates, -1);
+        Array.Clear(_replacementCounted);
         _actionCounts[AgentBattleConfig.ActionAdvance] = AgentBattleConfig.UnitCount;
         BuildFortification();
         SpawnMirroredTeams();
@@ -130,6 +161,7 @@ public partial class AgentBattleSimulation : Node
         ["actions"] = (int[])_actions.Clone(),
         ["route_intents"] = (int[])_routeIntents.Clone(),
         ["stuck_seconds"] = (float[])_stuckSeconds.Clone(),
+        ["targets"] = (int[])_targets.Clone(),
         ["alive_blue"] = _aliveBlue,
         ["alive_red"] = _aliveRed,
         ["time"] = _elapsed,
@@ -150,24 +182,36 @@ public partial class AgentBattleSimulation : Node
         ["yield_decisions"] = _yieldDecisions,
         ["side_crossings"] = _sideCrossings,
         ["side_route_crossings"] = _sideCrossings,
-        ["frontline_replacements"] = 0,
+        ["frontline_replacements"] = _frontlineReplacements,
         ["idle_agent_seconds"] = _idleAgentSeconds,
         ["pathological_idle_seconds"] = _idleAgentSeconds,
         ["maximum_stuck_seconds"] = _maximumStuckSeconds,
         ["max_continuous_stuck"] = _maximumStuckSeconds,
         ["overlap_violations"] = _overlapViolations,
-        ["units_ever_attacked"] = 0,
-        ["participation_ratio"] = 0f,
+        ["units_ever_attacked"] = _unitsEverAttacked,
+        ["crossed_center"] = _crossedCenter,
+        ["intentional_hold_seconds"] = _intentionalHoldSeconds,
+        ["elapsed_seconds"] = _elapsed,
+        ["active_participation_ratio"] = ActiveParticipationRatio(),
+        ["participation_ratio"] = ActiveParticipationRatio(),
+        ["result"] = _result,
     };
 
     private void FixedStep()
     {
+        if (!string.IsNullOrEmpty(_result))
+            return;
+
         long start = Stopwatch.GetTimestamp();
         _elapsed += AgentBattleConfig.FixedDelta;
         RebuildSpatialBuckets();
+        RebuildTargetReservations();
         UpdateStaggeredDecisions();
         IntegrateMovement();
+        UpdateCrossedCenter();
+        UpdateCombat();
         UpdateMovementMetrics();
+        UpdateBattleResult();
         RecountActions();
         long elapsedTicks = Stopwatch.GetTimestamp() - start;
         _totalTickTicks += elapsedTicks;

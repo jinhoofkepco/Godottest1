@@ -19,6 +19,7 @@ func run() -> Array[String]:
 			_test_deterministic_arena(simulation)
 			_test_forward_progress_tracking(simulation)
 			_test_agent_movement(simulation)
+			_test_combat_comparison(simulation)
 		simulation.free()
 	return failures
 
@@ -136,7 +137,6 @@ func _test_agent_movement(simulation: Node) -> void:
 			float(metrics.get("average_tick_ms", -1.0)),
 		]
 	)
-
 	simulation.call("ResetExperiment", 1, TEST_SEED)
 	simulation.call("RunTicks", RUN_TICKS)
 	var repeated: Dictionary = simulation.call("GetSnapshot")
@@ -144,6 +144,76 @@ func _test_agent_movement(simulation: Node) -> void:
 	var repeated_actions := PackedInt32Array(repeated.get("actions", PackedInt32Array()))
 	_expect(_same_vectors(first_positions, repeated_positions), "same seed and ticks reproduce every agent position")
 	_expect(first_actions == repeated_actions, "same seed and ticks reproduce every agent action")
+
+
+func _test_combat_comparison(simulation: Node) -> void:
+	const RUN_TICKS := 120 * 30
+	simulation.call("ResetExperiment", 0, TEST_SEED)
+	simulation.call("RunTicks", RUN_TICKS)
+	var baseline: Dictionary = simulation.call("GetMetrics")
+
+	simulation.call("ResetExperiment", 1, TEST_SEED)
+	simulation.call("RunTicks", RUN_TICKS)
+	var agent: Dictionary = simulation.call("GetMetrics")
+
+	for metric in [
+		"units_ever_attacked",
+		"frontline_replacements",
+		"crossed_center",
+		"intentional_hold_seconds",
+		"elapsed_seconds",
+		"active_participation_ratio",
+		"result",
+	]:
+		_expect(agent.has(metric), "combat metrics expose %s" % metric)
+
+	_expect(float(baseline.get("idle_agent_seconds", 0.0)) > 0.0, "baseline reproduces central idle congestion")
+	_expect(
+		float(agent.get("idle_agent_seconds", INF)) < float(baseline.get("idle_agent_seconds", 0.0)),
+		"agent decisions reduce pathological idle time"
+	)
+	_expect(
+		int(agent.get("units_ever_attacked", 0)) > int(baseline.get("units_ever_attacked", 0)),
+		"more autonomous agents participate in combat"
+	)
+	_expect(int(agent.get("frontline_replacements", 0)) > 0, "rear agents replace fallen front fighters")
+	_expect(float(agent.get("intentional_hold_seconds", 0.0)) > 0.0, "blocked rear agents take purposeful HOLD duty")
+	_expect(not String(agent.get("result", "")).is_empty(), "agent battle resolves or scores at the fixed timeout")
+	_expect(
+		float(agent.get("active_participation_ratio", 0.0)) >= 0.70,
+		"agent mode keeps at least 70 percent purposefully active"
+	)
+
+	print(
+		"BASELINE 120S result=%s elapsed=%.1f alive=%d/%d attacked=%d replacements=%d crossed=%d idle=%.1f hold=%.1f active=%.2f"
+		% [
+			String(baseline.get("result", "")),
+			float(baseline.get("elapsed_seconds", 0.0)),
+			int(baseline.get("blue_count", 0)),
+			int(baseline.get("red_count", 0)),
+			int(baseline.get("units_ever_attacked", 0)),
+			int(baseline.get("frontline_replacements", 0)),
+			int(baseline.get("crossed_center", 0)),
+			float(baseline.get("idle_agent_seconds", 0.0)),
+			float(baseline.get("intentional_hold_seconds", 0.0)),
+			float(baseline.get("active_participation_ratio", 0.0)),
+		]
+	)
+	print(
+		"AGENT 120S result=%s elapsed=%.1f alive=%d/%d attacked=%d replacements=%d crossed=%d idle=%.1f hold=%.1f active=%.2f"
+		% [
+			String(agent.get("result", "")),
+			float(agent.get("elapsed_seconds", 0.0)),
+			int(agent.get("blue_count", 0)),
+			int(agent.get("red_count", 0)),
+			int(agent.get("units_ever_attacked", 0)),
+			int(agent.get("frontline_replacements", 0)),
+			int(agent.get("crossed_center", 0)),
+			float(agent.get("idle_agent_seconds", 0.0)),
+			float(agent.get("intentional_hold_seconds", 0.0)),
+			float(agent.get("active_participation_ratio", 0.0)),
+		]
+	)
 
 
 func _same_vectors(left: PackedVector2Array, right: PackedVector2Array) -> bool:

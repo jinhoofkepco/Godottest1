@@ -76,9 +76,27 @@ public partial class AgentBattleSimulation
         if (action == AgentBattleConfig.ActionHold)
             return Vector2.Zero;
         if (action == AgentBattleConfig.ActionRetreat)
-            return new Vector2(0f, -forward);
+        {
+            if (IsAtRetreatObjective(index))
+                return Vector2.Zero;
+            Vector2 retreatOffset = RetreatTarget(index) - _positions[index];
+            return retreatOffset.LengthSquared() > 0.0001f ? retreatOffset.Normalized() : new Vector2(0f, -forward);
+        }
         if (action == AgentBattleConfig.ActionYield)
             return new Vector2(_yieldSides[index], forward * 0.22f).Normalized();
+        if (action == AgentBattleConfig.ActionEngage && IsCombatTargetValid(index, _targets[index]))
+        {
+            Vector2 targetOffset = _positions[_targets[index]] - _positions[index];
+            if (targetOffset.LengthSquared() <= AgentBattleConfig.AttackRange * AgentBattleConfig.AttackRange)
+                return Vector2.Zero;
+            return targetOffset.Normalized();
+        }
+        if (action == AgentBattleConfig.ActionFillGap && TryGetRecentFriendlyGap(index, out Vector2 gap))
+        {
+            Vector2 gapOffset = gap - _positions[index];
+            if (gapOffset.LengthSquared() > 0.04f)
+                return gapOffset.Normalized();
+        }
 
         Vector2 target = RouteTarget(index);
         if (action == AgentBattleConfig.ActionFillGap)
@@ -348,6 +366,13 @@ public partial class AgentBattleSimulation
             if (_hp[index] <= 0f)
                 continue;
 
+            bool purposefulHold = IsPurposefulHold(index);
+            if (purposefulHold)
+            {
+                _intentionalHoldSeconds += AgentBattleConfig.FixedDelta;
+                _hasPurposefullyHeld[index] = true;
+            }
+
             if (!_hasCrossedSideRoute[index] && _routeIntents[index] != AgentBattleConfig.RouteCenter)
             {
                 bool outsideWall = _positions[index].X < AgentBattleConfig.FortificationMinX
@@ -361,7 +386,19 @@ public partial class AgentBattleSimulation
                 }
             }
 
-            if (IsAtObjective(index))
+            if (_actions[index] == AgentBattleConfig.ActionRetreat && IsAtRetreatObjective(index))
+            {
+                _stuckSeconds[index] = 0f;
+                _progressSampleTicks[index] = 0;
+                _progressSampleY[index] = _positions[index].Y;
+            }
+            else if (IsActivelyEngaged(index))
+            {
+                _stuckSeconds[index] = 0f;
+                _progressSampleTicks[index] = 0;
+                _progressSampleY[index] = _positions[index].Y;
+            }
+            else if (IsAtObjective(index))
             {
                 _stuckSeconds[index] = 0f;
                 _progressSampleTicks[index] = 0;
@@ -381,7 +418,7 @@ public partial class AgentBattleSimulation
                     else
                     {
                         _stuckSeconds[index] += sampleSeconds;
-                        if (_stuckSeconds[index] >= AgentBattleConfig.IdleThresholdSeconds)
+                        if (_stuckSeconds[index] >= AgentBattleConfig.IdleThresholdSeconds && !purposefulHold)
                             _idleAgentSeconds += sampleSeconds;
                     }
 
@@ -476,6 +513,58 @@ public partial class AgentBattleSimulation
         return _teams[index] == AgentBattleConfig.TeamBlue
             ? _positions[index].Y <= AgentBattleConfig.ObjectiveMargin
             : _positions[index].Y >= AgentBattleConfig.ArenaHeight - AgentBattleConfig.ObjectiveMargin;
+    }
+
+    private bool IsAtRetreatObjective(int index)
+    {
+        return _teams[index] == AgentBattleConfig.TeamBlue
+            ? _positions[index].Y >= AgentBattleConfig.ArenaHeight - AgentBattleConfig.RetreatReserveDepth
+            : _positions[index].Y <= AgentBattleConfig.RetreatReserveDepth;
+    }
+
+    private Vector2 RetreatTarget(int index)
+    {
+        Vector2 position = _positions[index];
+        bool blue = _teams[index] == AgentBattleConfig.TeamBlue;
+        float passageX = NearestRetreatPassageX(index);
+        if (blue && position.Y < 19.55f)
+        {
+            if (MathF.Abs(position.X - passageX) > 0.24f)
+                return new Vector2(passageX, 16.45f);
+            return new Vector2(passageX, 19.65f);
+        }
+        if (!blue && position.Y > 16.45f)
+        {
+            if (MathF.Abs(position.X - passageX) > 0.24f)
+                return new Vector2(passageX, 19.55f);
+            return new Vector2(passageX, 16.35f);
+        }
+
+        int localIndex = index % AgentBattleConfig.TeamSize;
+        float x = 1.4f + (localIndex % 10) * 2.8f;
+        float y = blue
+            ? AgentBattleConfig.ArenaHeight - 2f
+            : 2f;
+        return new Vector2(x, y);
+    }
+
+    private float NearestRetreatPassageX(int index)
+    {
+        float currentX = _positions[index].X;
+        float left = BypassLaneX(index, false);
+        float center = _teams[index] == AgentBattleConfig.TeamBlue ? 14.35f : 13.65f;
+        float right = BypassLaneX(index, true);
+        float best = center;
+        float bestDistance = MathF.Abs(currentX - center);
+        float leftDistance = MathF.Abs(currentX - left);
+        if (leftDistance < bestDistance)
+        {
+            best = left;
+            bestDistance = leftDistance;
+        }
+        if (MathF.Abs(currentX - right) < bestDistance)
+            best = right;
+        return best;
     }
 
     private static int CellX(float x) => Math.Clamp((int)MathF.Floor(x), 0, AgentBattleConfig.ArenaWidth - 1);

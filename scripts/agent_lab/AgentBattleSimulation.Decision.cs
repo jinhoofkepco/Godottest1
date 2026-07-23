@@ -33,17 +33,22 @@ public partial class AgentBattleSimulation
         if (_hp[index] <= 0f)
             return;
 
+        int combatTarget = SelectCombatTarget(index);
         if (_mode == AgentBattleConfig.ModeBaseline)
         {
             _routeIntents[index] = AgentBattleConfig.RouteCenter;
-            SetAction(index, AgentBattleConfig.ActionAdvance, 1f, AgentBattleConfig.DefaultCommitTicks);
+            int baselineAction = combatTarget >= 0 ? AgentBattleConfig.ActionEngage : AgentBattleConfig.ActionAdvance;
+            float baselineScore = combatTarget >= 0 ? 1.8f : 1f;
+            SetAction(index, baselineAction, baselineScore, AgentBattleConfig.DefaultCommitTicks);
             return;
         }
 
         LocalPerception perception = SenseLocalArea(index);
         float stuck = _stuckSeconds[index];
         float wallDistance = MathF.Abs(_positions[index].Y - 17.5f);
-        bool approachingFortification = wallDistance < 8.5f && !HasPassedFortification(index);
+        bool approachingFortification = wallDistance < 8.5f
+            && !HasPassedFortification(index)
+            && !_hasCrossedSideRoute[index];
 
         if (_routeIntents[index] != AgentBattleConfig.RouteCenter && !_hasCrossedSideRoute[index])
         {
@@ -55,8 +60,11 @@ public partial class AgentBattleSimulation
         }
 
         float advanceScore = 1f + MathF.Min(stuck, 2f) * 0.04f;
-        float engageScore = perception.HostilesNear > 0 ? 0.72f : 0.08f;
-        float fillGapScore = 0.42f + MathF.Abs(perception.FriendlyLeft - perception.FriendlyRight) * 0.08f;
+        float engageScore = combatTarget >= 0 ? 1.72f : perception.HostilesNear > 0 ? 0.72f : 0.08f;
+        bool hasRecentGap = TryGetRecentFriendlyGap(index, out _);
+        float fillGapScore = hasRecentGap
+            ? 1.92f
+            : 0.42f + MathF.Abs(perception.FriendlyLeft - perception.FriendlyRight) * 0.08f;
         float congestion = perception.FriendlyAhead + perception.HostilesNear * 0.5f;
         float flankBase = approachingFortification
             ? 0.38f + congestion * 0.36f + MathF.Min(stuck, 3f) * 0.28f
@@ -73,8 +81,11 @@ public partial class AgentBattleSimulation
         float yieldScore = perception.LowerForwardPriority
             ? 1.34f + MathF.Min(stuck, 2f) * 0.16f
             : 0.1f;
-        float holdScore = congestion >= 5f ? 0.82f + MathF.Min(stuck, 1f) * 0.08f : 0.18f;
-        float retreatScore = _hp[index] < AgentBattleConfig.UnitMaxHp * 0.25f ? 2.4f : 0f;
+        bool reserveOpportunity = combatTarget < 0 && HasPurposefulHoldContext(index);
+        float holdScore = reserveOpportunity
+            ? 1.52f
+            : 0.18f;
+        float retreatScore = _hp[index] < AgentBattleConfig.UnitMaxHp * AgentBattleConfig.RetreatHpRatio ? 2.6f : 0f;
 
         int bestAction = AgentBattleConfig.ActionAdvance;
         float bestScore = advanceScore;

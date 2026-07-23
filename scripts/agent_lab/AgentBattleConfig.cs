@@ -49,6 +49,20 @@ internal static class AgentBattleConfig
     public const float ObjectiveMargin = 1.1f;
     public const float CandidateCollisionRange = 0.72f;
     public const int PositionCorrectionPasses = 2;
+    public const float CombatDetectionRange = 4.5f;
+    public const int CombatDetectionCellRadius = 5;
+    public const float AttackReach = 0.18f;
+    public const float AttackRange = UnitRadius * 2f + AttackReach;
+    public const float AttackDamage = 8f;
+    public const float AttackInterval = 0.68f;
+    public const int MaxAttackersPerTarget = 3;
+    public const float RetreatHpRatio = 0.24f;
+    public const float RetreatReserveDepth = 4f + SeparationDistance;
+    public const int RecentDeathTicks = 75;
+    public const float GapFillDetectionRange = 5.5f;
+    public const float ReplacementRadius = 1.35f;
+    public const float PurposefulHoldRange = 3.2f;
+    public const int MaximumBattleTicks = 120 * 30;
 
     public const int FortificationMinX = 3;
     public const int FortificationMaxX = 24;
