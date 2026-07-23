@@ -2,6 +2,27 @@
 
 Godot 4.5 stable .NET + C#/GDScript로 만든 540×960 세로형 아이소메트릭 군단 전선 시뮬레이션입니다. 시뮬레이션 코어는 C#, HUD·입력·FX는 GDScript이며 보병·공성병기·드래곤·건물은 CC0 3D 모델을 자체 베이크한 스프라이트입니다. Android 릴리스 메타데이터는 **1.5.1 (version code 16)** 입니다.
 
+## 실험 브랜치: 30대30 개별 판단 AI
+
+`codex/mini-battle-agent-ai`는 출시 게임과 분리한 30대30 방패병 병목 실험입니다. 이 브랜치에서는 `scenes/agent_battle_lab.tscn`이 기본 장면이며, 유닛마다 Node를 만들지 않고 하나의 C# 시뮬레이션이 60개 고정 배열 에이전트를 처리합니다. `AGENT AI / BASELINE / PAUSE / 1X·2X / RESET` 버튼으로 개별 판단과 단순 중앙 전진을 즉시 비교할 수 있습니다.
+
+```bash
+/private/tmp/godot45mono/app/Godot_mono.app/Contents/MacOS/Godot --path .
+
+PATH=/private/tmp/godottest1-dotnet9:$PATH \
+DOTNET_ROOT=/private/tmp/godottest1-dotnet9 \
+  /private/tmp/godot45mono/app/Godot_mono.app/Contents/MacOS/Godot \
+  --headless --path . -s tests/run_agent_battle_lab.gd
+
+PATH=/private/tmp/godottest1-dotnet9:$PATH \
+DOTNET_ROOT=/private/tmp/godottest1-dotnet9 \
+  /private/tmp/godot45mono/app/Godot_mono.app/Contents/MacOS/Godot \
+  --display-driver macos --rendering-method gl_compatibility \
+  --audio-driver Dummy --path . -s tests/smoke_agent_battle_lab.gd
+```
+
+무인 캡처는 `build/smoke_agent_battle_lab.png`에 540×960으로 저장됩니다. 고정 시드 결과, 수용 기준 판정, 성능 수치와 한계는 [30대30 개별 판단 AI 실험 보고서](docs/agent-battle-lab-results.md)에 기록했습니다. 이 브랜치는 실험용이며 프로덕션 병합이나 모바일 실기기 성능을 의미하지 않습니다.
+
 ## 한 판 규칙과 조작
 
 - 44×88(3,872타일) 전장을 위쪽 빨강과 아래쪽 파랑이 나눠 가지며, 420초 안에 적 HQ를 파괴하거나 육지 영토 92%를 확보하면 즉시 승리합니다. 시간 종료 시에는 점유율, HQ 체력 비율, 잔존 병력 체력 순으로 판정합니다.
