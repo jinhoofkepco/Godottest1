@@ -33,6 +33,7 @@ public partial class AgentBattleSimulation : Node
     private readonly int[] _targets = new int[AgentBattleConfig.UnitCount];
     private readonly int[] _targetReservations = new int[AgentBattleConfig.UnitCount];
     private readonly float[] _attackCooldowns = new float[AgentBattleConfig.UnitCount];
+    private readonly float[] _attackPulseTimers = new float[AgentBattleConfig.UnitCount];
     private readonly float[] _pendingDamage = new float[AgentBattleConfig.UnitCount];
     private readonly bool[] _diedThisTick = new bool[AgentBattleConfig.UnitCount];
     private readonly bool[] _everAttacked = new bool[AgentBattleConfig.UnitCount];
@@ -113,6 +114,7 @@ public partial class AgentBattleSimulation : Node
         Array.Fill(_targets, -1);
         Array.Clear(_targetReservations);
         Array.Clear(_attackCooldowns);
+        Array.Clear(_attackPulseTimers);
         Array.Clear(_pendingDamage);
         Array.Clear(_diedThisTick);
         Array.Clear(_everAttacked);
@@ -168,6 +170,7 @@ public partial class AgentBattleSimulation : Node
         ["route_intents"] = (int[])_routeIntents.Clone(),
         ["stuck_seconds"] = (float[])_stuckSeconds.Clone(),
         ["targets"] = (int[])_targets.Clone(),
+        ["attack_pulses"] = (float[])_attackPulseTimers.Clone(),
         ["alive_blue"] = _aliveBlue,
         ["alive_red"] = _aliveRed,
         ["time"] = _elapsed,

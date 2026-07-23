@@ -1,0 +1,118 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/agent_battle_lab.gd" id="1_lab"]
+[ext_resource type="Script" path="res://scripts/agent_lab/AgentBattleSimulation.cs" id="2_sim"]
+
+[node name="AgentBattleLab" type="Node2D"]
+script = ExtResource("1_lab")
+
+[node name="AgentBattleSimulation" type="Node" parent="."]
+script = ExtResource("2_sim")
+
+[node name="Interface" type="CanvasLayer" parent="."]
+
+[node name="Header" type="ColorRect" parent="Interface"]
+offset_left = 16.0
+offset_top = 14.0
+offset_right = 524.0
+offset_bottom = 139.0
+mouse_filter = 2
+color = Color(0.0588, 0.102, 0.1647, 0.96)
+
+[node name="Title" type="Label" parent="Interface/Header"]
+offset_left = 16.0
+offset_top = 10.0
+offset_right = 492.0
+offset_bottom = 31.0
+theme_override_colors/font_color = Color(0.2902, 0.9176, 0.9137, 1)
+theme_override_font_sizes/font_size = 16
+text = "MINI BATTLE // 30 vs 30 SHIELD BOTTLENECK"
+
+[node name="Mode" type="Label" parent="Interface/Header"]
+offset_left = 16.0
+offset_top = 36.0
+offset_right = 492.0
+offset_bottom = 57.0
+theme_override_colors/font_color = Color(0.8471, 0.9216, 0.9647, 1)
+theme_override_font_sizes/font_size = 13
+text = "INDIVIDUAL AGENT AI   000.0s / 120s"
+
+[node name="Metrics" type="Label" parent="Interface/Header"]
+offset_left = 16.0
+offset_top = 61.0
+offset_right = 492.0
+offset_bottom = 116.0
+theme_override_colors/font_color = Color(0.5765, 0.7412, 0.8353, 1)
+theme_override_font_sizes/font_size = 12
+text = "WAITING FOR SIMULATION"
+
+[node name="Result" type="Label" parent="Interface"]
+visible = false
+offset_left = 118.0
+offset_top = 438.0
+offset_right = 422.0
+offset_bottom = 484.0
+theme_override_colors/font_color = Color(1, 0.9294, 0.6157, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 24
+text = "BLUE VICTORY"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Controls" type="ColorRect" parent="Interface"]
+offset_left = 16.0
+offset_top = 825.0
+offset_right = 524.0
+offset_bottom = 944.0
+color = Color(0.0588, 0.102, 0.1647, 0.97)
+
+[node name="Prompt" type="Label" parent="Interface/Controls"]
+offset_left = 12.0
+offset_top = 8.0
+offset_right = 496.0
+offset_bottom = 29.0
+theme_override_colors/font_color = Color(0.4549, 0.6275, 0.7333, 1)
+theme_override_font_sizes/font_size = 12
+text = "COMPARE AUTONOMOUS DECISIONS AGAINST FORWARD-ONLY BASELINE"
+horizontal_alignment = 1
+
+[node name="Buttons" type="HBoxContainer" parent="Interface/Controls"]
+offset_left = 12.0
+offset_top = 39.0
+offset_right = 496.0
+offset_bottom = 101.0
+theme_override_constants/separation = 6
+
+[node name="Agent" type="Button" parent="Interface/Controls/Buttons"]
+custom_minimum_size = Vector2(102, 62)
+theme_override_colors/font_color = Color(0.8471, 0.9216, 0.9647, 1)
+theme_override_colors/font_disabled_color = Color(0.2902, 0.9176, 0.9137, 1)
+theme_override_font_sizes/font_size = 12
+text = "AGENT AI"
+
+[node name="Baseline" type="Button" parent="Interface/Controls/Buttons"]
+custom_minimum_size = Vector2(102, 62)
+theme_override_colors/font_color = Color(0.8471, 0.9216, 0.9647, 1)
+theme_override_colors/font_disabled_color = Color(1, 0.6039, 0.2392, 1)
+theme_override_font_sizes/font_size = 12
+text = "BASELINE"
+
+[node name="Pause" type="Button" parent="Interface/Controls/Buttons"]
+custom_minimum_size = Vector2(88, 62)
+theme_override_colors/font_color = Color(0.8471, 0.9216, 0.9647, 1)
+theme_override_font_sizes/font_size = 12
+text = "PAUSE"
+
+[node name="Speed" type="Button" parent="Interface/Controls/Buttons"]
+custom_minimum_size = Vector2(82, 62)
+theme_override_colors/font_color = Color(0.8471, 0.9216, 0.9647, 1)
+theme_override_font_sizes/font_size = 12
+text = "1X"
+
+[node name="Reset" type="Button" parent="Interface/Controls/Buttons"]
+custom_minimum_size = Vector2(82, 62)
+theme_override_colors/font_color = Color(0.8471, 0.9216, 0.9647, 1)
+theme_override_font_sizes/font_size = 12
+text = "RESET"

@@ -113,6 +113,8 @@ public partial class AgentBattleSimulation
 
         for (int index = 0; index < AgentBattleConfig.UnitCount; index++)
         {
+            if (_attackPulseTimers[index] > 0f)
+                _attackPulseTimers[index] = MathF.Max(0f, _attackPulseTimers[index] - AgentBattleConfig.FixedDelta);
             if (_attackCooldowns[index] > 0f)
                 _attackCooldowns[index] = MathF.Max(0f, _attackCooldowns[index] - AgentBattleConfig.FixedDelta);
             if (_hp[index] <= 0f)
@@ -131,6 +133,7 @@ public partial class AgentBattleSimulation
 
             _pendingDamage[target] += AgentBattleConfig.AttackDamage;
             _attackCooldowns[index] = AgentBattleConfig.AttackInterval;
+            _attackPulseTimers[index] = AgentBattleConfig.AttackPulseSeconds;
             // Participation starts only when a unit lands a real, in-range hit.
             if (!_everAttacked[index])
             {

@@ -55,6 +55,7 @@ internal static class AgentBattleConfig
     public const float AttackRange = UnitRadius * 2f + AttackReach;
     public const float AttackDamage = 8f;
     public const float AttackInterval = 0.68f;
+    public const float AttackPulseSeconds = 0.14f;
     public const int MaxAttackersPerTarget = 3;
     public const float RetreatHpRatio = 0.24f;
     // Wounded units disperse into a rear reserve band instead of queuing at an exact edge point.

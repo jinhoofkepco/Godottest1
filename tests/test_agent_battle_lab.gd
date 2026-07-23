@@ -1,6 +1,8 @@
 extends RefCounted
 
 const SIM_PATH := "res://scripts/agent_lab/AgentBattleSimulation.cs"
+const LAB_SCRIPT_PATH := "res://scripts/agent_battle_lab.gd"
+const LAB_SCENE_PATH := "res://scenes/agent_battle_lab.tscn"
 const ARENA_WIDTH := 28
 const ARENA_HEIGHT := 36
 const TEAM_SIZE := 30
@@ -22,6 +24,7 @@ func run() -> Array[String]:
 			_test_agent_movement(simulation)
 			_test_combat_comparison(simulation)
 		simulation.free()
+	_test_visual_lab_contract()
 	return failures
 
 
@@ -32,9 +35,12 @@ func _test_deterministic_arena(simulation: Node) -> void:
 	var first_positions := PackedVector2Array(first.get("positions", PackedVector2Array()))
 	var teams := PackedInt32Array(first.get("teams", PackedInt32Array()))
 	var blocked_cells := PackedInt32Array(first.get("blocked_cells", PackedInt32Array()))
+	var attack_pulses := PackedFloat32Array(first.get("attack_pulses", PackedFloat32Array()))
 
 	_expect(first_positions.size() == TEAM_SIZE * 2, "arena starts with exactly 60 units")
 	_expect(teams.size() == TEAM_SIZE * 2, "snapshot exposes one team value per unit")
+	_expect(attack_pulses.size() == TEAM_SIZE * 2, "snapshot exposes one truthful attack pulse timer per unit")
+	_expect(_sum_floats(attack_pulses) <= 0.0001, "attack pulse timers start inactive")
 	_expect(int(first.get("alive_blue", -1)) == TEAM_SIZE, "arena starts with 30 blue units")
 	_expect(int(first.get("alive_red", -1)) == TEAM_SIZE, "arena starts with 30 red units")
 	_expect(is_zero_approx(float(first.get("time", -1.0))), "reset starts at zero elapsed time")
@@ -260,6 +266,38 @@ func _test_combat_comparison(simulation: Node) -> void:
 	)
 
 
+func _test_visual_lab_contract() -> void:
+	_expect(ResourceLoader.exists(LAB_SCRIPT_PATH), "visual lab presenter exists")
+	_expect(ResourceLoader.exists(LAB_SCENE_PATH), "visual lab scene exists")
+	if not ResourceLoader.exists(LAB_SCENE_PATH):
+		return
+
+	var lab = load(LAB_SCENE_PATH).instantiate()
+	for method in ["set_mode", "reset_lab", "get_metrics_text"]:
+		_expect(lab.has_method(method), "visual lab exposes %s" % method)
+	_expect(_count_simulation_nodes(lab) == 1, "visual lab owns exactly one bulk C# simulation node")
+	_expect(
+		String(ProjectSettings.get_setting("application/run/main_scene", "")) == LAB_SCENE_PATH,
+		"project starts in the individual AI battle lab"
+	)
+	_expect(int(ProjectSettings.get_setting("display/window/size/viewport_width", 0)) == 540, "lab viewport width is 540")
+	_expect(int(ProjectSettings.get_setting("display/window/size/viewport_height", 0)) == 960, "lab viewport height is 960")
+	lab.free()
+
+
+func _count_simulation_nodes(root: Node) -> int:
+	var count := 0
+	var pending: Array[Node] = [root]
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		var node_script: Variant = node.get_script()
+		if node_script != null and String(node_script.resource_path) == SIM_PATH:
+			count += 1
+		for child in node.get_children():
+			pending.append(child)
+	return count
+
+
 func _same_vectors(left: PackedVector2Array, right: PackedVector2Array) -> bool:
 	if left.size() != right.size():
 		return false
@@ -271,6 +309,13 @@ func _same_vectors(left: PackedVector2Array, right: PackedVector2Array) -> bool:
 
 func _sum_ints(values: PackedInt32Array) -> int:
 	var total := 0
+	for value in values:
+		total += value
+	return total
+
+
+func _sum_floats(values: PackedFloat32Array) -> float:
+	var total := 0.0
 	for value in values:
 		total += value
 	return total
