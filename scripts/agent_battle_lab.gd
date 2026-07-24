@@ -3,6 +3,10 @@ extends Node2D
 
 const MODE_BASELINE := 0
 const MODE_AGENT := 1
+const SCENARIO_BOTTLENECK := 0
+const SCENARIO_CORNER_TRAP := 1
+const SCENARIO_ROUTE_CHOICE := 2
+const SCENARIO_OPEN_CONTROL := 3
 const TEST_SEED := 230723
 const ARENA_SIZE := Vector2i(28, 36)
 const CELL_SIZE := 14.0
@@ -10,6 +14,16 @@ const MAP_ORIGIN := Vector2(74.0, 158.0)
 const MAP_RECT := Rect2(MAP_ORIGIN, Vector2(ARENA_SIZE) * CELL_SIZE)
 const MAX_HP := 80.0
 const ATTACK_PULSE_SECONDS := 0.14
+const ROUTE_COUNT := 3
+const ROUTE_WAYPOINT_CAPACITY := 5
+
+const SCENARIO_NAMES := [
+	"BOTTLENECK",
+	"CORNER_TRAP",
+	"ROUTE_CHOICE",
+	"OPEN_CONTROL",
+]
+const ROUTE_LABELS := ["C", "L", "R"]
 
 const BLUE := Color("#43a9ff")
 const BLUE_DARK := Color("#164c78")
@@ -52,8 +66,15 @@ const ACTION_COLORS := [
 @onready var _baseline_button: Button = $Interface/Controls/Buttons/Baseline
 @onready var _pause_button: Button = $Interface/Controls/Buttons/Pause
 @onready var _speed_button: Button = $Interface/Controls/Buttons/Speed
+@onready var _scenario_buttons: Array[Button] = [
+	$Interface/ScenarioControls/Gate,
+	$Interface/ScenarioControls/Corner,
+	$Interface/ScenarioControls/Routes,
+	$Interface/ScenarioControls/Open,
+]
 
 var _mode := MODE_AGENT
+var _scenario := SCENARIO_BOTTLENECK
 var _paused := false
 var _speed := 1.0
 var _snapshot: Dictionary = {}
@@ -66,6 +87,8 @@ func _ready() -> void:
 	_pause_button.pressed.connect(_toggle_pause)
 	_speed_button.pressed.connect(_toggle_speed)
 	$Interface/Controls/Buttons/Reset.pressed.connect(reset_lab)
+	for scenario in _scenario_buttons.size():
+		_scenario_buttons[scenario].pressed.connect(set_scenario.bind(scenario))
 	reset_lab()
 
 
@@ -80,9 +103,14 @@ func set_mode(value: int) -> void:
 	reset_lab()
 
 
+func set_scenario(value: int) -> void:
+	_scenario = clampi(value, SCENARIO_BOTTLENECK, SCENARIO_OPEN_CONTROL)
+	reset_lab()
+
+
 func reset_lab() -> void:
 	_paused = false
-	_simulation.call("ResetExperiment", _mode, TEST_SEED)
+	_simulation.call("ResetExperiment", _mode, TEST_SEED, _scenario)
 	sync_view()
 	_update_controls()
 
@@ -114,8 +142,14 @@ func sync_view() -> void:
 	_metrics = _simulation.call("GetMetrics")
 	if is_instance_valid(_metrics_label):
 		_metrics_label.text = get_metrics_text()
-		_mode_label.text = (
-			"INDIVIDUAL AGENT AI" if _mode == MODE_AGENT
+		var scenario_name := String(_snapshot.get(
+			"scenario_name",
+			SCENARIO_NAMES[_scenario]
+		))
+		_mode_label.text = "CASE %d // %s   |   " % [_scenario + 1, scenario_name]
+		_mode_label.text += (
+			"INDIVIDUAL AGENT AI"
+			if _mode == MODE_AGENT
 			else "BASELINE / FORWARD ONLY"
 		)
 		var elapsed := float(_snapshot.get("time", 0.0))
@@ -141,6 +175,8 @@ func _update_controls() -> void:
 		return
 	_agent_button.disabled = _mode == MODE_AGENT
 	_baseline_button.disabled = _mode == MODE_BASELINE
+	for scenario in _scenario_buttons.size():
+		_scenario_buttons[scenario].disabled = scenario == _scenario
 	_pause_button.text = "RESUME" if _paused else "PAUSE"
 	_speed_button.text = "2X" if is_equal_approx(_speed, 2.0) else "1X"
 
@@ -184,19 +220,59 @@ func _draw_arena() -> void:
 		draw_rect(rect, WALL, true)
 		draw_line(rect.position, Vector2(rect.end.x, rect.position.y), WALL_TOP, 2.0)
 
-	var gate_center := _world_to_screen(Vector2(14.0, 18.0))
-	draw_line(
-		gate_center + Vector2(-14.0, -16.0),
-		gate_center + Vector2(-14.0, 16.0),
-		Color("#7f94a8"),
-		2.0
-	)
-	draw_line(
-		gate_center + Vector2(14.0, -16.0),
-		gate_center + Vector2(14.0, 16.0),
-		Color("#7f94a8"),
-		2.0
-	)
+	_draw_route_annotations()
+
+
+func _draw_route_annotations() -> void:
+	var font := ThemeDB.fallback_font
+	var scenario := int(_snapshot.get("scenario_id", _scenario))
+	if scenario == SCENARIO_OPEN_CONTROL:
+		var open_center := _world_to_screen(Vector2(14.0, 18.0))
+		draw_string(
+			font,
+			open_center + Vector2(-82.0, -7.0),
+			"OPEN FIELD // NO BARRIERS",
+			HORIZONTAL_ALIGNMENT_CENTER,
+			164.0,
+			12,
+			Color(MUTED, 0.74)
+		)
+		return
+
+	var blue := PackedVector2Array(_snapshot.get("route_waypoints_blue", PackedVector2Array()))
+	var red := PackedVector2Array(_snapshot.get("route_waypoints_red", PackedVector2Array()))
+	var counts := PackedInt32Array(_snapshot.get("route_waypoint_counts", PackedInt32Array()))
+	if blue.size() < ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY \
+			or red.size() < ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY \
+			or counts.size() < ROUTE_COUNT:
+		return
+
+	for route in ROUTE_COUNT:
+		if counts[route] < 2:
+			continue
+		var index := route * ROUTE_WAYPOINT_CAPACITY
+		var lower_mouth := _world_to_screen(blue[index])
+		var upper_mouth := _world_to_screen(red[index])
+		var route_color := Color(0.38, 0.90, 0.92, 0.40)
+		draw_line(lower_mouth, upper_mouth, Color(route_color, 0.18), 1.0, true)
+		for mouth in [lower_mouth, upper_mouth]:
+			draw_arc(mouth, 8.0, 0.0, TAU, 16, route_color, 1.4, true)
+			draw_line(
+				mouth + Vector2(-7.0, 0.0),
+				mouth + Vector2(7.0, 0.0),
+				Color(route_color, 0.72),
+				1.2,
+				true
+			)
+		draw_string(
+			font,
+			lower_mouth + Vector2(-4.0, 20.0),
+			ROUTE_LABELS[route],
+			HORIZONTAL_ALIGNMENT_CENTER,
+			8.0,
+			10,
+			Color(MUTED, 0.76)
+		)
 
 
 func _draw_attack_pulses() -> void:

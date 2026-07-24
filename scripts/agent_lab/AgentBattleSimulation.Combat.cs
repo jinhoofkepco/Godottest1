@@ -21,10 +21,6 @@ public partial class AgentBattleSimulation
 
     private int SelectCombatTarget(int index)
     {
-        int previous = _targets[index];
-        if ((uint)previous < AgentBattleConfig.UnitCount && _targetReservations[previous] > 0)
-            _targetReservations[previous]--;
-
         Vector2 origin = _positions[index];
         int originX = CellX(origin.X);
         int originY = CellY(origin.Y);
@@ -45,13 +41,18 @@ public partial class AgentBattleSimulation
                 while (candidate >= 0)
                 {
                     if (_teams[candidate] != _teams[index]
-                        && _hp[candidate] > 0f
-                        && _targetReservations[candidate] < AgentBattleConfig.MaxAttackersPerTarget)
+                        && _hp[candidate] > 0f)
                     {
+                        int reservations = _targetReservations[candidate];
+                        if (reservations >= AgentBattleConfig.MaxAttackersPerTarget)
+                        {
+                            candidate = _bucketNext[candidate];
+                            continue;
+                        }
                         float distanceSquared = origin.DistanceSquaredTo(_positions[candidate]);
                         if (distanceSquared <= rangeSquared && HasCombatPassage(origin, _positions[candidate]))
                         {
-                            float score = distanceSquared + _targetReservations[candidate] * 1.6f;
+                            float score = distanceSquared + reservations * 1.6f;
                             if (score < bestScore || (MathF.Abs(score - bestScore) < 0.0001f && candidate < bestTarget))
                             {
                                 bestScore = score;
@@ -65,17 +66,11 @@ public partial class AgentBattleSimulation
             }
         }
 
-        _targets[index] = bestTarget;
-        if (bestTarget >= 0)
-            _targetReservations[bestTarget]++;
         return bestTarget;
     }
 
     private void ReleaseCombatTarget(int index)
     {
-        int target = _targets[index];
-        if ((uint)target < AgentBattleConfig.UnitCount && _targetReservations[target] > 0)
-            _targetReservations[target]--;
         _targets[index] = -1;
     }
 
@@ -132,6 +127,10 @@ public partial class AgentBattleSimulation
             {
                 _everAttacked[index] = true;
                 _unitsEverAttacked++;
+                if (_teams[index] == AgentBattleConfig.TeamBlue)
+                    _blueUnitsEverAttacked++;
+                else
+                    _redUnitsEverAttacked++;
             }
             CountFrontlineReplacement(index);
         }

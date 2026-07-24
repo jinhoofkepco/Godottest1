@@ -4,7 +4,12 @@ const PROJECT_PATH := "res://project.godot"
 const EXPORT_PRESET_PATH := "res://export_presets.cfg"
 const LAB_WORKFLOW_PATH := "res://.github/workflows/android-agent-lab.yml"
 const PRODUCTION_WORKFLOW_PATH := "res://.github/workflows/android.yml"
+const SCENARIO_MATRIX_RUNNER_PATH := "res://tests/run_agent_scenario_matrix.gd"
 const PRODUCTION_WORKFLOW_SHA256 := "c8093cbc4ae707cc33f236969c2544b9dfd7a31703d6ac402be8540ffcb8298e"
+const CHECKOUT_SHA := "11d5960a326750d5838078e36cf38b85af677262"
+const GODOT_ANDROID_EXPORT_SHA := "9344383c3c917d807d155aa5695292a13ff5b2a2"
+const SETUP_DOTNET_SHA := "67a3573c9a986a3f9c594539f4ab511d57bb3ce9"
+const UPLOAD_ARTIFACT_SHA := "ea165f8d65b6e75b540449e92b4886f43607fa02"
 
 var failures: Array[String] = []
 
@@ -33,23 +38,84 @@ func run() -> Array[String]:
 	_expect(_contains_line(preset, 'version/name="0.2.0-lab"'), "lab version name is separate")
 
 	_expect(FileAccess.file_exists(LAB_WORKFLOW_PATH), "dedicated lab workflow exists")
-	_expect(workflow.contains("codex/mini-battle-agent-ai"), "branch push triggers lab workflow")
-	_expect(workflow.contains("workflow_dispatch:"), "lab workflow supports manual dispatch")
-	_expect(workflow.contains("tests/run_agent_battle_lab.gd"), "workflow runs lab rules")
-	_expect(workflow.contains("tests/run_agent_scenario_matrix.gd"), "workflow runs scenario matrix")
-	_expect(workflow.contains("tests/run_agent_apk_contract.gd"), "workflow runs APK contract")
-	_expect(workflow.contains("tests/run_rules.gd"), "workflow runs production rules")
+	_expect(_contains_line(workflow, "  push:"), "lab workflow has a push trigger")
 	_expect(
-		workflow.contains("--scene res://scenes/agent_battle_lab.tscn"),
+		_contains_line(workflow, "    branches: [codex/mini-battle-agent-ai]"),
+		"branch push trigger is exact"
+	)
+	_expect(not workflow.contains("workflow_dispatch:"), "branch-only workflow has no inert manual trigger")
+	_expect(not workflow.contains("pull_request:"), "lab workflow does not run for other refs")
+	_expect(
+		workflow.contains("\npermissions:\n  contents: read\n\njobs:\n"),
+		"workflow has only top-level read-only contents permission"
+	)
+	_expect(workflow.count("permissions:") == 1, "workflow has no job-level permission override")
+	_expect(not workflow.contains("write-all"), "workflow does not grant write-all")
+	_expect(not workflow.contains(": write"), "workflow grants no write permissions")
+	_expect(
+		_contains_line(workflow, "        uses: actions/checkout@%s" % CHECKOUT_SHA),
+		"checkout action is pinned"
+	)
+	_expect(
+		_contains_line(
+			workflow,
+			"        uses: dulvui/godot-android-export@%s" % GODOT_ANDROID_EXPORT_SHA
+		),
+		"Godot Android action is pinned"
+	)
+	_expect(
+		_contains_line(workflow, "        uses: actions/setup-dotnet@%s" % SETUP_DOTNET_SHA),
+		"setup-dotnet action is pinned"
+	)
+	_expect(
+		_contains_line(workflow, "        uses: actions/upload-artifact@%s" % UPLOAD_ARTIFACT_SHA),
+		"upload-artifact action is pinned"
+	)
+	_expect(
+		_contains_line(workflow, "          godot --headless --path . -s tests/run_agent_battle_lab.gd"),
+		"workflow runs lab rules"
+	)
+	_expect(FileAccess.file_exists(SCENARIO_MATRIX_RUNNER_PATH), "scenario matrix runner exists")
+	_expect(
+		_contains_line(
+			workflow,
+			"          godot --headless --path . -s tests/run_agent_scenario_matrix.gd"
+		),
+		"workflow runs scenario matrix"
+	)
+	_expect(
+		_contains_line(workflow, "          godot --headless --path . -s tests/run_agent_apk_contract.gd"),
+		"workflow runs APK contract"
+	)
+	_expect(
+		_contains_line(workflow, "          godot --headless --path . -s tests/run_rules.gd"),
+		"workflow runs production rules"
+	)
+	_expect(
+		_contains_line(
+			workflow,
+			"          godot --headless --path . --scene res://scenes/agent_battle_lab.tscn --quit-after 180"
+		),
 		"workflow smokes the lab scene"
 	)
 	_expect(
-		workflow.contains("build/mini-battle-ai-lab.apk"),
-		"workflow exports the separate APK"
+		_contains_line(
+			workflow,
+			"          godot --headless --path . --export-debug Android build/mini-battle-ai-lab.apk"
+		),
+		"workflow performs an exact debug export"
 	)
 	_expect(
-		workflow.contains("mini-battle-ai-lab-debug-apk"),
-		"artifact name is separate"
+		_contains_line(workflow, "          test -s build/mini-battle-ai-lab.apk"),
+		"workflow rejects a missing or empty APK"
+	)
+	_expect(
+		_contains_line(workflow, "          name: mini-battle-ai-lab-debug-apk"),
+		"artifact name is exact"
+	)
+	_expect(
+		_contains_line(workflow, "          path: build/mini-battle-ai-lab.apk"),
+		"artifact path is exact"
 	)
 	_expect(
 		workflow.contains("com.jinhoofkepco.godottest1.agentlab"),

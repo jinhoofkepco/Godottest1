@@ -24,8 +24,56 @@ public partial class AgentBattleSimulation
         if (decisionGroup >= AgentBattleConfig.DecisionGroupCount)
             return;
 
-        for (int index = decisionGroup; index < AgentBattleConfig.UnitCount; index += AgentBattleConfig.DecisionGroupCount)
-            DecideAction(index);
+        long decisionEpoch = _tickCount / AgentBattleConfig.DecisionIntervalTicks;
+        bool redFirst = (decisionEpoch & 1L) != 0L;
+        int lanes = AgentBattleConfig.TeamSize / AgentBattleConfig.DecisionGroupCount;
+        int batchCount = 0;
+        for (int laneOffset = 0; laneOffset < lanes; laneOffset++)
+        {
+            int local = decisionGroup + laneOffset * AgentBattleConfig.DecisionGroupCount;
+            int blue = local;
+            int red = local + AgentBattleConfig.TeamSize;
+            if (redFirst)
+            {
+                _decisionBatch[batchCount++] = red;
+                _decisionBatch[batchCount++] = blue;
+            }
+            else
+            {
+                _decisionBatch[batchCount++] = blue;
+                _decisionBatch[batchCount++] = red;
+            }
+        }
+
+        ReserveDecisionTargets(batchCount);
+        for (int batchIndex = 0; batchIndex < batchCount; batchIndex++)
+            DecideAction(_decisionBatch[batchIndex]);
+    }
+
+    private void ReserveDecisionTargets(int batchCount)
+    {
+        // Release the complete mirrored batch before anyone chooses. Both teams use
+        // the same local order and alternate which team goes first; the live ledger
+        // then enforces the hard per-target capacity inside this decision batch.
+        for (int batchIndex = 0; batchIndex < batchCount; batchIndex++)
+        {
+            int index = _decisionBatch[batchIndex];
+            int previous = _targets[index];
+            if (IsCombatTargetValid(index, previous) && _targetReservations[previous] > 0)
+                _targetReservations[previous]--;
+            _targets[index] = -1;
+        }
+
+        for (int batchIndex = 0; batchIndex < batchCount; batchIndex++)
+        {
+            int index = _decisionBatch[batchIndex];
+            if (_hp[index] <= 0f || ShouldRetreat(index))
+                continue;
+            int target = SelectCombatTarget(index);
+            _targets[index] = target;
+            if (target >= 0)
+                _targetReservations[target]++;
+        }
     }
 
     private void DecideAction(int index)
@@ -33,8 +81,7 @@ public partial class AgentBattleSimulation
         if (_hp[index] <= 0f)
             return;
 
-        bool mustRetreat = _mode == AgentBattleConfig.ModeAgent
-            && _hp[index] < AgentBattleConfig.UnitMaxHp * AgentBattleConfig.RetreatHpRatio;
+        bool mustRetreat = ShouldRetreat(index);
         if (mustRetreat)
         {
             ReleaseCombatTarget(index);
@@ -42,7 +89,7 @@ public partial class AgentBattleSimulation
             return;
         }
 
-        int combatTarget = SelectCombatTarget(index);
+        int combatTarget = _targets[index];
         if (_mode == AgentBattleConfig.ModeBaseline)
         {
             _routeIntents[index] = AgentBattleConfig.RouteCenter;
@@ -73,9 +120,12 @@ public partial class AgentBattleSimulation
             : 0.42f + MathF.Abs(perception.FriendlyLeft - perception.FriendlyRight) * 0.08f;
         float congestion = perception.FriendlyAhead + perception.HostilesNear * 0.5f;
         float flankBase = approachingBarrier
-            ? 0.38f + congestion * 0.36f + MathF.Min(stuck, 3f) * 0.28f
+            ? AgentBattleConfig.FlankBaseUtility
+                + congestion * AgentBattleConfig.FlankCongestionWeight
+                + MathF.Min(stuck, 3f) * AgentBattleConfig.FlankStuckWeight
             : 0.12f;
-        float personality = DeterministicSigned(_seed ^ 0x34D1B54, index) * 0.12f;
+        int mirroredUnit = index % AgentBattleConfig.TeamSize;
+        float personality = DeterministicSigned(_seed ^ 0x34D1B54, mirroredUnit) * 0.12f;
         float leftScore = flankBase + personality;
         float rightScore = flankBase - personality;
 
@@ -128,6 +178,10 @@ public partial class AgentBattleSimulation
         };
         SetAction(index, bestAction, bestScore, commitTicks);
     }
+
+    private bool ShouldRetreat(int index) =>
+        _mode == AgentBattleConfig.ModeAgent
+        && _hp[index] < AgentBattleConfig.UnitMaxHp * AgentBattleConfig.RetreatHpRatio;
 
     private LocalPerception SenseLocalArea(int index)
     {
@@ -249,6 +303,14 @@ public partial class AgentBattleSimulation
     {
         if (_actions[index] != action)
         {
+            if (action == AgentBattleConfig.ActionRetreat
+                || _actions[index] == AgentBattleConfig.ActionRetreat)
+            {
+                _stuckSeconds[index] = 0f;
+                _progressSampleTicks[index] = 0;
+                _progressSampleY[index] = _positions[index].Y;
+                _progressSamplePositions[index] = _positions[index];
+            }
             if (action == AgentBattleConfig.ActionRetreat)
                 PrepareRetreatRoute(index);
             if (action == AgentBattleConfig.ActionFlankLeft || action == AgentBattleConfig.ActionFlankRight)

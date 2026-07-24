@@ -34,6 +34,12 @@ internal static class AgentBattleConfig
     public const int RouteRight = 2;
     public const int RouteCount = 3;
 
+    public const float TrapMinX = 10.5f;
+    public const float TrapMaxX = 17.5f;
+    public const float TrapMinY = 13.5f;
+    public const float TrapMaxY = 22.5f;
+    public const float TimelyTrapEscapeSeconds = 12f;
+
     public const float UnitMaxHp = 80f;
     public const float FixedDelta = 1f / 30f;
     public const float DecisionInterval = 0.2f;
@@ -46,6 +52,9 @@ internal static class AgentBattleConfig
     public const int PerceptionCellRadius = 3;
     public const float ForwardBlockRange = 0.95f;
     public const float ActionHysteresis = 0.18f;
+    public const float FlankBaseUtility = 0f;
+    public const float FlankCongestionWeight = 0.36f;
+    public const float FlankStuckWeight = 0.28f;
     public const int DefaultCommitTicks = 9;
     public const int FlankCommitTicks = 24;
     public const int YieldCommitTicks = 15;
@@ -56,7 +65,15 @@ internal static class AgentBattleConfig
     public const float YieldSlowSpeedRatio = 0.3f;
     public const float ObjectiveMargin = 1.1f;
     public const float CandidateCollisionRange = 0.72f;
+    public const float FriendlyCollisionPenalty = 2.3f;
+    public const float HostileCollisionPenalty = 0.35f;
+    public const float EngageReliefCollisionScale = 0f;
     public const int PositionCorrectionPasses = 2;
+    public const int SevereOverlapBufferedPasses = 8;
+    public const int SevereOverlapFallbackPasses = 16;
+    public const int TerrainDetourCommitTicks = 42;
+    public const float TerrainDetourProbeDistance = 1.55f;
+    public const float TerrainDetourSampleStep = 0.18f;
     public const float CombatDetectionRange = 4.5f;
     public const int CombatDetectionCellRadius = 5;
     public const float AttackReach = 0.18f;
@@ -68,7 +85,7 @@ internal static class AgentBattleConfig
     public const float RetreatHpRatio = 0.24f;
     // Wounded units disperse into a rear reserve band instead of queuing at an exact edge point.
     public const float RetreatReserveDepth = 5f;
-    public const int RecentDeathTicks = 75;
+    public const int RecentDeathTicks = 90;
     public const float GapFillDetectionRange = 5.5f;
     public const float ReplacementRadius = 1.35f;
     public const float PurposefulHoldRange = 3.2f;

@@ -4,9 +4,9 @@
 
 ## 실험 브랜치: 30대30 개별 판단 AI
 
-`codex/mini-battle-agent-ai`는 출시 게임과 분리한 30대30 방패병 병목 실험입니다. 이 브랜치에서는 `scenes/agent_battle_lab.tscn`이 기본 장면이며, 유닛마다 Node를 만들지 않고 하나의 C# 시뮬레이션이 60개 고정 배열 에이전트를 처리합니다. `AGENT AI / BASELINE / PAUSE / 1X·2X / RESET` 버튼으로 개별 판단과 단순 중앙 전진을 즉시 비교할 수 있습니다.
+`codex/mini-battle-agent-ai`는 출시 게임과 분리한 30대30 방패병 개별 판단 실험입니다. 이 브랜치에서는 `scenes/agent_battle_lab.tscn`이 기본 장면이며, 유닛마다 Node를 만들지 않고 하나의 C# 시뮬레이션이 60개 고정 배열 에이전트를 처리합니다. `1 GATE / 2 CORNER / 3 ROUTES / 4 OPEN`으로 병목·돌출 코너·복수 경로·개활지를 즉시 바꾸고, `AGENT AI / BASELINE / PAUSE / 1X·2X / RESET`으로 개별 판단과 단순 중앙 전진을 비교할 수 있습니다.
 
-> **중요:** `Android Debug APK`의 `godottest1-debug-apk`는 프로덕션 게임이며 이 실험 앱이 아닙니다. 실험 APK는 [Mini Battle AI Lab APK 워크플로](https://github.com/jinhoofkepco/Godottest1/actions/workflows/android-agent-lab.yml?query=branch%3Acodex%2Fmini-battle-agent-ai)의 최신 성공 실행에서 **`mini-battle-ai-lab-debug-apk`** 아티팩트를 받으세요. 압축 안의 파일은 `build/mini-battle-ai-lab.apk`, 앱 이름은 `Mini Battle AI Lab`, 패키지는 `com.jinhoofkepco.godottest1.agentlab`입니다.
+> **중요:** `Android Debug APK`의 `godottest1-debug-apk`는 프로덕션 게임이며 이 실험 앱이 아닙니다. `codex/mini-battle-agent-ai`에 푸시하면 전용 [Mini Battle AI Lab APK 워크플로](https://github.com/jinhoofkepco/Godottest1/actions/workflows/android-agent-lab.yml?query=branch%3Acodex%2Fmini-battle-agent-ai)가 자동 실행됩니다. 이 브랜치 전용 워크플로는 기본 브랜치에 없으므로 수동 `Run workflow`에 의존하지 않습니다. 최신 성공 실행에서 **`mini-battle-ai-lab-debug-apk`** 아티팩트를 받으세요. 압축 루트의 파일은 `mini-battle-ai-lab.apk`, 앱 이름은 `Mini Battle AI Lab`, 패키지는 `com.jinhoofkepco.godottest1.agentlab`입니다.
 
 ```bash
 /private/tmp/godot45mono/app/Godot_mono.app/Contents/MacOS/Godot --path .
@@ -19,11 +19,16 @@ DOTNET_ROOT=/private/tmp/godottest1-dotnet9 \
 PATH=/private/tmp/godottest1-dotnet9:$PATH \
 DOTNET_ROOT=/private/tmp/godottest1-dotnet9 \
   /private/tmp/godot45mono/app/Godot_mono.app/Contents/MacOS/Godot \
+  --headless --path . -s tests/run_agent_scenario_matrix.gd
+
+PATH=/private/tmp/godottest1-dotnet9:$PATH \
+DOTNET_ROOT=/private/tmp/godottest1-dotnet9 \
+  /private/tmp/godot45mono/app/Godot_mono.app/Contents/MacOS/Godot \
   --display-driver macos --rendering-method gl_compatibility \
   --audio-driver Dummy --path . -s tests/smoke_agent_battle_lab.gd
 ```
 
-무인 캡처는 `build/smoke_agent_battle_lab.png`에 540×960으로 저장됩니다. 고정 시드 결과, 수용 기준 판정, 성능 수치와 한계는 [30대30 개별 판단 AI 실험 보고서](docs/agent-battle-lab-results.md)에 기록했습니다. 이 브랜치는 실험용이며 프로덕션 병합이나 모바일 실기기 성능을 의미하지 않습니다.
+시각 검증은 `build/smoke_agent_case_1_gate.png`부터 네 Agent 케이스와 `build/smoke_baseline_case_1_gate.png`까지 540×960 RGBA 다섯 장을 생성합니다. 4케이스×3시드 비교, 수용 기준, 튜닝 이력과 성능 수치는 [다중 케이스 결과 보고서](docs/agent-battle-multi-case-results.md)에 기록했습니다. 이 브랜치는 실험용이며 프로덕션 병합이나 모바일 실기기 성능을 의미하지 않습니다.
 
 ## 프로덕션 게임 배경: 한 판 규칙과 조작
 

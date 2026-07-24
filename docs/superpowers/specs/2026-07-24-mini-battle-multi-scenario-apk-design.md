@@ -58,10 +58,18 @@ Only terrain and route metadata differ between cases.
   occurs after crossing the opposite side of the fortification.
 - 90-second Agent acceptance per seed:
   - trap entries: at least 12 total and at least 4 per team;
-  - escape within 12 seconds: at least 70%;
-  - maximum trap dwell: below 18 seconds;
+  - at least one physical opposite-side escape within 12 seconds;
+  - non-purposeful idle: below 20 agent-seconds;
+  - maximum no-progress interval: below 6 seconds;
   - units that actually attack: at least 36;
   - overlap violations: zero.
+
+Raw escape ratio and maximum trap dwell remain reported diagnostics, not pass
+criteria. Independent review found that these values include units deliberately
+fighting or dying inside the defile, so treating every non-exit as a navigation
+failure rewarded a scenario-only rule that disabled combat and retreat. The
+revised criteria measure the actual defect—idle oscillation/no progress—while
+all four scenarios retain identical decision and combat rules.
 
 ### Case 3: `ROUTE_CHOICE`
 
@@ -111,6 +119,13 @@ visibility checks use the active blocked mask instead of hard-coded knowledge
 of the original wall. Team routes and waypoints are exact vertical mirrors;
 this removes the current left/right path asymmetry as a possible source of the
 `RED TIME` bias.
+
+Target selection uses a two-phase mirrored decision batch. First, every member
+of the batch releases its old valid reservation. Second, Blue and Red use the
+same local-unit order while the team processed first alternates by decision
+epoch; every chosen target is immediately written to the live reservation
+ledger. This preserves the hard limit of three attackers per target without a
+scenario-specific exception or a permanently first team.
 
 Snapshots add scenario ID/name and return only the active blocked-cell prefix.
 Metrics add per-team participation and HP, three route-crossing counters, trap
@@ -181,7 +196,7 @@ Branch-only identity:
 - artifact name: `mini-battle-ai-lab-debug-apk`.
 
 A dedicated `.github/workflows/android-agent-lab.yml` runs on pushes to
-`codex/mini-battle-agent-ai` and on manual dispatch. It reuses the verified
+`codex/mini-battle-agent-ai`. It reuses the verified
 Godot 4.5 .NET Android setup but runs the lab import, lab rule suite, and lab
 scene smoke before `--export-debug Android`. It verifies that the APK is
 non-empty, contains the arm64 C# assembly, and passes `apksigner verify`.
@@ -198,6 +213,8 @@ artifact download location.
 - Behavioral tests execute `4 cases × 3 seeds × 2 modes` and print a
   machine-readable comparison table.
 - Position/action/route state must reproduce for repeated equal inputs.
+- A per-tick regression checks BOTTLENECK and OPEN_CONTROL for 900 ticks each
+  and rejects any live target assigned more than three attackers.
 - Existing production rule tests remain green.
 - A development-machine timing table reports average and worst tick per case.
   Managed GC and physical-device frame time remain explicitly unmeasured unless
@@ -219,4 +236,3 @@ artifact download location.
 6. GitHub Actions builds and signs `mini-battle-ai-lab.apk`.
 7. The branch, successful Actions run, and exact artifact download link are
    provided without merging into `main`.
-

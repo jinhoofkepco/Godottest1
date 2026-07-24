@@ -3,7 +3,6 @@ name: Mini Battle AI Lab APK
 on:
   push:
     branches: [codex/mini-battle-agent-ai]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,7 +21,7 @@ jobs:
 
     steps:
       - name: Check out experiment branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Create temporary debug keystore
         run: |
@@ -37,7 +36,7 @@ jobs:
           touch .godot/export_credentials.cfg
 
       - name: Set up Godot Android export environment
-        uses: dulvui/godot-android-export@v4.2.0
+        uses: dulvui/godot-android-export@9344383c3c917d807d155aa5695292a13ff5b2a2
         continue-on-error: true
         with:
           godot-version: 4.5
@@ -45,7 +44,7 @@ jobs:
           working-directory: .
 
       - name: Set up .NET 9 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           dotnet-version: 9.0.x
 
@@ -100,7 +99,7 @@ jobs:
           "$apk_signer_bin" verify --verbose build/mini-battle-ai-lab.apk
 
       - name: Upload Mini Battle AI Lab debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: mini-battle-ai-lab-debug-apk
           path: build/mini-battle-ai-lab.apk

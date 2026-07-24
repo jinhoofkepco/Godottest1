@@ -10,6 +10,10 @@ public partial class AgentBattleSimulation
         new Vector2[AgentBattleConfig.RouteCount * RouteWaypointCapacity];
     private readonly Vector2[] _routeWaypointsRed =
         new Vector2[AgentBattleConfig.RouteCount * RouteWaypointCapacity];
+    private readonly Vector2[] _routeNavigationWaypointsBlue =
+        new Vector2[AgentBattleConfig.RouteCount * RouteWaypointCapacity];
+    private readonly Vector2[] _routeNavigationWaypointsRed =
+        new Vector2[AgentBattleConfig.RouteCount * RouteWaypointCapacity];
     private readonly int[] _routeWaypointCounts = new int[AgentBattleConfig.RouteCount];
     private readonly int[] _routeWaypointCursors = new int[AgentBattleConfig.UnitCount];
 
@@ -24,6 +28,8 @@ public partial class AgentBattleSimulation
         Array.Clear(_blockedMask);
         Array.Clear(_routeWaypointsBlue);
         Array.Clear(_routeWaypointsRed);
+        Array.Clear(_routeNavigationWaypointsBlue);
+        Array.Clear(_routeNavigationWaypointsRed);
         Array.Clear(_routeWaypointCounts);
         Array.Clear(_routeWaypointCursors);
         _hasBarrier = true;
@@ -157,6 +163,32 @@ public partial class AgentBattleSimulation
         int offset = RouteWaypointOffset(route, waypoint);
         _routeWaypointsBlue[offset] = blue;
         _routeWaypointsRed[offset] = new Vector2(blue.X, AgentBattleConfig.ArenaHeight - blue.Y);
+        _routeNavigationWaypointsBlue[offset] = ProjectToOpenTerrain(_routeWaypointsBlue[offset]);
+        _routeNavigationWaypointsRed[offset] = ProjectToOpenTerrain(_routeWaypointsRed[offset]);
+    }
+
+    private Vector2 ProjectToOpenTerrain(Vector2 waypoint)
+    {
+        if (IsTerrainOpen(waypoint))
+            return waypoint;
+
+        Vector2 best = waypoint;
+        float bestDistanceSquared = float.MaxValue;
+        for (int y = 0; y < AgentBattleConfig.ArenaHeight; y++)
+        {
+            for (int x = 0; x < AgentBattleConfig.ArenaWidth; x++)
+            {
+                Vector2 candidate = new(x + 0.5f, y + 0.5f);
+                if (!IsTerrainOpen(candidate))
+                    continue;
+                float distanceSquared = waypoint.DistanceSquaredTo(candidate);
+                if (distanceSquared >= bestDistanceSquared)
+                    continue;
+                bestDistanceSquared = distanceSquared;
+                best = candidate;
+            }
+        }
+        return best;
     }
 
     private bool IsApproachingScenarioBarrier(int index)
@@ -213,7 +245,7 @@ public partial class AgentBattleSimulation
         int cursor = 0;
         while (cursor < count)
         {
-            Vector2 waypoint = RouteWaypoint(index, route, cursor, true);
+            Vector2 waypoint = NavigationRouteWaypoint(index, route, cursor, true);
             if ((waypoint.Y - _positions[index].Y) * homeward >= 0f)
                 break;
             cursor++;
@@ -229,7 +261,7 @@ public partial class AgentBattleSimulation
         float reachSquared = RouteWaypointReach * RouteWaypointReach;
         while (cursor < count)
         {
-            Vector2 waypoint = RouteWaypoint(index, route, cursor, reverse);
+            Vector2 waypoint = NavigationRouteWaypoint(index, route, cursor, reverse);
             if (_positions[index].DistanceSquaredTo(waypoint) > reachSquared)
                 break;
             cursor++;
@@ -244,6 +276,34 @@ public partial class AgentBattleSimulation
             ? _teams[index] == AgentBattleConfig.TeamRed
             : _teams[index] == AgentBattleConfig.TeamBlue;
         return useBlue ? _routeWaypointsBlue[offset] : _routeWaypointsRed[offset];
+    }
+
+    private Vector2 NavigationRouteWaypoint(int index, int route, int waypoint, bool reverse)
+    {
+        int offset = RouteWaypointOffset(route, waypoint);
+        bool useBlue = reverse
+            ? _teams[index] == AgentBattleConfig.TeamRed
+            : _teams[index] == AgentBattleConfig.TeamBlue;
+        return useBlue
+            ? _routeNavigationWaypointsBlue[offset]
+            : _routeNavigationWaypointsRed[offset];
+    }
+
+    private int ClassifyPhysicalPassage(float crossingX)
+    {
+        int bestRoute = AgentBattleConfig.RouteCenter;
+        float bestDistance = float.MaxValue;
+        for (int route = 0; route < AgentBattleConfig.RouteCount; route++)
+        {
+            int exitWaypoint = Math.Max(0, _routeWaypointCounts[route] - 2);
+            float exitX = _routeWaypointsBlue[RouteWaypointOffset(route, exitWaypoint)].X;
+            float distance = MathF.Abs(crossingX - exitX);
+            if (distance >= bestDistance)
+                continue;
+            bestDistance = distance;
+            bestRoute = route;
+        }
+        return bestRoute;
     }
 
     private static int RouteWaypointOffset(int route, int waypoint) =>

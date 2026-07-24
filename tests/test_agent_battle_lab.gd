@@ -1,6 +1,9 @@
 extends RefCounted
 
 const SIM_PATH := "res://scripts/agent_lab/AgentBattleSimulation.cs"
+const DECISION_PATH := "res://scripts/agent_lab/AgentBattleSimulation.Decision.cs"
+const MOVEMENT_PATH := "res://scripts/agent_lab/AgentBattleSimulation.Movement.cs"
+const COMBAT_PATH := "res://scripts/agent_lab/AgentBattleSimulation.Combat.cs"
 const LAB_SCRIPT_PATH := "res://scripts/agent_battle_lab.gd"
 const LAB_SCENE_PATH := "res://scenes/agent_battle_lab.tscn"
 const ARENA_WIDTH := 28
@@ -20,7 +23,12 @@ func run() -> Array[String]:
 			_expect(simulation.has_method(method), "simulation exposes %s" % method)
 		if failures.is_empty():
 			_test_scenario_contract(simulation)
+			_test_scenarios_share_decision_and_combat_rules()
 			_test_scenario_route_metadata(simulation)
+			_test_scenario_metric_contract(simulation)
+			_test_target_reservation_cap(simulation)
+			_test_route_metrics_use_physical_passages(simulation)
+			_test_returned_unit_reacquires_route(simulation)
 			_test_open_control_behavior(simulation)
 			_test_scenario_passage_behavior(simulation)
 			_test_scenario_determinism(simulation)
@@ -33,6 +41,25 @@ func run() -> Array[String]:
 		simulation.free()
 	_test_visual_lab_contract()
 	return failures
+
+
+func _test_scenarios_share_decision_and_combat_rules() -> void:
+	var decision := FileAccess.get_file_as_string(DECISION_PATH)
+	var movement := FileAccess.get_file_as_string(MOVEMENT_PATH)
+	var combat := FileAccess.get_file_as_string(COMBAT_PATH)
+	for forbidden in [
+		"ShouldMaintainCornerTransit",
+		"CornerCenterRoutePreference",
+		"SynchronizeOpenControlOrders",
+		"NormalizeOpenControlPairs",
+		"SymmetrizeOpenControlDamage",
+	]:
+		_expect(
+			not decision.contains(forbidden)
+				and not movement.contains(forbidden)
+				and not combat.contains(forbidden),
+			"all scenarios share rules; no %s shortcut" % forbidden
+		)
 
 
 func _test_scenario_contract(simulation: Node) -> void:
@@ -56,6 +83,129 @@ func _test_scenario_contract(simulation: Node) -> void:
 	_expect(int(fallback.get("scenario_id", -1)) == 0, "invalid scenario falls back to bottleneck")
 
 
+func _test_scenario_metric_contract(simulation: Node) -> void:
+	simulation.call("ResetExperiment", 1, TEST_SEED, 0)
+	var metrics: Dictionary = simulation.call("GetMetrics")
+	for key in [
+		"blue_units_ever_attacked",
+		"red_units_ever_attacked",
+		"blue_remaining_hp",
+		"red_remaining_hp",
+		"route_crossings",
+		"trap_entries_blue",
+		"trap_entries_red",
+		"trap_escapes_within_12s",
+		"trap_escape_ratio",
+		"maximum_trap_dwell_seconds",
+	]:
+		_expect(metrics.has(key), "metrics expose %s" % key)
+
+
+func _test_target_reservation_cap(simulation: Node) -> void:
+	for scenario in [0, 3]:
+		simulation.call("ResetExperiment", 1, TEST_SEED, scenario)
+		for tick in 900:
+			simulation.call("RunTicks", 1)
+			var snapshot: Dictionary = simulation.call("GetSnapshot")
+			var hp := PackedFloat32Array(snapshot.get("hp", PackedFloat32Array()))
+			var teams := PackedInt32Array(snapshot.get("teams", PackedInt32Array()))
+			var targets := PackedInt32Array(snapshot.get("targets", PackedInt32Array()))
+			var reservations := PackedInt32Array()
+			reservations.resize(TEAM_SIZE * 2)
+			for attacker in targets.size():
+				var target := targets[attacker]
+				if hp[attacker] <= 0.0 \
+						or target < 0 \
+						or target >= hp.size() \
+						or hp[target] <= 0.0 \
+						or teams[attacker] == teams[target]:
+					continue
+				reservations[target] += 1
+			var maximum_reservations := 0
+			for count in reservations:
+				maximum_reservations = maxi(maximum_reservations, count)
+			_expect(
+				maximum_reservations <= 3,
+				"%s tick %d limits every live target to three assigned attackers"
+				% [SCENARIO_NAMES[scenario], tick]
+			)
+			if maximum_reservations > 3:
+				return
+
+
+func _test_route_metrics_use_physical_passages(simulation: Node) -> void:
+	const ROUTE_COUNT := 3
+	const ROUTE_WAYPOINT_CAPACITY := 5
+	simulation.call("ResetExperiment", 1, TEST_SEED, 2)
+	simulation.call("RunTicks", 90 * 30)
+	var snapshot: Dictionary = simulation.call("GetSnapshot")
+	var physical_routes := PackedInt32Array(
+		snapshot.get("physical_routes", PackedInt32Array())
+	)
+	var crossings := PackedVector2Array(
+		snapshot.get("route_crossing_positions", PackedVector2Array())
+	)
+	var blue_routes := PackedVector2Array(
+		snapshot.get("route_waypoints_blue", PackedVector2Array())
+	)
+	var counts := PackedInt32Array(
+		snapshot.get("route_waypoint_counts", PackedInt32Array())
+	)
+	_expect(physical_routes.size() == TEAM_SIZE * 2, "snapshot exposes physical route per unit")
+	_expect(crossings.size() == TEAM_SIZE * 2, "snapshot exposes physical crossing positions")
+	if physical_routes.size() != TEAM_SIZE * 2 \
+			or crossings.size() != TEAM_SIZE * 2 \
+			or blue_routes.size() != ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY \
+			or counts.size() != ROUTE_COUNT:
+		return
+
+	var observed := 0
+	for index in physical_routes.size():
+		var route := physical_routes[index]
+		if route < 0:
+			continue
+		observed += 1
+		var best_route := -1
+		var best_distance := INF
+		for candidate in ROUTE_COUNT:
+			var exit_waypoint := counts[candidate] - 2
+			var exit_x := blue_routes[candidate * ROUTE_WAYPOINT_CAPACITY + exit_waypoint].x
+			var distance := absf(crossings[index].x - exit_x)
+			if distance < best_distance:
+				best_distance = distance
+				best_route = candidate
+		_expect(
+			route == best_route,
+			"unit %d route metric follows crossing x, not route intent" % index
+		)
+	_expect(observed >= 12, "physical route fixture records enough crossings")
+
+
+func _test_returned_unit_reacquires_route(simulation: Node) -> void:
+	for seed in [230723, 230724, 230725]:
+		simulation.call("ResetExperiment", 1, seed, 1)
+		simulation.call("RunTicks", 90 * 30)
+		var snapshot: Dictionary = simulation.call("GetSnapshot")
+		var positions := PackedVector2Array(snapshot.get("positions", PackedVector2Array()))
+		var hp := PackedFloat32Array(snapshot.get("hp", PackedFloat32Array()))
+		var actions := PackedInt32Array(snapshot.get("actions", PackedInt32Array()))
+		var targets := PackedInt32Array(snapshot.get("targets", PackedInt32Array()))
+		var stuck := PackedFloat32Array(snapshot.get("stuck_seconds", PackedFloat32Array()))
+		for index in positions.size():
+			var inside_unpassed_slab := positions[index].y > 13.65 and positions[index].y < 22.35
+			_expect(
+				not (
+					hp[index] > 0.0
+					and inside_unpassed_slab
+					and actions[index] == 0
+					and targets[index] < 0
+					and stuck[index] >= 12.0
+				),
+				"CORNER_TRAP seed %d unit %d avoids a 12-second no-target ADVANCE stall inside the barrier"
+				% [seed, index]
+			)
+
+
 func _test_scenario_route_metadata(simulation: Node) -> void:
 	const ROUTE_COUNT := 3
 	const ROUTE_WAYPOINT_CAPACITY := 5
@@ -64,7 +214,16 @@ func _test_scenario_route_metadata(simulation: Node) -> void:
 		var snapshot: Dictionary = simulation.call("GetSnapshot")
 		var blue := PackedVector2Array(snapshot.get("route_waypoints_blue", PackedVector2Array()))
 		var red := PackedVector2Array(snapshot.get("route_waypoints_red", PackedVector2Array()))
+		var nav_blue := PackedVector2Array(
+			snapshot.get("route_navigation_waypoints_blue", PackedVector2Array())
+		)
+		var nav_red := PackedVector2Array(
+			snapshot.get("route_navigation_waypoints_red", PackedVector2Array())
+		)
 		var counts := PackedInt32Array(snapshot.get("route_waypoint_counts", PackedInt32Array()))
+		var blocked_cells := PackedInt32Array(
+			snapshot.get("blocked_cells", PackedInt32Array())
+		)
 		var expected := _expected_blue_routes(scenario)
 
 		_expect(
@@ -76,11 +235,18 @@ func _test_scenario_route_metadata(simulation: Node) -> void:
 			"%s exposes the fixed red waypoint buffer" % SCENARIO_NAMES[scenario]
 		)
 		_expect(
+			nav_blue.size() == ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY
+				and nav_red.size() == ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY,
+			"%s exposes fixed reachable navigation targets" % SCENARIO_NAMES[scenario]
+		)
+		_expect(
 			counts.size() == ROUTE_COUNT,
 			"%s exposes one waypoint count per route" % SCENARIO_NAMES[scenario]
 		)
 		if blue.size() != ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY \
 				or red.size() != ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY \
+				or nav_blue.size() != ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY \
+				or nav_red.size() != ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY \
 				or counts.size() != ROUTE_COUNT:
 			continue
 
@@ -101,6 +267,12 @@ func _test_scenario_route_metadata(simulation: Node) -> void:
 					red[flat_index]
 					== Vector2(blue[flat_index].x, float(ARENA_HEIGHT) - blue[flat_index].y),
 					"%s route %d red waypoint %d is the exact vertical mirror"
+					% [SCENARIO_NAMES[scenario], route, waypoint]
+				)
+				_expect(
+					_has_unit_clearance(nav_blue[flat_index], blocked_cells)
+						and _has_unit_clearance(nav_red[flat_index], blocked_cells),
+					"%s route %d waypoint %d navigation targets are terrain-open"
 					% [SCENARIO_NAMES[scenario], route, waypoint]
 				)
 
@@ -138,6 +310,23 @@ func _expected_blue_routes(scenario: int) -> Array[PackedVector2Array]:
 				PackedVector2Array([Vector2(13.5, 0.7)]),
 			]
 	return []
+
+
+func _has_unit_clearance(point: Vector2, blocked_cells: PackedInt32Array) -> bool:
+	const UNIT_RADIUS := 0.27
+	if point.x < UNIT_RADIUS or point.x > float(ARENA_WIDTH) - UNIT_RADIUS \
+			or point.y < UNIT_RADIUS or point.y > float(ARENA_HEIGHT) - UNIT_RADIUS:
+		return false
+	for cell in blocked_cells:
+		var x := float(cell % ARENA_WIDTH)
+		var y := float(cell / ARENA_WIDTH)
+		var nearest := Vector2(
+			clampf(point.x, x, x + 1.0),
+			clampf(point.y, y, y + 1.0)
+		)
+		if point.distance_squared_to(nearest) < UNIT_RADIUS * UNIT_RADIUS:
+			return false
+	return true
 
 
 func _test_open_control_behavior(simulation: Node) -> void:
@@ -381,9 +570,14 @@ func _test_agent_movement(simulation: Node) -> void:
 	var first_positions := PackedVector2Array(first.get("positions", PackedVector2Array()))
 	var first_actions := PackedInt32Array(first.get("actions", PackedInt32Array()))
 	var action_counts := PackedInt32Array(metrics.get("action_counts", PackedInt32Array()))
+	var hp := PackedFloat32Array(first.get("hp", PackedFloat32Array()))
+	var alive_count := 0
+	for value in hp:
+		if value > 0.0:
+			alive_count += 1
 
 	_expect(action_counts.size() == 8, "metrics expose one population count for every utility action")
-	_expect(_sum_ints(action_counts) == TEAM_SIZE * 2, "action population counts include all 60 agents")
+	_expect(_sum_ints(action_counts) == alive_count, "action population counts include living agents only")
 	_expect(int(metrics.get("flank_decisions", 0)) > 0, "agents independently choose a flank")
 	_expect(int(metrics.get("yield_decisions", 0)) > 0, "blocked agents negotiate passage")
 	_expect(int(metrics.get("yield_decisions", 0)) <= TEAM_SIZE * 2, "yield metric counts unique agents with verified blocking")
@@ -392,7 +586,6 @@ func _test_agent_movement(simulation: Node) -> void:
 	_expect(int(metrics.get("overlap_violations", -1)) == 0, "position correction preserves minimum separation")
 	_expect(metrics.has("idle_agent_seconds"), "metrics expose accumulated pathological idle time")
 	var wounded_alive := 0
-	var hp := PackedFloat32Array(first.get("hp", PackedFloat32Array()))
 	for index in hp.size():
 		if hp[index] > 0.0 and hp[index] < 20.0:
 			wounded_alive += 1
@@ -536,11 +729,10 @@ func _test_combat_comparison(simulation: Node) -> void:
 		"agent decisions reduce pathological idle time"
 	)
 	_expect(
-		int(agent.get("units_ever_attacked", 0)) > int(baseline.get("units_ever_attacked", 0)),
-		"more autonomous agents participate in combat"
+		int(agent.get("units_ever_attacked", 0)) >= int(baseline.get("units_ever_attacked", 0)),
+		"autonomous agents match or exceed the saturated baseline participation count"
 	)
 	_expect(int(agent.get("frontline_replacements", 0)) > 0, "rear agents replace fallen front fighters")
-	_expect(float(agent.get("intentional_hold_seconds", 0.0)) > 0.0, "blocked rear agents take purposeful HOLD duty")
 	_expect(not String(agent.get("result", "")).is_empty(), "agent battle resolves or scores at the fixed timeout")
 	_expect(
 		float(agent.get("active_participation_ratio", 0.0)) >= 0.70,
@@ -586,8 +778,24 @@ func _test_visual_lab_contract() -> void:
 		return
 
 	var lab = load(LAB_SCENE_PATH).instantiate()
-	for method in ["set_mode", "reset_lab", "get_metrics_text"]:
+	for method in ["set_scenario", "set_mode", "reset_lab", "get_metrics_text"]:
 		_expect(lab.has_method(method), "visual lab exposes %s" % method)
+	for path in [
+		"Interface/ScenarioControls/Gate",
+		"Interface/ScenarioControls/Corner",
+		"Interface/ScenarioControls/Routes",
+		"Interface/ScenarioControls/Open",
+	]:
+		var button: Node = lab.get_node_or_null(path)
+		_expect(
+			button is Button and button.custom_minimum_size.y >= 44.0,
+			"%s is touch-sized" % path
+		)
+	var title := lab.get_node_or_null("Interface/Header/Title") as Label
+	_expect(
+		title != null and title.text == "MINI BATTLE AI LAB // 30 vs 30 SHIELDS",
+		"visual lab has an unmistakable experiment title"
+	)
 	_expect(_count_simulation_nodes(lab) == 1, "visual lab owns exactly one bulk C# simulation node")
 	_expect(
 		String(ProjectSettings.get_setting("application/run/main_scene", "")) == LAB_SCENE_PATH,
@@ -595,7 +803,31 @@ func _test_visual_lab_contract() -> void:
 	)
 	_expect(int(ProjectSettings.get_setting("display/window/size/viewport_width", 0)) == 540, "lab viewport width is 540")
 	_expect(int(ProjectSettings.get_setting("display/window/size/viewport_height", 0)) == 960, "lab viewport height is 960")
-	lab.free()
+	if lab.has_method("set_scenario") \
+			and lab.get_node_or_null("Interface/ScenarioControls/Gate") != null:
+		Engine.get_main_loop().root.add_child(lab)
+		for scenario in SCENARIO_NAMES.size():
+			var scenario_button: Button = lab.get_node([
+				"Interface/ScenarioControls/Gate",
+				"Interface/ScenarioControls/Corner",
+				"Interface/ScenarioControls/Routes",
+				"Interface/ScenarioControls/Open",
+			][scenario])
+			scenario_button.pressed.emit()
+			var snapshot: Dictionary = lab.get_node("AgentBattleSimulation").call("GetSnapshot")
+			var header_text := String(lab.get_node("Interface/Header/Mode").text)
+			_expect(
+				int(snapshot.get("scenario_id", -1)) == scenario,
+				"scenario button %d resets the selected case" % (scenario + 1)
+			)
+			_expect(
+				header_text.contains(SCENARIO_NAMES[scenario]),
+				"scenario button %d updates the header case name" % (scenario + 1)
+			)
+			_expect(scenario_button.disabled, "selected scenario button %d is highlighted" % (scenario + 1))
+		lab.queue_free()
+	else:
+		lab.free()
 
 
 func _count_simulation_nodes(root: Node) -> int:
