@@ -20,6 +20,10 @@ func run() -> Array[String]:
 			_expect(simulation.has_method(method), "simulation exposes %s" % method)
 		if failures.is_empty():
 			_test_scenario_contract(simulation)
+			_test_scenario_route_metadata(simulation)
+			_test_open_control_behavior(simulation)
+			_test_scenario_passage_behavior(simulation)
+			_test_scenario_determinism(simulation)
 			_test_deterministic_arena(simulation)
 			_test_forward_progress_tracking(simulation)
 			_test_retreat_preempts_orders(simulation)
@@ -49,6 +53,137 @@ func _test_scenario_contract(simulation: Node) -> void:
 	simulation.call("ResetExperiment", 1, TEST_SEED, 99)
 	var fallback: Dictionary = simulation.call("GetSnapshot")
 	_expect(int(fallback.get("scenario_id", -1)) == 0, "invalid scenario falls back to bottleneck")
+
+
+func _test_scenario_route_metadata(simulation: Node) -> void:
+	const ROUTE_COUNT := 3
+	const ROUTE_WAYPOINT_CAPACITY := 5
+	for scenario in SCENARIO_NAMES.size():
+		simulation.call("ResetExperiment", 1, TEST_SEED, scenario)
+		var snapshot: Dictionary = simulation.call("GetSnapshot")
+		var blue := PackedVector2Array(snapshot.get("route_waypoints_blue", PackedVector2Array()))
+		var red := PackedVector2Array(snapshot.get("route_waypoints_red", PackedVector2Array()))
+		var counts := PackedInt32Array(snapshot.get("route_waypoint_counts", PackedInt32Array()))
+		var expected := _expected_blue_routes(scenario)
+
+		_expect(
+			blue.size() == ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY,
+			"%s exposes the fixed blue waypoint buffer" % SCENARIO_NAMES[scenario]
+		)
+		_expect(
+			red.size() == ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY,
+			"%s exposes the fixed red waypoint buffer" % SCENARIO_NAMES[scenario]
+		)
+		_expect(
+			counts.size() == ROUTE_COUNT,
+			"%s exposes one waypoint count per route" % SCENARIO_NAMES[scenario]
+		)
+		if blue.size() != ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY \
+				or red.size() != ROUTE_COUNT * ROUTE_WAYPOINT_CAPACITY \
+				or counts.size() != ROUTE_COUNT:
+			continue
+
+		for route in ROUTE_COUNT:
+			var expected_route: PackedVector2Array = expected[route]
+			_expect(
+				counts[route] == expected_route.size(),
+				"%s route %d exposes its active waypoint count" % [SCENARIO_NAMES[scenario], route]
+			)
+			for waypoint in mini(counts[route], expected_route.size()):
+				var flat_index := route * ROUTE_WAYPOINT_CAPACITY + waypoint
+				_expect(
+					blue[flat_index].is_equal_approx(expected_route[waypoint]),
+					"%s route %d waypoint %d matches the configured path"
+					% [SCENARIO_NAMES[scenario], route, waypoint]
+				)
+				_expect(
+					red[flat_index].is_equal_approx(
+						Vector2(blue[flat_index].x, float(ARENA_HEIGHT) - blue[flat_index].y)
+					),
+					"%s route %d red waypoint %d is the exact vertical mirror"
+					% [SCENARIO_NAMES[scenario], route, waypoint]
+				)
+
+
+func _expected_blue_routes(scenario: int) -> Array[PackedVector2Array]:
+	match scenario:
+		0:
+			return [
+				PackedVector2Array([Vector2(14.0, 19.3), Vector2(14.0, 16.55), Vector2(13.5, 0.7)]),
+				PackedVector2Array([Vector2(1.45, 19.45), Vector2(1.45, 16.45), Vector2(13.5, 0.7)]),
+				PackedVector2Array([Vector2(26.55, 19.45), Vector2(26.55, 16.45), Vector2(13.5, 0.7)]),
+			]
+		1:
+			return [
+				PackedVector2Array([
+					Vector2(12.25, 22.1),
+					Vector2(12.25, 18.7),
+					Vector2(15.25, 17.0),
+					Vector2(15.25, 13.7),
+					Vector2(13.5, 0.7),
+				]),
+				PackedVector2Array([Vector2(1.45, 19.45), Vector2(1.45, 16.45), Vector2(13.5, 0.7)]),
+				PackedVector2Array([Vector2(26.55, 19.45), Vector2(26.55, 16.45), Vector2(13.5, 0.7)]),
+			]
+		2:
+			return [
+				PackedVector2Array([Vector2(13.5, 20.45), Vector2(13.5, 15.55), Vector2(13.5, 0.7)]),
+				PackedVector2Array([Vector2(4.5, 20.45), Vector2(4.5, 15.55), Vector2(13.5, 0.7)]),
+				PackedVector2Array([Vector2(22.5, 20.45), Vector2(22.5, 15.55), Vector2(13.5, 0.7)]),
+			]
+		3:
+			return [
+				PackedVector2Array([Vector2(13.5, 0.7)]),
+				PackedVector2Array([Vector2(13.5, 0.7)]),
+				PackedVector2Array([Vector2(13.5, 0.7)]),
+			]
+	return []
+
+
+func _test_open_control_behavior(simulation: Node) -> void:
+	simulation.call("ResetExperiment", 1, TEST_SEED, 3)
+	simulation.call("RunTicks", 900)
+	var metrics: Dictionary = simulation.call("GetMetrics")
+	_expect(int(metrics.get("flank_decisions", -1)) == 0, "OPEN_CONTROL does not invent flank decisions")
+	_expect(int(metrics.get("side_crossings", -1)) == 0, "OPEN_CONTROL does not invent side crossings")
+	_expect(int(metrics.get("units_ever_attacked", 0)) > 0, "OPEN_CONTROL reaches combat")
+	_expect(int(metrics.get("overlap_violations", -1)) == 0, "OPEN_CONTROL preserves minimum separation")
+
+
+func _test_scenario_passage_behavior(simulation: Node) -> void:
+	for scenario in [2, 1]:
+		simulation.call("ResetExperiment", 1, TEST_SEED, scenario)
+		simulation.call("RunTicks", 2700)
+		var metrics: Dictionary = simulation.call("GetMetrics")
+		var name: String = SCENARIO_NAMES[scenario]
+		_expect(int(metrics.get("units_ever_attacked", 0)) > 0, "%s reaches combat" % name)
+		_expect(int(metrics.get("crossed_center", 0)) > 0, "%s crosses the scenario barrier" % name)
+		_expect(
+			float(metrics.get("maximum_stuck_seconds", INF)) < 30.0,
+			"%s keeps maximum stuck time below 30 seconds" % name
+		)
+		_expect(int(metrics.get("overlap_violations", -1)) == 0, "%s preserves minimum separation" % name)
+
+
+func _test_scenario_determinism(simulation: Node) -> void:
+	for scenario in SCENARIO_NAMES.size():
+		simulation.call("ResetExperiment", 1, TEST_SEED, scenario)
+		simulation.call("RunTicks", 900)
+		var first: Dictionary = simulation.call("GetSnapshot")
+		var first_positions := PackedVector2Array(first.get("positions", PackedVector2Array()))
+		var first_actions := PackedInt32Array(first.get("actions", PackedInt32Array()))
+		var first_routes := PackedInt32Array(first.get("route_intents", PackedInt32Array()))
+
+		simulation.call("ResetExperiment", 1, TEST_SEED, scenario)
+		simulation.call("RunTicks", 900)
+		var repeated: Dictionary = simulation.call("GetSnapshot")
+		var repeated_positions := PackedVector2Array(repeated.get("positions", PackedVector2Array()))
+		var repeated_actions := PackedInt32Array(repeated.get("actions", PackedInt32Array()))
+		var repeated_routes := PackedInt32Array(repeated.get("route_intents", PackedInt32Array()))
+		var name: String = SCENARIO_NAMES[scenario]
+		_expect(_same_vectors(first_positions, repeated_positions), "%s reproduces positions after 900 ticks" % name)
+		_expect(first_actions == repeated_actions, "%s reproduces actions after 900 ticks" % name)
+		_expect(first_routes == repeated_routes, "%s reproduces route intents after 900 ticks" % name)
 
 
 func _method_argument_count(instance: Object, method_name: String) -> int:

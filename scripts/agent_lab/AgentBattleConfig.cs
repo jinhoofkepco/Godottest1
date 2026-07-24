@@ -32,6 +32,7 @@ internal static class AgentBattleConfig
     public const int RouteCenter = 0;
     public const int RouteLeft = 1;
     public const int RouteRight = 2;
+    public const int RouteCount = 3;
 
     public const float UnitMaxHp = 80f;
     public const float FixedDelta = 1f / 30f;
@@ -72,11 +73,4 @@ internal static class AgentBattleConfig
     public const float ReplacementRadius = 1.35f;
     public const float PurposefulHoldRange = 3.2f;
     public const int MaximumBattleTicks = 120 * 30;
-
-    public const int FortificationMinX = 3;
-    public const int FortificationMaxX = 24;
-    public const int FortificationTopY = 17;
-    public const int FortificationBottomY = 18;
-    public const int GateMinX = 13;
-    public const int GateMaxX = 14;
 }

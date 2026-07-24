@@ -88,22 +88,15 @@ public partial class AgentBattleSimulation
 
     private bool HasCombatPassage(Vector2 from, Vector2 to)
     {
-        float deltaY = to.Y - from.Y;
-        if (MathF.Abs(deltaY) < 0.0001f)
-            return true;
-
-        float sampleY = 17.5f;
-        float t = (sampleY - from.Y) / deltaY;
-        if (t <= 0f || t >= 1f)
-            return true;
-
-        float crossingX = from.X + (to.X - from.X) * t;
-        float radius = AgentBattleConfig.UnitRadius;
-        bool leftBypass = crossingX <= AgentBattleConfig.FortificationMinX - radius;
-        bool rightBypass = crossingX >= AgentBattleConfig.FortificationMaxX + 1f + radius;
-        bool centralGate = crossingX >= AgentBattleConfig.GateMinX + radius
-            && crossingX <= AgentBattleConfig.GateMaxX + 1f - radius;
-        return leftBypass || rightBypass || centralGate;
+        float distance = from.DistanceTo(to);
+        int steps = Math.Max(1, Mathf.CeilToInt(distance / 0.2f));
+        for (int step = 1; step < steps; step++)
+        {
+            Vector2 sample = from.Lerp(to, step / (float)steps);
+            if (IsBlockedPoint(sample, AgentBattleConfig.UnitRadius * 0.8f))
+                return false;
+        }
+        return true;
     }
 
     private void UpdateCombat()
@@ -149,7 +142,15 @@ public partial class AgentBattleSimulation
                 continue;
             _hp[index] = MathF.Max(0f, _hp[index] - _pendingDamage[index]);
             if (_hp[index] > 0f)
+            {
+                if (_mode == AgentBattleConfig.ModeAgent
+                    && _hp[index] < AgentBattleConfig.UnitMaxHp * AgentBattleConfig.RetreatHpRatio)
+                {
+                    ReleaseCombatTarget(index);
+                    SetAction(index, AgentBattleConfig.ActionRetreat, 2.6f, AgentBattleConfig.DefaultCommitTicks);
+                }
                 continue;
+            }
 
             _diedThisTick[index] = true;
             if (_teams[index] == AgentBattleConfig.TeamBlue)
@@ -329,7 +330,7 @@ public partial class AgentBattleSimulation
     {
         for (int index = 0; index < AgentBattleConfig.UnitCount; index++)
         {
-            if (_hp[index] <= 0f || _hasCrossedCenter[index] || !HasPassedFortification(index))
+            if (_hp[index] <= 0f || _hasCrossedCenter[index] || !HasPassedScenarioBarrier(index))
                 continue;
             _hasCrossedCenter[index] = true;
             _crossedCenter++;

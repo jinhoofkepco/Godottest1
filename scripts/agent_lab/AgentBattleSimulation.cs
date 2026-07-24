@@ -25,7 +25,6 @@ public partial class AgentBattleSimulation : Node
     private readonly bool[] _hasFlanked = new bool[AgentBattleConfig.UnitCount];
     private readonly bool[] _hasYielded = new bool[AgentBattleConfig.UnitCount];
     private readonly bool[] _hasCrossedSideRoute = new bool[AgentBattleConfig.UnitCount];
-    private readonly bool[] _hasReachedBypassLane = new bool[AgentBattleConfig.UnitCount];
     private readonly int[] _bucketHeads = new int[AgentBattleConfig.ArenaCellCount];
     private readonly int[] _bucketNext = new int[AgentBattleConfig.UnitCount];
     private readonly int[] _bucketCounts = new int[AgentBattleConfig.ArenaCellCount];
@@ -119,7 +118,6 @@ public partial class AgentBattleSimulation : Node
         Array.Clear(_hasFlanked);
         Array.Clear(_hasYielded);
         Array.Clear(_hasCrossedSideRoute);
-        Array.Clear(_hasReachedBypassLane);
         Array.Clear(_actionCounts);
         Array.Fill(_targets, -1);
         Array.Clear(_targetReservations);
@@ -188,6 +186,9 @@ public partial class AgentBattleSimulation : Node
         ["time"] = _elapsed,
         ["result"] = _result,
         ["blocked_cells"] = _blockedCells.AsSpan(0, _blockedCellCount).ToArray(),
+        ["route_waypoints_blue"] = (Vector2[])_routeWaypointsBlue.Clone(),
+        ["route_waypoints_red"] = (Vector2[])_routeWaypointsRed.Clone(),
+        ["route_waypoint_counts"] = (int[])_routeWaypointCounts.Clone(),
     };
 
     public GDictionary GetMetrics() => new()

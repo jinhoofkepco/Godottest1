@@ -54,12 +54,9 @@ public partial class AgentBattleSimulation
 
         LocalPerception perception = SenseLocalArea(index);
         float stuck = _stuckSeconds[index];
-        float wallDistance = MathF.Abs(_positions[index].Y - 17.5f);
-        bool approachingFortification = wallDistance < 8.5f
-            && !HasPassedFortification(index)
-            && !_hasCrossedSideRoute[index];
+        bool approachingBarrier = IsApproachingScenarioBarrier(index);
 
-        if (_routeIntents[index] != AgentBattleConfig.RouteCenter && !_hasCrossedSideRoute[index])
+        if (_routeIntents[index] != AgentBattleConfig.RouteCenter && !HasCompletedRoutePassage(index))
         {
             int committedFlank = _routeIntents[index] == AgentBattleConfig.RouteLeft
                 ? AgentBattleConfig.ActionFlankLeft
@@ -75,7 +72,7 @@ public partial class AgentBattleSimulation
             ? 1.92f
             : 0.42f + MathF.Abs(perception.FriendlyLeft - perception.FriendlyRight) * 0.08f;
         float congestion = perception.FriendlyAhead + perception.HostilesNear * 0.5f;
-        float flankBase = approachingFortification
+        float flankBase = approachingBarrier
             ? 0.38f + congestion * 0.36f + MathF.Min(stuck, 3f) * 0.28f
             : 0.12f;
         float personality = DeterministicSigned(_seed ^ 0x34D1B54, index) * 0.12f;
@@ -113,13 +110,13 @@ public partial class AgentBattleSimulation
         if (bestAction == AgentBattleConfig.ActionFlankLeft)
         {
             if (_routeIntents[index] != AgentBattleConfig.RouteLeft)
-                _hasReachedBypassLane[index] = false;
+                _routeWaypointCursors[index] = 0;
             _routeIntents[index] = AgentBattleConfig.RouteLeft;
         }
         else if (bestAction == AgentBattleConfig.ActionFlankRight)
         {
             if (_routeIntents[index] != AgentBattleConfig.RouteRight)
-                _hasReachedBypassLane[index] = false;
+                _routeWaypointCursors[index] = 0;
             _routeIntents[index] = AgentBattleConfig.RouteRight;
         }
 
@@ -240,13 +237,6 @@ public partial class AgentBattleSimulation
 
     private float TeamForward(int index) => _teams[index] == AgentBattleConfig.TeamBlue ? -1f : 1f;
 
-    private bool HasPassedFortification(int index)
-    {
-        return _teams[index] == AgentBattleConfig.TeamBlue
-            ? _positions[index].Y < AgentBattleConfig.FortificationTopY - 0.35f
-            : _positions[index].Y > AgentBattleConfig.FortificationBottomY + 1.35f;
-    }
-
     private static void ConsiderAction(int action, float score, ref int bestAction, ref float bestScore)
     {
         if (score <= bestScore)
@@ -259,6 +249,8 @@ public partial class AgentBattleSimulation
     {
         if (_actions[index] != action)
         {
+            if (action == AgentBattleConfig.ActionRetreat)
+                PrepareRetreatRoute(index);
             if (action == AgentBattleConfig.ActionFlankLeft || action == AgentBattleConfig.ActionFlankRight)
             {
                 _flankDecisions++;

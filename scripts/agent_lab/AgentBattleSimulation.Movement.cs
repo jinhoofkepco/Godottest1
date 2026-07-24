@@ -107,101 +107,15 @@ public partial class AgentBattleSimulation
 
     private Vector2 RouteTarget(int index)
     {
-        Vector2 position = _positions[index];
         bool blue = _teams[index] == AgentBattleConfig.TeamBlue;
-        int route = _routeIntents[index];
         float destinationY = blue ? 0.7f : AgentBattleConfig.ArenaHeight - 0.7f;
 
-        if (route == AgentBattleConfig.RouteLeft)
-        {
-            float laneX = BypassLaneX(index, false);
-            float stagingY = BypassStagingY(index, blue);
-            if (!_hasReachedBypassLane[index])
-            {
-                if (MathF.Abs(position.X - laneX) <= 0.22f)
-                    _hasReachedBypassLane[index] = true;
-                else
-                    return new Vector2(laneX, stagingY);
-            }
-
-            if (blue)
-            {
-                if (position.Y > 16.65f)
-                    return new Vector2(laneX, 16.45f - BypassDepth(index));
-            }
-            else
-            {
-                if (position.Y < 19.35f)
-                    return new Vector2(laneX, 19.55f + BypassDepth(index));
-            }
-
-            return new Vector2(13.5f, destinationY);
-        }
-
-        if (route == AgentBattleConfig.RouteRight)
-        {
-            float laneX = BypassLaneX(index, true);
-            float stagingY = BypassStagingY(index, blue);
-            if (!_hasReachedBypassLane[index])
-            {
-                if (MathF.Abs(position.X - laneX) <= 0.22f)
-                    _hasReachedBypassLane[index] = true;
-                else
-                    return new Vector2(laneX, stagingY);
-            }
-
-            if (blue)
-            {
-                if (position.Y > 16.65f)
-                    return new Vector2(laneX, 16.45f - BypassDepth(index));
-            }
-            else
-            {
-                if (position.Y < 19.35f)
-                    return new Vector2(laneX, 19.55f + BypassDepth(index));
-            }
-
-            return new Vector2(13.5f, destinationY);
-        }
-
-        if (blue)
-        {
-            if (position.Y > 19.3f)
-                return new Vector2(14f, 19.3f);
-            if (position.Y > 16.65f)
-                return new Vector2(14f, 16.55f);
-        }
-        else
-        {
-            if (position.Y < 16.7f)
-                return new Vector2(14f, 16.7f);
-            if (position.Y < 19.35f)
-                return new Vector2(14f, 19.45f);
-        }
-
+        int route = Math.Clamp(_routeIntents[index], 0, AgentBattleConfig.RouteCount - 1);
+        AdvanceRouteWaypointCursor(index, false);
+        int cursor = _routeWaypointCursors[index];
+        if (cursor < _routeWaypointCounts[route])
+            return RouteWaypoint(index, route, cursor, false);
         return new Vector2(13.5f, destinationY);
-    }
-
-    private float BypassLaneX(int index, bool right)
-    {
-        int localIndex = index % AgentBattleConfig.TeamSize;
-        float laneOffset = (localIndex % 2) * 0.62f;
-        bool blue = _teams[index] == AgentBattleConfig.TeamBlue;
-        if (right)
-            return blue ? 25.45f + laneOffset : 26.72f + laneOffset;
-        return blue ? 2.55f - laneOffset : 0.66f + laneOffset;
-    }
-
-    private static float BypassDepth(int index)
-    {
-        int localIndex = index % AgentBattleConfig.TeamSize;
-        return ((localIndex / 3) % 3) * 0.18f;
-    }
-
-    private static float BypassStagingY(int index, bool blue)
-    {
-        float depth = BypassDepth(index);
-        return blue ? 19.45f + depth : 16.55f - depth;
     }
 
     private Vector2 ChooseCandidateVelocity(int index, Vector2 desired)
@@ -372,15 +286,17 @@ public partial class AgentBattleSimulation
                 _hasPurposefullyHeld[index] = true;
             }
 
-            if (!_hasCrossedSideRoute[index] && _routeIntents[index] != AgentBattleConfig.RouteCenter)
+            if (_actions[index] != AgentBattleConfig.ActionRetreat
+                && !_hasCrossedSideRoute[index]
+                && _routeIntents[index] != AgentBattleConfig.RouteCenter)
             {
-                bool outsideWall = _positions[index].X < AgentBattleConfig.FortificationMinX
-                    || _positions[index].X > AgentBattleConfig.FortificationMaxX + 1f;
-                if (outsideWall && HasPassedFortification(index))
+                if (HasCompletedRoutePassage(index))
                 {
                     _hasCrossedSideRoute[index] = true;
                     _sideCrossings++;
                     _routeIntents[index] = AgentBattleConfig.RouteCenter;
+                    _routeWaypointCursors[index] =
+                        Math.Max(0, _routeWaypointCounts[AgentBattleConfig.RouteCenter] - 1);
                     SetAction(index, AgentBattleConfig.ActionAdvance, 1f, AgentBattleConfig.DefaultCommitTicks);
                 }
             }
@@ -408,7 +324,10 @@ public partial class AgentBattleSimulation
                 _progressSampleTicks[index]++;
                 if (_progressSampleTicks[index] >= AgentBattleConfig.ProgressSampleTicks)
                 {
-                    float forwardProgress = (_positions[index].Y - _progressSampleY[index]) * TeamForward(index);
+                    float progressDirection = _actions[index] == AgentBattleConfig.ActionRetreat
+                        ? -TeamForward(index)
+                        : TeamForward(index);
+                    float forwardProgress = (_positions[index].Y - _progressSampleY[index]) * progressDirection;
                     float sampleSeconds = _progressSampleTicks[index] * AgentBattleConfig.FixedDelta;
                     if (forwardProgress >= AgentBattleConfig.MinimumForwardProgressPerSample)
                     {
@@ -477,9 +396,11 @@ public partial class AgentBattleSimulation
         return violations;
     }
 
-    private bool IsTerrainOpen(Vector2 position)
+    private bool IsTerrainOpen(Vector2 position) =>
+        IsTerrainOpen(position, AgentBattleConfig.UnitRadius);
+
+    private bool IsTerrainOpen(Vector2 position, float radius)
     {
-        float radius = AgentBattleConfig.UnitRadius;
         if (position.X < radius
             || position.X > AgentBattleConfig.ArenaWidth - radius
             || position.Y < radius
@@ -488,6 +409,11 @@ public partial class AgentBattleSimulation
             return false;
         }
 
+        return !IsBlockedPoint(position, radius);
+    }
+
+    private bool IsBlockedPoint(Vector2 position, float radius)
+    {
         int minX = Math.Max(0, (int)MathF.Floor(position.X - radius));
         int maxX = Math.Min(AgentBattleConfig.ArenaWidth - 1, (int)MathF.Floor(position.X + radius));
         int minY = Math.Max(0, (int)MathF.Floor(position.Y - radius));
@@ -506,11 +432,11 @@ public partial class AgentBattleSimulation
                 float dx = position.X - nearestX;
                 float dy = position.Y - nearestY;
                 if (dx * dx + dy * dy < radius * radius)
-                    return false;
+                    return true;
             }
         }
 
-        return true;
+        return false;
     }
 
     private bool IsAtObjective(int index)
@@ -529,20 +455,18 @@ public partial class AgentBattleSimulation
 
     private Vector2 RetreatTarget(int index)
     {
-        Vector2 position = _positions[index];
         bool blue = _teams[index] == AgentBattleConfig.TeamBlue;
-        float passageX = NearestRetreatPassageX(index);
-        if (blue && position.Y < 19.55f)
+        bool needsPassage = _hasBarrier
+            && (blue
+                ? _positions[index].Y < _barrierBottomY + 0.35f
+                : _positions[index].Y > _barrierTopY - 0.35f);
+        if (needsPassage)
         {
-            if (MathF.Abs(position.X - passageX) > 0.24f)
-                return new Vector2(passageX, 16.45f);
-            return new Vector2(passageX, 19.65f);
-        }
-        if (!blue && position.Y > 16.45f)
-        {
-            if (MathF.Abs(position.X - passageX) > 0.24f)
-                return new Vector2(passageX, 19.55f);
-            return new Vector2(passageX, 16.35f);
+            int route = Math.Clamp(_routeIntents[index], 0, AgentBattleConfig.RouteCount - 1);
+            AdvanceRouteWaypointCursor(index, true);
+            int cursor = _routeWaypointCursors[index];
+            if (cursor < _routeWaypointCounts[route])
+                return RouteWaypoint(index, route, cursor, true);
         }
 
         int localIndex = index % AgentBattleConfig.TeamSize;
@@ -551,25 +475,6 @@ public partial class AgentBattleSimulation
             ? AgentBattleConfig.ArenaHeight - 2f
             : 2f;
         return new Vector2(x, y);
-    }
-
-    private float NearestRetreatPassageX(int index)
-    {
-        float currentX = _positions[index].X;
-        float left = BypassLaneX(index, false);
-        float center = _teams[index] == AgentBattleConfig.TeamBlue ? 14.35f : 13.65f;
-        float right = BypassLaneX(index, true);
-        float best = center;
-        float bestDistance = MathF.Abs(currentX - center);
-        float leftDistance = MathF.Abs(currentX - left);
-        if (leftDistance < bestDistance)
-        {
-            best = left;
-            bestDistance = leftDistance;
-        }
-        if (MathF.Abs(currentX - right) < bestDistance)
-            best = right;
-        return best;
     }
 
     private static int CellX(float x) => Math.Clamp((int)MathF.Floor(x), 0, AgentBattleConfig.ArenaWidth - 1);
