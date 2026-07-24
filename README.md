@@ -1,10 +1,12 @@
-# Frontline Rally Command
+# Mini Battle AI Lab
 
-Godot 4.5 stable .NET + C#/GDScript로 만든 540×960 세로형 아이소메트릭 군단 전선 시뮬레이션입니다. 시뮬레이션 코어는 C#, HUD·입력·FX는 GDScript이며 보병·공성병기·드래곤·건물은 CC0 3D 모델을 자체 베이크한 스프라이트입니다. Android 릴리스 메타데이터는 **1.5.1 (version code 16)** 입니다.
+`codex/mini-battle-agent-ai`에서만 배포하는 30대30 개별 판단 AI 실험 앱입니다. 프로덕션 `Frontline Rally Command`와 별도 설치되도록 앱 이름과 Android 패키지를 분리했습니다.
 
 ## 실험 브랜치: 30대30 개별 판단 AI
 
 `codex/mini-battle-agent-ai`는 출시 게임과 분리한 30대30 방패병 병목 실험입니다. 이 브랜치에서는 `scenes/agent_battle_lab.tscn`이 기본 장면이며, 유닛마다 Node를 만들지 않고 하나의 C# 시뮬레이션이 60개 고정 배열 에이전트를 처리합니다. `AGENT AI / BASELINE / PAUSE / 1X·2X / RESET` 버튼으로 개별 판단과 단순 중앙 전진을 즉시 비교할 수 있습니다.
+
+> **중요:** `Android Debug APK`의 `godottest1-debug-apk`는 프로덕션 게임이며 이 실험 앱이 아닙니다. 실험 APK는 [Mini Battle AI Lab APK 워크플로](https://github.com/jinhoofkepco/Godottest1/actions/workflows/android-agent-lab.yml?query=branch%3Acodex%2Fmini-battle-agent-ai)의 최신 성공 실행에서 **`mini-battle-ai-lab-debug-apk`** 아티팩트를 받으세요. 압축 안의 파일은 `build/mini-battle-ai-lab.apk`, 앱 이름은 `Mini Battle AI Lab`, 패키지는 `com.jinhoofkepco.godottest1.agentlab`입니다.
 
 ```bash
 /private/tmp/godot45mono/app/Godot_mono.app/Contents/MacOS/Godot --path .
@@ -23,7 +25,7 @@ DOTNET_ROOT=/private/tmp/godottest1-dotnet9 \
 
 무인 캡처는 `build/smoke_agent_battle_lab.png`에 540×960으로 저장됩니다. 고정 시드 결과, 수용 기준 판정, 성능 수치와 한계는 [30대30 개별 판단 AI 실험 보고서](docs/agent-battle-lab-results.md)에 기록했습니다. 이 브랜치는 실험용이며 프로덕션 병합이나 모바일 실기기 성능을 의미하지 않습니다.
 
-## 한 판 규칙과 조작
+## 프로덕션 게임 배경: 한 판 규칙과 조작
 
 - 44×88(3,872타일) 전장을 위쪽 빨강과 아래쪽 파랑이 나눠 가지며, 420초 안에 적 HQ를 파괴하거나 육지 영토 92%를 확보하면 즉시 승리합니다. 시간 종료 시에는 점유율, HQ 체력 비율, 잔존 병력 체력 순으로 판정합니다.
 - 중앙에는 고정 시드로 만든 하나의 큰 대칭 호수가 있습니다. 물은 중립이며 점유율에서 제외되고 지상군·건물·지상 플로우를 막지만, 드래곤은 호수와 절벽을 무시하고 직행합니다. 양쪽 육지 회랑은 항상 HQ까지 연결되는지 생성 시 검증합니다.
@@ -182,9 +184,9 @@ Godot 4.5 .NET 에디터와 .NET SDK 9 이상이 필요합니다. 각 핵심 러
 9. 설정 화면: `smoke_match_settings.png`는 HUD가 비치지 않는 불투명 세로 화면, 네 병과 탭, 스크롤 필드와 고정 하단 `DEFAULTS / COPY SETTINGS / START`를 보여줍니다.
 10. 이동·화망: `smoke_cliff_detour.png`는 절벽 돌출부 양옆으로 갈라진 지상군을, `smoke_firing_line.png`는 측면 전개한 여러 궁병·방패 테두리·동시 사격 FX를 보여줍니다.
 
-## Android debug APK 받기
+## 프로덕션 게임 Android debug APK (실험 APK 아님)
 
-이 버전의 GitHub Actions 검증 APK를 바로 받을 수 있습니다: [godottest1 v1.5.1 APK 직접 다운로드](https://github.com/jinhoofkepco/Godottest1/releases/download/v1.5.1/godottest1.apk)
+아래 APK는 배경으로 남긴 프로덕션 게임이며 `Mini Battle AI Lab`이 아닙니다: [godottest1 v1.5.1 APK 직접 다운로드](https://github.com/jinhoofkepco/Godottest1/releases/download/v1.5.1/godottest1.apk)
 
 GitHub Actions 경로는 **Actions → Android Debug APK → 최신 성공 실행 → Artifacts → `godottest1-debug-apk` → `build/godottest1.apk`**입니다. 워크플로가 Godot 4.5 stable, Android SDK/build-tools, export template과 임시 debug keystore를 준비하므로 로컬 Android SDK나 저장소 Secret이 필요하지 않습니다.
 

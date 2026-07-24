@@ -5,7 +5,7 @@ config_version=5
 
 [application]
 
-config/name="Frontline Legions"
+config/name="Mini Battle AI Lab"
 run/main_scene="res://scenes/agent_battle_lab.tscn"
 
 [display]

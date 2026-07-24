@@ -1,0 +1,108 @@
+name: Mini Battle AI Lab APK
+
+on:
+  push:
+    branches: [codex/mini-battle-agent-ai]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-agent-lab-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GODOT_ANDROID_KEYSTORE_DEBUG_PATH: /tmp/godottest1-agent-lab/debug.keystore
+      GODOT_ANDROID_KEYSTORE_DEBUG_USER: androiddebugkey
+      GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD: android
+      GODOT_ANDROID_KEYSTORE_RELEASE_PATH: /tmp/godottest1-agent-lab/debug.keystore
+      GODOT_ANDROID_KEYSTORE_RELEASE_USER: androiddebugkey
+      GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: android
+
+    steps:
+      - name: Check out experiment branch
+        uses: actions/checkout@v4
+
+      - name: Create temporary debug keystore
+        run: |
+          mkdir -p /tmp/godottest1-agent-lab .godot build "$HOME/.config/godot"
+          keytool -genkeypair -v \
+            -keystore "$GODOT_ANDROID_KEYSTORE_DEBUG_PATH" \
+            -storepass "$GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD" \
+            -alias "$GODOT_ANDROID_KEYSTORE_DEBUG_USER" \
+            -keypass "$GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD" \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Mini Battle AI Lab,O=GodotTest1,C=KR"
+          touch .godot/export_credentials.cfg
+
+      - name: Set up Godot Android export environment
+        uses: dulvui/godot-android-export@v4.2.0
+        continue-on-error: true
+        with:
+          godot-version: 4.5
+          godot-channel: stable
+          working-directory: .
+
+      - name: Set up .NET 9 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install official Godot 4.5 .NET editor and Mono templates
+        env:
+          GODOT_RELEASE: 4.5-stable
+        run: |
+          curl -fL --retry 5 --retry-delay 3 \
+            -o "$RUNNER_TEMP/godot-mono.zip" \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_RELEASE}/Godot_v4.5-stable_mono_linux_x86_64.zip"
+          unzip -q "$RUNNER_TEMP/godot-mono.zip" -d "$RUNNER_TEMP/godot-mono"
+          sudo mkdir -p /opt/godot-4.5-mono
+          sudo cp -R "$RUNNER_TEMP/godot-mono/Godot_v4.5-stable_mono_linux_x86_64/." /opt/godot-4.5-mono/
+          sudo ln -sf /opt/godot-4.5-mono/Godot_v4.5-stable_mono_linux.x86_64 /usr/local/bin/godot
+          curl -fL --retry 5 --retry-delay 3 \
+            -o "$RUNNER_TEMP/godot-mono-templates.tpz" \
+            "https://github.com/godotengine/godot-builds/releases/download/${GODOT_RELEASE}/Godot_v4.5-stable_mono_export_templates.tpz"
+          mkdir -p "$RUNNER_TEMP/godot-mono-templates" "$HOME/.local/share/godot/export_templates/4.5.stable.mono"
+          unzip -q "$RUNNER_TEMP/godot-mono-templates.tpz" -d "$RUNNER_TEMP/godot-mono-templates"
+          cp -R "$RUNNER_TEMP/godot-mono-templates/templates/." "$HOME/.local/share/godot/export_templates/4.5.stable.mono/"
+          godot --version | grep -F '4.5.stable.mono'
+          dotnet --version
+
+      - name: Configure Godot Java SDK path
+        run: |
+          sed -i '/export\/android\/java_sdk_path/d' ~/.config/godot/editor_settings-4.tres
+          printf '\nexport/android/java_sdk_path = "%s"\n' "$JAVA_HOME" >> ~/.config/godot/editor_settings-4.tres
+
+      - name: Run lab and production verification
+        run: |
+          dotnet build --nologo
+          godot --headless --path . --import
+          godot --headless --path . -s tests/run_agent_battle_lab.gd
+          godot --headless --path . -s tests/run_agent_scenario_matrix.gd
+          godot --headless --path . -s tests/run_agent_apk_contract.gd
+          godot --headless --path . -s tests/run_rules.gd
+          godot --headless --path . --scene res://scenes/agent_battle_lab.tscn --quit-after 180
+
+      - name: Export and verify separate debug APK
+        run: |
+          godot --headless --path . --export-debug Android build/mini-battle-ai-lab.apk
+          test -s build/mini-battle-ai-lab.apk
+          unzip -l build/mini-battle-ai-lab.apk > "$RUNNER_TEMP/mini-battle-ai-lab-entries.txt"
+          grep -Fq 'assets/.godot/mono/publish/arm64/godottest1.dll' "$RUNNER_TEMP/mini-battle-ai-lab-entries.txt"
+          aapt_bin="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          test -n "$aapt_bin"
+          "$aapt_bin" dump badging build/mini-battle-ai-lab.apk > "$RUNNER_TEMP/mini-battle-ai-lab-badging.txt"
+          grep -Fq "package: name='com.jinhoofkepco.godottest1.agentlab' versionCode='1' versionName='0.2.0-lab'" "$RUNNER_TEMP/mini-battle-ai-lab-badging.txt"
+          grep -Fq "application-label:'Mini Battle AI Lab'" "$RUNNER_TEMP/mini-battle-ai-lab-badging.txt"
+          apk_signer_bin="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -n "$apk_signer_bin"
+          "$apk_signer_bin" verify --verbose build/mini-battle-ai-lab.apk
+
+      - name: Upload Mini Battle AI Lab debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mini-battle-ai-lab-debug-apk
+          path: build/mini-battle-ai-lab.apk
+          if-no-files-found: error
+          retention-days: 14
