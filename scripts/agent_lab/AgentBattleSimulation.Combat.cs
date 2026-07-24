@@ -142,15 +142,7 @@ public partial class AgentBattleSimulation
                 continue;
             _hp[index] = MathF.Max(0f, _hp[index] - _pendingDamage[index]);
             if (_hp[index] > 0f)
-            {
-                if (_mode == AgentBattleConfig.ModeAgent
-                    && _hp[index] < AgentBattleConfig.UnitMaxHp * AgentBattleConfig.RetreatHpRatio)
-                {
-                    ReleaseCombatTarget(index);
-                    SetAction(index, AgentBattleConfig.ActionRetreat, 2.6f, AgentBattleConfig.DefaultCommitTicks);
-                }
                 continue;
-            }
 
             _diedThisTick[index] = true;
             if (_teams[index] == AgentBattleConfig.TeamBlue)

@@ -26,6 +26,7 @@ func run() -> Array[String]:
 			_test_scenario_determinism(simulation)
 			_test_deterministic_arena(simulation)
 			_test_forward_progress_tracking(simulation)
+			_test_retreat_starts_homeward(simulation)
 			_test_retreat_preempts_orders(simulation)
 			_test_agent_movement(simulation)
 			_test_combat_comparison(simulation)
@@ -92,14 +93,13 @@ func _test_scenario_route_metadata(simulation: Node) -> void:
 			for waypoint in mini(counts[route], expected_route.size()):
 				var flat_index := route * ROUTE_WAYPOINT_CAPACITY + waypoint
 				_expect(
-					blue[flat_index].is_equal_approx(expected_route[waypoint]),
+					blue[flat_index] == expected_route[waypoint],
 					"%s route %d waypoint %d matches the configured path"
 					% [SCENARIO_NAMES[scenario], route, waypoint]
 				)
 				_expect(
-					red[flat_index].is_equal_approx(
-						Vector2(blue[flat_index].x, float(ARENA_HEIGHT) - blue[flat_index].y)
-					),
+					red[flat_index]
+					== Vector2(blue[flat_index].x, float(ARENA_HEIGHT) - blue[flat_index].y),
 					"%s route %d red waypoint %d is the exact vertical mirror"
 					% [SCENARIO_NAMES[scenario], route, waypoint]
 				)
@@ -428,9 +428,62 @@ func _test_agent_movement(simulation: Node) -> void:
 	_expect(first_actions == repeated_actions, "same seed and ticks reproduce every agent action")
 
 
+func _test_retreat_starts_homeward(simulation: Node) -> void:
+	const RUN_TICKS := 45 * 30
+	const ACTION_RETREAT := 7
+	const BARRIER_TOP_Y := 17.0
+	const BARRIER_BOTTOM_Y := 19.0
+	var previous_actions := PackedInt32Array()
+	var found_passage_retreat := false
+	simulation.call("ResetExperiment", 1, TEST_SEED, 0)
+	previous_actions = PackedInt32Array(simulation.call("GetSnapshot").get("actions", PackedInt32Array()))
+
+	for _tick in RUN_TICKS:
+		simulation.call("RunTicks", 1)
+		var snapshot: Dictionary = simulation.call("GetSnapshot")
+		var positions := PackedVector2Array(snapshot.get("positions", PackedVector2Array()))
+		var teams := PackedInt32Array(snapshot.get("teams", PackedInt32Array()))
+		var hp := PackedFloat32Array(snapshot.get("hp", PackedFloat32Array()))
+		var actions := PackedInt32Array(snapshot.get("actions", PackedInt32Array()))
+		for index in actions.size():
+			if hp[index] <= 0.0 \
+					or actions[index] != ACTION_RETREAT \
+					or previous_actions[index] == ACTION_RETREAT:
+				continue
+			var inside_passage := positions[index].y > BARRIER_TOP_Y \
+				and positions[index].y < BARRIER_BOTTOM_Y
+			if not inside_passage:
+				continue
+
+			var before := positions[index]
+			simulation.call("RunTicks", 1)
+			var moved: Dictionary = simulation.call("GetSnapshot")
+			var moved_positions := PackedVector2Array(moved.get("positions", PackedVector2Array()))
+			var moved_hp := PackedFloat32Array(moved.get("hp", PackedFloat32Array()))
+			var moved_actions := PackedInt32Array(moved.get("actions", PackedInt32Array()))
+			if moved_hp[index] <= 0.0 or moved_actions[index] != ACTION_RETREAT:
+				continue
+
+			var homeward_delta := moved_positions[index].y - before.y
+			if teams[index] == 1:
+				homeward_delta = -homeward_delta
+			_expect(
+				homeward_delta >= -0.00001,
+				"critically wounded unit %d never begins retreat by moving enemyward" % index
+			)
+			found_passage_retreat = true
+			break
+		if found_passage_retreat:
+			break
+		previous_actions = actions
+
+	_expect(found_passage_retreat, "retreat direction fixture finds a wounded unit inside the passage")
+
+
 func _test_retreat_preempts_orders(simulation: Node) -> void:
 	const RUN_TICKS := 45 * 30
 	const RETREAT_HP := 20.0
+	const MAX_DECISION_LATENCY_TICKS := 6
 	var wounded_since: Array[int] = []
 	wounded_since.resize(TEAM_SIZE * 2)
 	wounded_since.fill(-1)
@@ -438,8 +491,6 @@ func _test_retreat_preempts_orders(simulation: Node) -> void:
 	simulation.call("ResetExperiment", 1, TEST_SEED)
 	for tick in RUN_TICKS:
 		simulation.call("RunTicks", 1)
-		if tick % 6 != 5:
-			continue
 		var snapshot: Dictionary = simulation.call("GetSnapshot")
 		var hp := PackedFloat32Array(snapshot.get("hp", PackedFloat32Array()))
 		var actions := PackedInt32Array(snapshot.get("actions", PackedInt32Array()))
@@ -450,8 +501,11 @@ func _test_retreat_preempts_orders(simulation: Node) -> void:
 			found_wounded = true
 			if wounded_since[index] < 0:
 				wounded_since[index] = tick
-			elif tick - wounded_since[index] >= 6:
-				_expect(actions[index] == 7, "critically wounded unit %d preempts its prior order" % index)
+			elif tick - wounded_since[index] >= MAX_DECISION_LATENCY_TICKS:
+				_expect(
+					actions[index] == 7,
+					"critically wounded unit %d retreats within its staggered decision window" % index
+				)
 	_expect(found_wounded, "retreat priority fixture produces a critically wounded survivor")
 
 

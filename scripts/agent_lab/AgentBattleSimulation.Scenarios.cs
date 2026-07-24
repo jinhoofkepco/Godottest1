@@ -203,7 +203,22 @@ public partial class AgentBattleSimulation
             bestRoute = route;
         }
         _routeIntents[index] = bestRoute;
-        _routeWaypointCursors[index] = 0;
+        _routeWaypointCursors[index] = ReverseWaypointCursorForPosition(index, bestRoute);
+    }
+
+    private int ReverseWaypointCursorForPosition(int index, int route)
+    {
+        float homeward = _teams[index] == AgentBattleConfig.TeamBlue ? 1f : -1f;
+        int count = _routeWaypointCounts[route];
+        int cursor = 0;
+        while (cursor < count)
+        {
+            Vector2 waypoint = RouteWaypoint(index, route, cursor, true);
+            if ((waypoint.Y - _positions[index].Y) * homeward >= 0f)
+                break;
+            cursor++;
+        }
+        return cursor;
     }
 
     private void AdvanceRouteWaypointCursor(int index, bool reverse)
