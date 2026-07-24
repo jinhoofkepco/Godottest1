@@ -7,6 +7,7 @@ const ARENA_WIDTH := 28
 const ARENA_HEIGHT := 36
 const TEAM_SIZE := 30
 const TEST_SEED := 230723
+const SCENARIO_NAMES := ["BOTTLENECK", "CORNER_TRAP", "ROUTE_CHOICE", "OPEN_CONTROL"]
 
 var failures: Array[String] = []
 
@@ -18,6 +19,7 @@ func run() -> Array[String]:
 		for method in ["ResetExperiment", "Step", "RunTicks", "GetSnapshot", "GetMetrics"]:
 			_expect(simulation.has_method(method), "simulation exposes %s" % method)
 		if failures.is_empty():
+			_test_scenario_contract(simulation)
 			_test_deterministic_arena(simulation)
 			_test_forward_progress_tracking(simulation)
 			_test_retreat_preempts_orders(simulation)
@@ -26,6 +28,128 @@ func run() -> Array[String]:
 		simulation.free()
 	_test_visual_lab_contract()
 	return failures
+
+
+func _test_scenario_contract(simulation: Node) -> void:
+	var accepts_scenario := _method_argument_count(simulation, "ResetExperiment") >= 3
+	_expect(accepts_scenario, "scenario reset accepts mode, seed, and scenario")
+	if not accepts_scenario:
+		return
+
+	for scenario in SCENARIO_NAMES.size():
+		simulation.call("ResetExperiment", 1, TEST_SEED, scenario)
+		var snapshot: Dictionary = simulation.call("GetSnapshot")
+		var blocked_cells := PackedInt32Array(snapshot.get("blocked_cells", PackedInt32Array()))
+		_expect(int(snapshot.get("scenario_id", -1)) == scenario, "scenario id round-trips")
+		_expect(String(snapshot.get("scenario_name", "")) == SCENARIO_NAMES[scenario], "scenario name round-trips")
+		_expect(_blocked_geometry_matches(scenario, blocked_cells), "scenario blocked geometry matches")
+		_expect(_blocked_geometry_is_vertically_symmetric(blocked_cells), "scenario terrain is mirrored")
+		_expect(_both_teams_have_a_reachable_passage(blocked_cells), "scenario keeps mirrored passages reachable")
+
+	simulation.call("ResetExperiment", 1, TEST_SEED, 99)
+	var fallback: Dictionary = simulation.call("GetSnapshot")
+	_expect(int(fallback.get("scenario_id", -1)) == 0, "invalid scenario falls back to bottleneck")
+
+
+func _method_argument_count(instance: Object, method_name: String) -> int:
+	var maximum := -1
+	for method: Dictionary in instance.get_method_list():
+		if String(method.get("name", "")) == method_name:
+			maximum = maxi(maximum, Array(method.get("args", [])).size())
+	return maximum
+
+
+func _blocked_geometry_matches(scenario: int, blocked_cells: PackedInt32Array) -> bool:
+	var expected := {}
+	match scenario:
+		0:
+			for y in range(17, 19):
+				for x in range(3, 25):
+					if x < 13 or x > 14:
+						expected[y * ARENA_WIDTH + x] = true
+		1:
+			for y in range(17, 19):
+				for x in range(3, 25):
+					if x < 11 or x > 16:
+						expected[y * ARENA_WIDTH + x] = true
+			for y in range(14, 17):
+				for x in range(11, 14):
+					expected[y * ARENA_WIDTH + x] = true
+			for y in range(19, 22):
+				for x in range(14, 17):
+					expected[y * ARENA_WIDTH + x] = true
+		2:
+			for y in range(16, 20):
+				for x in ARENA_WIDTH:
+					var is_gate := (x >= 3 and x <= 6) \
+						or (x >= 13 and x <= 14) \
+						or (x >= 21 and x <= 24)
+					if not is_gate:
+						expected[y * ARENA_WIDTH + x] = true
+		3:
+			pass
+		_:
+			return false
+
+	if blocked_cells.size() != expected.size():
+		return false
+	var seen := {}
+	for cell in blocked_cells:
+		if not expected.has(cell) or seen.has(cell):
+			return false
+		seen[cell] = true
+	return true
+
+
+func _blocked_geometry_is_vertically_symmetric(blocked_cells: PackedInt32Array) -> bool:
+	var blocked := {}
+	for cell in blocked_cells:
+		blocked[cell] = true
+	for cell in blocked_cells:
+		var x := cell % ARENA_WIDTH
+		var y := cell / ARENA_WIDTH
+		var mirrored := (ARENA_HEIGHT - 1 - y) * ARENA_WIDTH + (ARENA_WIDTH - 1 - x)
+		if not blocked.has(mirrored):
+			return false
+	return true
+
+
+func _both_teams_have_a_reachable_passage(blocked_cells: PackedInt32Array) -> bool:
+	var blocked := {}
+	for cell in blocked_cells:
+		blocked[cell] = true
+	return _has_reachable_passage(blocked, ARENA_HEIGHT - 2, 1) \
+		and _has_reachable_passage(blocked, 1, ARENA_HEIGHT - 2)
+
+
+func _has_reachable_passage(blocked: Dictionary, start_y: int, goal_y: int) -> bool:
+	var pending: Array[int] = []
+	var visited := {}
+	for x in ARENA_WIDTH:
+		var cell := start_y * ARENA_WIDTH + x
+		if not blocked.has(cell):
+			pending.append(cell)
+			visited[cell] = true
+
+	var read_index := 0
+	while read_index < pending.size():
+		var cell := pending[read_index]
+		read_index += 1
+		var x := cell % ARENA_WIDTH
+		var y := cell / ARENA_WIDTH
+		if y == goal_y:
+			return true
+		for offset in [-ARENA_WIDTH, ARENA_WIDTH, -1, 1]:
+			var neighbor: int = cell + offset
+			if neighbor < 0 or neighbor >= ARENA_WIDTH * ARENA_HEIGHT:
+				continue
+			if (offset == -1 or offset == 1) and neighbor / ARENA_WIDTH != y:
+				continue
+			if blocked.has(neighbor) or visited.has(neighbor):
+				continue
+			visited[neighbor] = true
+			pending.append(neighbor)
+	return false
 
 
 func _test_deterministic_arena(simulation: Node) -> void:

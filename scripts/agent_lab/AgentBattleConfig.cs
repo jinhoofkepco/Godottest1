@@ -2,6 +2,7 @@ internal static class AgentBattleConfig
 {
     public const int ArenaWidth = 28;
     public const int ArenaHeight = 36;
+    public const int ArenaCellCount = ArenaWidth * ArenaHeight;
     public const int TeamSize = 30;
     public const int UnitCount = TeamSize * 2;
 
@@ -11,6 +12,12 @@ internal static class AgentBattleConfig
     public const int ModeBaseline = 0;
     public const int ModeAgent = 1;
     public const int DefaultSeed = 230723;
+
+    public const int ScenarioBottleneck = 0;
+    public const int ScenarioCornerTrap = 1;
+    public const int ScenarioRouteChoice = 2;
+    public const int ScenarioOpenControl = 3;
+    public const int ScenarioCount = 4;
 
     public const int ActionAdvance = 0;
     public const int ActionEngage = 1;
@@ -72,5 +79,4 @@ internal static class AgentBattleConfig
     public const int FortificationBottomY = 18;
     public const int GateMinX = 13;
     public const int GateMaxX = 14;
-    public const int BlockedCellCount = 40;
 }

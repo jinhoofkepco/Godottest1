@@ -11,8 +11,8 @@ public partial class AgentBattleSimulation : Node
     private readonly int[] _teams = new int[AgentBattleConfig.UnitCount];
     private readonly float[] _hp = new float[AgentBattleConfig.UnitCount];
     private readonly int[] _actions = new int[AgentBattleConfig.UnitCount];
-    private readonly int[] _blockedCells = new int[AgentBattleConfig.BlockedCellCount];
-    private readonly bool[] _blockedMask = new bool[AgentBattleConfig.ArenaWidth * AgentBattleConfig.ArenaHeight];
+    private readonly int[] _blockedCells = new int[AgentBattleConfig.ArenaCellCount];
+    private readonly bool[] _blockedMask = new bool[AgentBattleConfig.ArenaCellCount];
     private readonly int[] _routeIntents = new int[AgentBattleConfig.UnitCount];
     private readonly int[] _actionCommitTicks = new int[AgentBattleConfig.UnitCount];
     private readonly float[] _selectedActionScores = new float[AgentBattleConfig.UnitCount];
@@ -26,9 +26,9 @@ public partial class AgentBattleSimulation : Node
     private readonly bool[] _hasYielded = new bool[AgentBattleConfig.UnitCount];
     private readonly bool[] _hasCrossedSideRoute = new bool[AgentBattleConfig.UnitCount];
     private readonly bool[] _hasReachedBypassLane = new bool[AgentBattleConfig.UnitCount];
-    private readonly int[] _bucketHeads = new int[AgentBattleConfig.ArenaWidth * AgentBattleConfig.ArenaHeight];
+    private readonly int[] _bucketHeads = new int[AgentBattleConfig.ArenaCellCount];
     private readonly int[] _bucketNext = new int[AgentBattleConfig.UnitCount];
-    private readonly int[] _bucketCounts = new int[AgentBattleConfig.ArenaWidth * AgentBattleConfig.ArenaHeight];
+    private readonly int[] _bucketCounts = new int[AgentBattleConfig.ArenaCellCount];
     private readonly int[] _actionCounts = new int[AgentBattleConfig.ActionCount];
     private readonly int[] _targets = new int[AgentBattleConfig.UnitCount];
     private readonly int[] _targetReservations = new int[AgentBattleConfig.UnitCount];
@@ -46,6 +46,8 @@ public partial class AgentBattleSimulation : Node
 
     private int _mode;
     private int _seed;
+    private int _scenario;
+    private int _blockedCellCount;
     private int _aliveBlue;
     private int _aliveRed;
     private float _elapsed;
@@ -70,10 +72,19 @@ public partial class AgentBattleSimulation : Node
 
     public AgentBattleSimulation() => ResetExperiment();
 
-    public void ResetExperiment(int mode = AgentBattleConfig.ModeAgent, int seed = AgentBattleConfig.DefaultSeed)
+    public void ResetExperiment(int mode, int seed) =>
+        ResetExperiment(mode, seed, AgentBattleConfig.ScenarioBottleneck);
+
+    public void ResetExperiment(
+        int mode = AgentBattleConfig.ModeAgent,
+        int seed = AgentBattleConfig.DefaultSeed,
+        int scenario = AgentBattleConfig.ScenarioBottleneck)
     {
         _mode = mode;
         _seed = seed;
+        _scenario = (uint)scenario < AgentBattleConfig.ScenarioCount
+            ? scenario
+            : AgentBattleConfig.ScenarioBottleneck;
         _aliveBlue = AgentBattleConfig.TeamSize;
         _aliveRed = AgentBattleConfig.TeamSize;
         _elapsed = 0f;
@@ -109,7 +120,6 @@ public partial class AgentBattleSimulation : Node
         Array.Clear(_hasYielded);
         Array.Clear(_hasCrossedSideRoute);
         Array.Clear(_hasReachedBypassLane);
-        Array.Clear(_blockedMask);
         Array.Clear(_actionCounts);
         Array.Fill(_targets, -1);
         Array.Clear(_targetReservations);
@@ -124,7 +134,7 @@ public partial class AgentBattleSimulation : Node
         Array.Fill(_replacementCandidates, -1);
         Array.Clear(_replacementCounted);
         _actionCounts[AgentBattleConfig.ActionAdvance] = AgentBattleConfig.UnitCount;
-        BuildFortification();
+        BuildScenario(_scenario);
         SpawnMirroredTeams();
         for (int index = 0; index < AgentBattleConfig.UnitCount; index++)
         {
@@ -162,6 +172,8 @@ public partial class AgentBattleSimulation : Node
         ["arena_height"] = AgentBattleConfig.ArenaHeight,
         ["mode"] = _mode,
         ["seed"] = _seed,
+        ["scenario_id"] = _scenario,
+        ["scenario_name"] = ScenarioName(_scenario),
         ["positions"] = (Vector2[])_positions.Clone(),
         ["velocities"] = (Vector2[])_velocities.Clone(),
         ["teams"] = (int[])_teams.Clone(),
@@ -175,7 +187,7 @@ public partial class AgentBattleSimulation : Node
         ["alive_red"] = _aliveRed,
         ["time"] = _elapsed,
         ["result"] = _result,
-        ["blocked_cells"] = (int[])_blockedCells.Clone(),
+        ["blocked_cells"] = _blockedCells.AsSpan(0, _blockedCellCount).ToArray(),
     };
 
     public GDictionary GetMetrics() => new()
@@ -248,22 +260,6 @@ public partial class AgentBattleSimulation : Node
             int redIndex = index + AgentBattleConfig.TeamSize;
             _teams[redIndex] = AgentBattleConfig.TeamRed;
             _positions[redIndex] = new Vector2(x, AgentBattleConfig.ArenaHeight - blueY);
-        }
-    }
-
-    private void BuildFortification()
-    {
-        int write = 0;
-        for (int y = AgentBattleConfig.FortificationTopY; y <= AgentBattleConfig.FortificationBottomY; y++)
-        {
-            for (int x = AgentBattleConfig.FortificationMinX; x <= AgentBattleConfig.FortificationMaxX; x++)
-            {
-                if (x >= AgentBattleConfig.GateMinX && x <= AgentBattleConfig.GateMaxX)
-                    continue;
-                int cell = y * AgentBattleConfig.ArenaWidth + x;
-                _blockedCells[write++] = cell;
-                _blockedMask[cell] = true;
-            }
         }
     }
 
